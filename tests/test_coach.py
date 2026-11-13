@@ -444,3 +444,59 @@ class StateAndCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Fuzz(unittest.TestCase):
+    """Random tables and action sequences must always produce an answer."""
+
+    def test_random_preflop_spots(self):
+        from poker_coach.preflop import Spot, parse_actions, pos_to_index
+        from poker_coach.ranges import PLAYER_TYPES, position_name
+
+        rng = random.Random(11)
+        pays = default_payouts(500)
+        verbs = ["limp", "call", "raise 2.2bb", "raise 900", "raise 3x", "allin", "fold"]
+        for _ in range(70):
+            n = rng.randint(2, 9)
+            stacks = [200.0 * rng.choice([1.2, 3, 6, 9, 12, 16, 22, 30, 50, 120]) for _ in range(n)]
+            ante, bb_ante = rng.choice([(0, 0), (25, 0), (0, 200)])
+            setup = HandSetup(stacks, 100, 200, ante, bb_ante)
+            hero = rng.randrange(n)
+            names = [position_name(n - 1 - i, n) for i in range(n)]
+            rem = rng.choice([n, len(pays) + 2, 300])
+            prizes = rng.choice([Prizes(), Prizes(pays, max(0, rem - n), sum(stacks) / n,
+                                                  itm_bonus=pays[-1] if rem > len(pays) else 0.0)])
+            spot = Spot(setup=setup, hero=hero, hand=rng.randrange(169), names=list(names),
+                        types=[rng.choice(list(PLAYER_TYPES)) for _ in range(n)],
+                        away=[rng.random() < 0.1 and i != hero for i in range(n)],
+                        prizes=prizes, field_prizes=Prizes(prizes.raw_payouts, prizes.field_n, prizes.field_stack))
+            who = sorted(rng.sample(range(n), min(n, rng.randint(0, 3))))
+            if rng.random() < 0.3:
+                who = [hero] + [i for i in who if i > hero]
+            facing = ", ".join(("hero" if i == hero else names[i]) + " " +
+                               ("raise 2.2bb" if i == hero else rng.choice(verbs)) for i in who)
+            spot.acts = parse_actions(facing, setup, hero, lambda nm: pos_to_index(nm, n), chips=True)
+            adv = advise(spot)
+            self.assertTrue(adv.action and adv.render(), facing)
+
+    def test_random_postflop_spots(self):
+        rng = random.Random(12)
+        specs = ["open:CO", "open:UTG", "call:BB", "flat:BTN", "3bet", "limp", "35%", "any", "77+, AJs+"]
+        moves = ["check", "call", "bet", "bet33", "bet150", "raise", "shove"]
+        for _ in range(70):
+            deck = list(range(52))
+            rng.shuffle(deck)
+            board = deck[2:2 + rng.choice([3, 4, 5])]
+            streets = ["flop", "turn", "river"][:len(board) - 2]
+            villains = []
+            for _ in range(rng.choice([1, 1, 2, 3])):
+                w, label = range_from_spec(rng.choice(specs), rng.randint(2, 9), "unknown", rng.choice([None, 0, 2, 5]))
+                line = " ".join(f"{s}={rng.choice(moves)}" for s in streets if rng.random() < 0.6)
+                villains.append(Villain(w, rng.choice(["unknown", "nit", "station", "maniac"]), parse_line(line), label))
+            pot = rng.uniform(3, 60)
+            to_call = rng.choice([0.0, pot * rng.uniform(0.1, 0.6)])
+            spot = PostflopSpot((deck[0], deck[1]), board, pot, to_call, rng.uniform(0.5, 150),
+                                rng.choice([None, 0.0, 40.0]), villains, rng.random() < 0.5,
+                                rng.random() < 0.5, risk_premium=rng.choice([0.0, 0.1, 0.2]), iters=1000)
+            adv = advise_postflop(spot)
+            self.assertTrue(adv.action and adv.render())

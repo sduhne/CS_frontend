@@ -920,6 +920,15 @@ _VERBS = {
 
 def pos_to_index(name: str, n: int) -> int | None:
     low = name.strip().lower()
+    # the table view prints "SB/BTN" heads-up and "UTG(LJ)" at short tables
+    if "(" in low:
+        low = low.split("(", 1)[0].strip()
+    if "/" in low:
+        for part in low.split("/"):
+            idx = pos_to_index(part, n)
+            if idx is not None:
+                return idx
+        return None
     if low in ("utg", "ep", "ep1", "utg+0"):
         return 0
     if low in _POS_NB:

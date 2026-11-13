@@ -88,7 +88,7 @@ you play.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests        # 36 tests, about 10 seconds
+python3 -m unittest discover -s tests        # 40 tests, about 20 seconds
 ```
 
 The data files in `poker_coach/data/` are generated:
