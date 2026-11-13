@@ -1,0 +1,100 @@
+# Poker coach
+
+A tournament no-limit hold'em coach: it tracks your table from the pictures
+you send and answers "call, raise or fold?" with a tight-aggressive strategy
+tuned to get you into the money.
+
+It has two parts:
+
+- **The engine** (`poker_coach/`, pure Python, no dependencies): hand
+  evaluator, equity calculator, ICM model, push/fold equilibrium solver,
+  preflop charts, postflop advisor and a table tracker.
+- **The coach** (Claude, following `CLAUDE.md` and `PLAYBOOK.md`): reads your
+  pictures, keeps the table up to date, runs the engine and gives you the
+  answer in one line.
+
+## How to use it
+
+Open a Claude Code session on this repository and talk to it.
+
+1. **Start of the tournament.** Send a picture of the table, and if you can,
+   the lobby (entrants, places paid, starting stack, payouts). Say which
+   player is you if it is not obvious.
+2. **When something changes.** Send a new picture: a player busts or sits
+   down, blinds go up, you change table, the lobby shows fewer players left.
+   One picture every level or two is enough; send more near the bubble.
+3. **When you want help.** Send the picture of the hand, or just type it:
+   "AJo on the button, folded to me", "99, UTG raised to 1300",
+   "AK on K72, he bets 1500 into 3000". You get the action first, then the
+   one-line reason.
+4. **Tell it what you notice.** "Seat 3 raises every hand", "Carl only shows
+   aces": the coach tags the player and the ranges it assumes for them change.
+
+Things worth knowing:
+
+- The coach needs **players left** and **places paid** to know how close the
+  money is. Without them it plays on chip maths only.
+- It assumes stacks as of the last picture. If your stack changed a lot, say so
+  or send a picture.
+- The default goal is `itm`: before the bubble bursts, cashing counts double,
+  so the coach folds more marginal all-ins than a pure prize-money calculation
+  would. Say "play to win" (or `set goal=balanced` / `goal=chips`) to change it.
+
+## What the engine does
+
+| Piece | What it gives you |
+|---|---|
+| Equity | Exact preflop all-in equity for any hand against any range (precomputed 169x169 table), exact turn/river and Monte Carlo flop equity |
+| ICM | Tournament value of your stack for any field size: your table's stacks exactly, the rest of the field as average stacks. Matches brute-force Malmuth-Harville |
+| Push/fold solver | Finds the shoving and calling ranges that are best responses to each other for the real stacks, positions and payouts; also re-shoves over a raise |
+| Preflop | Open, 3-bet, call, re-shove, call-a-shove decisions by position, stack depth, ICM and player type |
+| Postflop | Your equity against the opponent's range, narrowed by what they did on each street; pot odds, implied odds, commitment and ICM |
+| Table tracker | Seats, stacks, button, blinds, players left; who busted since the last picture; a fold clock that says whether you can fold into the money |
+
+Try it directly:
+
+```bash
+python3 -m poker_coach quick --hand AJo --stack 11.5 --pos CO
+python3 -m poker_coach quick --hand AQo --stack 25 --pos BB --facing "BTN allin" \
+    --remaining 78 --paid 75 --entrants 500
+python3 -m poker_coach chart push --pos BTN --stack 12
+python3 -m poker_coach equity --hand AKo --vs "QQ+, AKs"
+python3 -m poker_coach --help
+```
+
+`CLAUDE.md` lists every command the coach uses; `PLAYBOOK.md` is the strategy
+in plain words, worth reading once before you play.
+
+## Limits
+
+- Opponent ranges are estimates from position, stack and the type you (or the
+  coach) tag them with. The answer is only as good as those reads.
+- Postflop advice is rule-based on top of exact equity; it is a strong
+  baseline, not a solver.
+- ICM does not know the blinds are about to hit you. The fold clock covers
+  that for short stacks.
+- No strategy guarantees a cash. Tournaments pay about 15% of the field, so
+  even strong players miss the money most of the time; this is built to stop
+  the mistakes that cost cashes, not to promise one.
+
+## Fair play
+
+Most real-money online poker sites forbid real-time assistance, and using a
+tool like this during a hand there can get an account closed and winnings
+confiscated. Use it where outside help is allowed (home games that agree to
+it, play money, training), and for studying spots and reviewing hands after
+you play.
+
+## Development
+
+```bash
+python3 -m unittest discover -s tests        # 36 tests, about 10 seconds
+```
+
+The data files in `poker_coach/data/` are generated:
+
+```bash
+gcc -O3 -march=native -fopenmp -o gen tools/gen_preflop_equity.c
+./gen 1500000 > poker_coach/data/preflop_equity.json          # about 10 minutes
+python3 -c "from poker_coach.pushfold import build_charts; build_charts()"
+```
