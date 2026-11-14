@@ -65,6 +65,35 @@ python3 -m poker_coach --help
 `CLAUDE.md` lists every command the coach uses; `PLAYBOOK.md` is the strategy
 in plain words, worth reading once before you play.
 
+## All-In or Fold
+
+A second, self-contained part for the All-In or Fold format (four players, 8bb
+stacks, shove or fold only). The game is small enough to solve outright:
+`tools/aof_solver.c` finds the equilibrium with real cards, multi-way all-ins
+and the per-hand fee, and the answers ship in `poker_coach/data/aof.json`.
+
+```bash
+python3 -m poker_coach aof --hand A5s --pos BTN --shoved CO   # all-in or fold, and by how much
+python3 -m poker_coach aof-chart --pos SB --shoved CO          # the whole range for one situation
+python3 -m poker_coach aof-sheet                               # all 14 ranges on one page
+python3 -m poker_coach aof-quiz                                # drill in the terminal
+```
+
+`aof_trainer.html` is the same thing as a page: open it in a browser to drill
+random hands and browse the charts, offline.
+
+Three things to know about this format:
+
+- **It is a memory game.** There are only 14 situations. Learn the ranges with
+  the trainer; there is no time to look anything up at the table, and sites
+  forbid it.
+- **The fee is the opponent.** About 0.1bb leaves every pot. If all four
+  players played perfectly, each would lose about 2.5bb per 100 hands. You
+  only win what the others give away by shoving and calling badly.
+- **Approximations.** Unequal stacks are answered for the effective stack.
+  Tournament mode is chip EV with no ICM. The fee is modelled as 0.1bb from
+  every pot; it varies a little by stake.
+
 ## Limits
 
 - Opponent ranges are estimates from position, stack and the type you (or the
@@ -97,4 +126,6 @@ The data files in `poker_coach/data/` are generated:
 gcc -O3 -march=native -fopenmp -o gen tools/gen_preflop_equity.c
 ./gen 1500000 > poker_coach/data/preflop_equity.json          # about 10 minutes
 python3 -c "from poker_coach.pushfold import build_charts; build_charts()"
+python3 tools/build_aof.py          # All-In or Fold tables, about 35 minutes
+python3 tools/build_aof_page.py     # aof_trainer.html from those tables
 ```

@@ -500,3 +500,108 @@ class Fuzz(unittest.TestCase):
                                 rng.random() < 0.5, risk_premium=rng.choice([0.0, 0.1, 0.2]), iters=1000)
             adv = advise_postflop(spot)
             self.assertTrue(adv.action and adv.render())
+
+
+class AllInOrFold(unittest.TestCase):
+    """The solved All-In or Fold tables (poker_coach/data/aof.json)."""
+
+    def setUp(self):
+        from poker_coach import aof
+        self.A = aof
+
+    def pct(self, family, n, hero, mask, stack):
+        weights, ev, _ = self.A.node_range(family, n, hero, mask, stack)
+        solid = [1.0 if e > 0 else 0.0 for e in ev]
+        return range_pct(solid)
+
+    def test_premiums_and_trash(self):
+        A = self.A
+        for family in ("cash", "chips"):
+            for n in (2, 3, 4):
+                for stack in A.stack_grid(family, n):
+                    for hero, mask in A.decision_points(n):
+                        ans = A.decide(HAND_INDEX["AA"], n, hero, mask, [stack] * n, family)
+                        self.assertEqual(ans.action, "ALL-IN", (family, n, stack, hero, mask))
+        self.assertEqual(A.decide(HAND_INDEX["72o"], 4, 0).action, "FOLD")
+        self.assertEqual(A.decide(HAND_INDEX["32o"], 4, 1, 1).action, "FOLD")
+        self.assertEqual(A.decide(HAND_INDEX["AKs"], 4, 3, 0b111).action, "ALL-IN")
+
+    def test_shape_of_the_ranges(self):
+        co, btn, sb = (self.pct("cash", 4, k, 0, 8) for k in (0, 1, 2))
+        self.assertLess(co, btn)
+        self.assertLess(btn, sb)
+        self.assertTrue(20 < co < 34, co)
+        self.assertTrue(50 < sb < 70, sb)
+        # calling an all-in needs a far better hand than opening
+        self.assertLess(self.pct("cash", 4, 1, 1, 8), btn / 2)
+        # facing two all-ins is tighter still
+        self.assertLess(self.pct("cash", 4, 2, 0b11, 8), self.pct("cash", 4, 2, 0b01, 8))
+        # shorter stacks shove wider
+        self.assertGreater(self.pct("cash", 4, 2, 0, 4), sb)
+
+    def test_heads_up_matches_known_nash(self):
+        self.assertAlmostEqual(self.pct("chips", 2, 0, 0, 10), 58.3, delta=3.0)
+        self.assertAlmostEqual(self.pct("chips", 2, 1, 1, 10), 37.4, delta=3.0)
+
+    def test_fee_is_the_only_leak(self):
+        A = self.A
+        self.assertAlmostEqual(sum(A.table_value("cash", 4, 8)), -0.1, delta=0.03)
+        self.assertAlmostEqual(sum(A.table_value("chips", 4, 8)), 0.0, delta=0.03)
+        # the blinds pay for the table
+        val = A.table_value("cash", 4, 8)
+        self.assertGreater(val[1], 0)
+        self.assertLess(val[3], val[2])
+
+    def test_effective_stack_and_interpolation(self):
+        A = self.A
+        self.assertEqual(A.effective_stack([8, 8, 8, 5.5], 2, 0), 5.5)      # SB first in, BB has 5.5
+        self.assertEqual(A.effective_stack([6, 8, 8, 8], 3, 0b001), 6)      # BB facing a 6bb shove
+        self.assertEqual(A.effective_stack([8, 7, 8, 3], 3, 0b011), 3)      # BB is the short one
+        self.assertEqual(A.effective_stack([4, 8, 8, 8], 0, 0), 4)
+        h = HAND_INDEX["K9o"]
+        lo = A.decide(h, 4, 2, 0, [7] * 4).ev
+        hi = A.decide(h, 4, 2, 0, [8] * 4).ev
+        mid = A.decide(h, 4, 2, 0, [7.5] * 4).ev
+        self.assertAlmostEqual(mid, (lo + hi) / 2, places=6)
+        ans = A.decide(h, 4, 2, 0, [30] * 4)       # cash tables cap at 8bb
+        self.assertEqual(ans.stack, 8)
+        self.assertTrue(ans.notes)
+
+    def test_seats_and_errors(self):
+        A = self.A
+        self.assertEqual(A.position_index("btn", 4), 1)
+        self.assertEqual(A.position_index("BTN", 2), 0)
+        self.assertEqual(A.parse_shovers("CO, BTN", 4, 3), 0b011)
+        self.assertEqual(A.parse_shovers("", 4, 3), 0)
+        with self.assertRaises(ValueError):
+            A.parse_shovers("BB", 4, 1)            # the BB cannot have shoved before the button
+        with self.assertRaises(ValueError):
+            A.position_index("CO", 3)
+        with self.assertRaises(ValueError):
+            A.decide(HAND_INDEX["AA"], 4, 3, 0)    # folded to the big blind: no decision
+        with self.assertRaises(ValueError):
+            A.decide(HAND_INDEX["AA"], 6, 0, 0)
+
+    def test_drills_and_cli(self):
+        A = self.A
+        rng = random.Random(5)
+        for _ in range(40):
+            sp = A.random_spot(rng)
+            self.assertIn((sp.hero, sp.mask), A.decision_points(4))
+            self.assertIn(sp.answer().action, ("ALL-IN", "FOLD"))
+        for args in (["aof", "--hand", "A5s", "--pos", "BTN", "--shoved", "CO"],
+                     ["aof", "--hand", "Q4o", "--pos", "SB", "--stacks", "SB=8,BB=5.5"],
+                     ["aof", "--hand", "22", "--pos", "BB", "--shoved", "SB", "--players", "2",
+                      "--stack", "15", "--mode", "tournament"],
+                     ["aof-chart", "--pos", "SB", "--shoved", "CO"],
+                     ["aof-sheet"],
+                     ["aof-quiz", "--count", "4", "--seed", "1", "--print"]):
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(args)
+            self.assertEqual(code, 0, (args, err.getvalue()))
+            self.assertTrue(out.getvalue().strip())
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["aof", "--hand", "AA", "--pos", "BB"])
+        self.assertEqual(code, 2)

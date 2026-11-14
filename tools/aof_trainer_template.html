@@ -1,0 +1,330 @@
+<title>All-In or Fold Trainer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout: one narrow column. The table and the two buttons are the page; charts are a second view. */
+:root {
+  --bg: #f1f4f1; --surface: #ffffff; --ink: #15201a; --muted: #5b6a62; --line: #d3dbd5;
+  --felt: #1f6b4b; --felt-edge: #174f38; --on-felt: #eef6f1;
+  --shove: #c2412d; --shove-soft: #f0b9ae; --flip: #c58a17; --fold-soft: #e3e8e4;
+  --good: #1c7a4c; --bad: #b3362a; --card: #fdfdfb; --card-red: #c0392b; --card-black: #1b1f1d;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --text: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1411; --surface: #17201b; --ink: #e6eee9; --muted: #92a299; --line: #2a362f;
+  --felt: #1d5c42; --felt-edge: #123a2a; --on-felt: #e6f2ea;
+  --shove: #e8674f; --shove-soft: #6b2e24; --flip: #d9a437; --fold-soft: #212b25;
+  --good: #4cc38a; --bad: #f0806f; --card: #f4f4f0; --card-red: #c0392b; --card-black: #1b1f1d;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e1411; --surface: #17201b; --ink: #e6eee9; --muted: #92a299; --line: #2a362f;
+  --felt: #1d5c42; --felt-edge: #123a2a; --on-felt: #e6f2ea;
+  --shove: #e8674f; --shove-soft: #6b2e24; --flip: #d9a437; --fold-soft: #212b25;
+  --good: #4cc38a; --bad: #f0806f; --card: #f4f4f0; --card-red: #c0392b; --card-black: #1b1f1d;
+  color-scheme: dark }
+
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font-family: var(--text); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 760px; margin: 0 auto; padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 16px; }
+h1 { font-family: var(--display); font-size: 1.5rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-family: var(--display); font-size: 1.05rem; font-weight: 600; margin: 0; }
+p { margin: 0; }
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.tabs button { font: 600 0.9rem var(--text); padding: 8px 16px; border: 0; background: var(--surface); color: var(--muted); cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+.format { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
+.format label { display: flex; flex-direction: column; gap: 4px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+select { font: 500 0.95rem var(--text); padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--felt); outline-offset: 2px; }
+
+.felt { position: relative; background: var(--felt); border: 6px solid var(--felt-edge); border-radius: 120px; height: 210px; color: var(--on-felt); }
+.seat { position: absolute; transform: translate(-50%, -50%); text-align: center; min-width: 78px; padding: 6px 10px; border-radius: 10px; background: rgba(0, 0, 0, 0.28); font-size: 0.8rem; line-height: 1.25; }
+.seat b { display: block; font-family: var(--display); font-size: 0.95rem; }
+.seat.allin { background: var(--shove); color: #fff; }
+.seat.folded { opacity: 0.5; }
+.seat.you { background: var(--on-felt); color: var(--felt-edge); }
+.seat .dealer { display: inline-block; margin-left: 5px; width: 16px; height: 16px; line-height: 16px; border-radius: 50%; background: #f3d36b; color: #3a2c00; font: 700 0.62rem var(--text); vertical-align: 2px; }
+.pot { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 0.8rem; opacity: 0.85; text-align: center; }
+
+.ask { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 20px; }
+.cards { display: flex; gap: 8px; }
+.pcard { width: 58px; height: 80px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: var(--display); font-weight: 700; font-size: 1.7rem; line-height: 1; color: var(--card-black); }
+.pcard span { font-size: 1.35rem; margin-top: 4px; }
+.pcard.red { color: var(--card-red); }
+.prompt { flex: 1 1 220px; min-width: 0; }
+.prompt .sit { font-family: var(--display); font-weight: 600; font-size: 1.15rem; text-wrap: balance; }
+.prompt .sub { color: var(--muted); font-size: 0.9rem; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.act { flex: 1 1 140px; font: 700 1.05rem var(--display); padding: 14px 18px; border-radius: 10px; border: 2px solid transparent; cursor: pointer; }
+.act.allin { background: var(--shove); color: #fff; }
+.act.fold { background: var(--surface); color: var(--ink); border-color: var(--line); }
+.act.next { background: var(--ink); color: var(--bg); }
+.act kbd { font: 500 0.72rem var(--text); opacity: 0.75; margin-left: 6px; }
+
+.result { border-top: 1px solid var(--line); padding-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+.verdict { font-family: var(--display); font-weight: 700; font-size: 1.2rem; }
+.verdict.good { color: var(--good); } .verdict.bad { color: var(--bad); } .verdict.flip { color: var(--flip); }
+.note { color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
+.score { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.9rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.score b { color: var(--ink); }
+.linkbtn { background: none; border: 0; padding: 0; color: var(--muted); font: inherit; text-decoration: underline; cursor: pointer; }
+
+.grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; max-width: 520px; }
+.cell { aspect-ratio: 1 / 0.82; display: flex; align-items: center; justify-content: center; font-size: clamp(8px, 2.1vw, 11.5px); font-weight: 600; border-radius: 3px; background: var(--fold-soft); color: var(--muted); font-variant-numeric: tabular-nums; }
+.cell.s2 { background: var(--shove); color: #fff; }
+.cell.s1 { background: var(--shove-soft); color: var(--ink); }
+.cell.f0 { background: var(--flip); color: #fff; }
+.cell.hero { outline: 3px solid var(--ink); outline-offset: 0; z-index: 1; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.8rem; color: var(--muted); }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.spots { display: flex; flex-wrap: wrap; gap: 6px; }
+.spots button { font: 500 0.85rem var(--text); padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.spots button[aria-pressed="true"] { background: var(--felt); border-color: var(--felt); color: #fff; }
+.spots small { opacity: 0.7; margin-left: 4px; font-variant-numeric: tabular-nums; }
+footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--line); padding-top: 12px; }
+@media (max-width: 460px) { .felt { height: 190px; border-radius: 90px; } .pcard { width: 50px; height: 70px; font-size: 1.45rem; } }
+@media (prefers-reduced-motion: no-preference) { .act { transition: transform 0.06s; } .act:active { transform: scale(0.98); } }
+</style>
+
+<div class="wrap">
+  <div class="top">
+    <h1>All-In or Fold Trainer</h1>
+    <div class="tabs" role="tablist">
+      <button id="tab-drill" role="tab" aria-selected="true">Drill</button>
+      <button id="tab-charts" role="tab" aria-selected="false">Charts</button>
+    </div>
+  </div>
+
+  <div class="format">
+    <label for="f-family">Game<select id="f-family"><option value="cash">Cash, 0.1bb fee</option><option value="chips">Tournament, no fee</option></select></label>
+    <label for="f-players">Players<select id="f-players"><option>4</option><option>3</option><option>2</option></select></label>
+    <label for="f-stack">Stack<select id="f-stack"></select></label>
+    <label for="f-focus">Drill on<select id="f-focus"><option value="all">Every situation</option><option value="open">Folded to you</option><option value="one">One player all-in</option><option value="multi">Two or more all-in</option></select></label>
+  </div>
+
+  <section id="drill" aria-labelledby="tab-drill">
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="felt" id="felt"></div>
+      <div class="ask">
+        <div class="cards" id="cards"></div>
+        <div class="prompt"><div class="sit" id="sit"></div><div class="sub" id="sub"></div></div>
+      </div>
+      <div class="actions" id="actions">
+        <button class="act allin" id="b-allin">All-in <kbd>A</kbd></button>
+        <button class="act fold" id="b-fold">Fold <kbd>F</kbd></button>
+      </div>
+      <div class="result" id="result" hidden>
+        <div class="verdict" id="verdict"></div>
+        <p id="why"></p>
+        <div class="grid" id="r-grid"></div>
+        <p class="note" id="r-range"></p>
+        <div class="actions"><button class="act next" id="b-next">Next hand <kbd>Enter</kbd></button></div>
+      </div>
+      <div class="score" id="score"></div>
+    </div>
+  </section>
+
+  <section id="charts" aria-labelledby="tab-charts" hidden>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <h2 id="c-title"></h2>
+      <div class="spots" id="c-spots"></div>
+      <div class="grid" id="c-grid"></div>
+      <div class="legend">
+        <span><i style="background:var(--shove)"></i>All-in</span>
+        <span><i style="background:var(--shove-soft)"></i>All-in, thin (under 0.25bb)</span>
+        <span><i style="background:var(--flip)"></i>Coin flip (within 0.05bb)</span>
+        <span><i style="background:var(--fold-soft)"></i>Fold</span>
+      </div>
+      <p class="note" id="c-range"></p>
+      <p class="note" id="c-value"></p>
+    </div>
+  </section>
+
+  <footer>Ranges are equilibrium solutions from a solver that deals real cards, with multi-way all-ins and the fee included. Suited hands sit above the diagonal of the grid, offsuit below. This is for study away from the table: GGPoker and most other sites forbid charts or any outside help while you play.</footer>
+</div>
+
+<script>
+const DATA = /*DATA*/;
+const RANKS = "AKQJT98765432", SEATS = {2: ["SB", "BB"], 3: ["BTN", "SB", "BB"], 4: ["CO", "BTN", "SB", "BB"]};
+const SUITS = ["♣", "♦", "♥", "♠"];
+const $ = id => document.getElementById(id);
+const state = {family: "cash", n: 4, stack: "8", focus: "all", spot: null, answered: false,
+               right: 0, total: 0, lost: 0, streak: 0, chart: "0:0", stats: {}};
+
+function handName(i) { const r = Math.floor(i / 13), c = i % 13; return r === c ? RANKS[r] + RANKS[r] : r < c ? RANKS[r] + RANKS[c] + "s" : RANKS[c] + RANKS[r] + "o"; }
+function classOf(a, b) { const r1 = a >> 2, r2 = b >> 2; if (r1 === r2) return (12 - r1) * 14; const hi = Math.max(r1, r2), lo = Math.min(r1, r2), row = 12 - hi, col = 12 - lo; return (a & 3) === (b & 3) ? row * 13 + col : col * 13 + row; }
+function nodes() { return DATA[state.family][state.n][state.stack].nodes; }
+function points(n) { const out = []; for (let i = 0; i < n; i++) for (let m = 0; m < (1 << i); m++) if (!(i === n - 1 && m === 0)) out.push([i, m]); return out; }
+function shovers(hero, mask) { return SEATS[state.n].filter((_, k) => k < hero && (mask >> k) & 1); }
+function listOf(s) { return s.length > 1 ? s.slice(0, -1).join(", ") + " and " + s[s.length - 1] : s[0]; }
+function describe(hero, mask) { const s = shovers(hero, mask); return s.length ? listOf(s) + (s.length > 1 ? " are all-in" : " is all-in") : "Folded to you"; }
+function summary(hero, mask, ev) { const s = shovers(hero, mask); return SEATS[state.n][hero] + (s.length ? " facing " + listOf(s) + " all-in: call " : " first in: shove ") + pct(ev).toFixed(0) + "% of hands"; }
+function bits(m) { let c = 0; while (m) { c += m & 1; m >>= 1; } return c; }
+function pct(ev) { let t = 0; for (let i = 0; i < 169; i++) if (ev[i] > 0) { const r = Math.floor(i / 13), c = i % 13; t += r === c ? 6 : r < c ? 4 : 12; } return 100 * t / 1326; }
+
+function notation(ev) {
+  const inr = ev.map(e => e > 0), parts = [];
+  let i = 0;
+  while (i < 13) { if (inr[i * 14]) { let j = i; while (j + 1 < 13 && inr[(j + 1) * 14]) j++; const hi = RANKS[i] + RANKS[i], lo = RANKS[j] + RANKS[j]; parts.push(i === 0 && j > 0 ? lo + "+" : i === j ? hi : hi + "-" + lo); i = j + 1; } else i++; }
+  for (const kind of ["s", "o"]) for (let hi = 0; hi < 12; hi++) {
+    const cells = []; for (let lo = hi + 1; lo < 13; lo++) cells.push(inr[kind === "s" ? hi * 13 + lo : lo * 13 + hi]);
+    let k = 0;
+    while (k < cells.length) { if (cells[k]) { let e = k; while (e + 1 < cells.length && cells[e + 1]) e++; const top = RANKS[hi] + RANKS[hi + 1 + k] + kind, bot = RANKS[hi] + RANKS[hi + 1 + e] + kind; parts.push(k === 0 && e > 0 ? bot + "+" : k === e ? top : top + "-" + bot); k = e + 1; } else k++; }
+  }
+  return parts.length ? parts.join(", ") : "nothing";
+}
+
+function drawGrid(el, ev, heroCls) {
+  el.textContent = "";
+  for (let i = 0; i < 169; i++) {
+    const d = document.createElement("div"), e = ev[i] / 100;
+    d.className = "cell" + (e > 0.25 ? " s2" : e > 0.05 ? " s1" : e >= -0.05 ? " f0" : "") + (i === heroCls ? " hero" : "");
+    d.textContent = handName(i);
+    d.title = handName(i) + ": all-in " + (e >= 0 ? "+" : "") + e.toFixed(2) + "bb vs fold";
+    el.appendChild(d);
+  }
+}
+
+function newSpot() {
+  const n = state.n, nd = nodes();
+  let pts = points(n).filter(([i, m]) => state.focus === "all" || (state.focus === "open" && m === 0) || (state.focus === "one" && bits(m) === 1) || (state.focus === "multi" && bits(m) >= 2));
+  if (!pts.length) pts = points(n);
+  const weights = pts.map(([i, m]) => m === 0 ? 3 : bits(m) === 1 ? 2 : 1);
+  let pick = Math.random() * weights.reduce((a, b) => a + b, 0), idx = 0;
+  while ((pick -= weights[idx]) > 0) idx++;
+  const [hero, mask] = pts[idx], hard = Math.random() < 0.7, key = hero + ":" + mask;
+  let best = null;
+  for (let t = 0; t < 30000; t++) {
+    const deck = Array.from({length: 52}, (_, k) => k);
+    for (let k = 0; k < 2 * n; k++) { const j = k + Math.floor(Math.random() * (52 - k)); [deck[k], deck[j]] = [deck[j], deck[k]]; }
+    let ok = true, m = 0;
+    for (let k = 0; k < hero && ok; k++) {
+      const acts = nd[k + ":" + m][classOf(deck[2 * k], deck[2 * k + 1])] > 0;
+      if (acts !== Boolean((mask >> k) & 1)) ok = false; else if (acts) m |= 1 << k;
+    }
+    if (!ok) continue;
+    const cls = classOf(deck[2 * hero], deck[2 * hero + 1]);
+    best = {n, hero, mask, key, cls, cards: [deck[2 * hero], deck[2 * hero + 1]], ev: nd[key][cls] / 100};
+    if (!hard || Math.abs(best.ev) <= 0.6) break;
+  }
+  return best;
+}
+
+function seatSlots(n) { return n === 4 ? [[50, 86], [11, 50], [50, 14], [89, 50]] : n === 3 ? [[50, 86], [20, 22], [80, 22]] : [[50, 86], [50, 14]]; }
+
+function showSpot() {
+  const sp = state.spot = newSpot(); state.answered = false;
+  const n = sp.n, names = SEATS[n], slots = seatSlots(n), felt = $("felt");
+  felt.textContent = "";
+  for (let k = 0; k < n; k++) {
+    const [x, y] = slots[(k - sp.hero + n) % n], d = document.createElement("div");
+    const isHero = k === sp.hero, allin = k < sp.hero && (sp.mask >> k) & 1, folded = k < sp.hero && !allin;
+    d.className = "seat" + (isHero ? " you" : allin ? " allin" : folded ? " folded" : "");
+    d.style.left = x + "%"; d.style.top = y + "%";
+    const b = document.createElement("b"); b.textContent = names[k];
+    if (names[k] === "BTN" || (n === 2 && k === 0)) { const dl = document.createElement("span"); dl.className = "dealer"; dl.textContent = "D"; b.appendChild(dl); }
+    d.appendChild(b);
+    d.appendChild(document.createTextNode(isHero ? "You" : allin ? "All-in" : folded ? "Folded" : "To act"));
+    felt.appendChild(d);
+  }
+  const pot = document.createElement("div"); pot.className = "pot";
+  pot.textContent = state.stack + "bb stacks · blinds 0.5 / 1"; felt.appendChild(pot);
+  const cards = $("cards"); cards.textContent = "";
+  for (const c of sp.cards) {
+    const el = document.createElement("div"), s = c & 3;
+    el.className = "pcard" + (s === 1 || s === 2 ? " red" : "");
+    el.textContent = "23456789TJQKA"[c >> 2].replace("T", "10");
+    const g = document.createElement("span"); g.textContent = SUITS[s]; el.appendChild(g); cards.appendChild(el);
+  }
+  $("sit").textContent = describe(sp.hero, sp.mask) + ".";
+  $("sub").textContent = "You are " + names[sp.hero] + " with " + handName(sp.cls) + ".";
+  $("result").hidden = true; $("actions").hidden = false;
+}
+
+function answer(allin) {
+  if (state.answered) return;
+  const sp = state.spot, flip = Math.abs(sp.ev) <= 0.05, best = sp.ev > 0, ok = flip || allin === best;
+  state.answered = true; state.total++;
+  if (ok) { state.right++; state.streak++; } else { state.lost += Math.abs(sp.ev); state.streak = 0; }
+  const sk = [state.family, state.n, state.stack, sp.key].join("|"), st = state.stats[sk] || (state.stats[sk] = [0, 0]);
+  st[0]++; if (ok) st[1]++;
+  try { localStorage.setItem("aof-stats-v1", JSON.stringify(state.stats)); } catch (e) {}
+  const v = $("verdict"), act = best ? "All-in" : "Fold";
+  v.className = "verdict " + (flip ? "flip" : ok ? "good" : "bad");
+  v.textContent = flip ? "Coin flip: either is fine" : ok ? "Correct: " + act.toLowerCase() : "No: " + act.toLowerCase() + " was right";
+  $("why").textContent = "With " + handName(sp.cls) + ", going all-in earns " + (sp.ev >= 0 ? "+" : "−") + Math.abs(sp.ev).toFixed(2) + "bb compared with folding.";
+  const ev = nodes()[sp.key];
+  drawGrid($("r-grid"), ev, sp.cls);
+  $("r-range").textContent = summary(sp.hero, sp.mask, ev) + ". " + notation(ev);
+  $("result").hidden = false; $("actions").hidden = true;
+  drawScore(); $("b-next").focus({preventScroll: true});
+}
+
+function drawScore() {
+  const s = $("score"); s.textContent = "";
+  const add = (label, val) => { const sp = document.createElement("span"); sp.append(label + " "); const b = document.createElement("b"); b.textContent = val; sp.appendChild(b); s.appendChild(sp); };
+  add("Correct", state.right + " / " + state.total);
+  add("Streak", String(state.streak));
+  add("Lost to mistakes", state.lost.toFixed(2) + "bb");
+  const r = document.createElement("button"); r.className = "linkbtn"; r.id = "b-reset"; r.textContent = "Reset";
+  r.onclick = () => { state.right = state.total = state.streak = 0; state.lost = 0; state.stats = {}; try { localStorage.removeItem("aof-stats-v1"); } catch (e) {} drawScore(); drawCharts(); };
+  s.appendChild(r);
+}
+
+function drawCharts() {
+  const n = state.n, pts = points(n), nd = nodes(), box = $("c-spots");
+  if (!nd[state.chart]) state.chart = "0:0";
+  box.textContent = "";
+  for (const [i, m] of pts) {
+    const key = i + ":" + m, b = document.createElement("button"), st = state.stats[[state.family, n, state.stack, key].join("|")];
+    b.setAttribute("aria-pressed", String(key === state.chart));
+    b.textContent = SEATS[n][i] + (m ? " vs " + shovers(i, m).join("+") : " first in");
+    if (st) { const sm = document.createElement("small"); sm.textContent = st[1] + "/" + st[0]; b.appendChild(sm); }
+    b.onclick = () => { state.chart = key; drawCharts(); };
+    box.appendChild(b);
+  }
+  const [hi, hm] = state.chart.split(":").map(Number), ev = nd[state.chart];
+  $("c-title").textContent = summary(hi, hm, ev);
+  drawGrid($("c-grid"), ev, -1);
+  $("c-range").textContent = notation(ev);
+  const val = DATA[state.family][n][state.stack].value;
+  $("c-value").textContent = "When everyone plays these ranges, the average result per hand is " + SEATS[n].map((s, k) => s + " " + (val[k] >= 0 ? "+" : "−") + Math.abs(val[k]).toFixed(2)).join(", ") + " bb" + (state.family === "cash" ? ". The total is the fee: about 2.5bb per 100 hands from each player at a four-handed table." : ".");
+}
+
+function fillStacks() {
+  const sel = $("f-stack"), stacks = Object.keys(DATA[state.family][state.n]).sort((a, b) => a - b);
+  if (!stacks.includes(state.stack)) state.stack = stacks.includes("8") ? "8" : stacks[stacks.length - 1];
+  sel.textContent = "";
+  for (const s of stacks) { const o = document.createElement("option"); o.value = s; o.textContent = s + " bb"; sel.appendChild(o); }
+  sel.value = state.stack;
+}
+function refresh() { fillStacks(); showSpot(); drawScore(); drawCharts(); }
+function setTab(charts) {
+  $("drill").hidden = charts; $("charts").hidden = !charts;
+  $("tab-drill").setAttribute("aria-selected", String(!charts)); $("tab-charts").setAttribute("aria-selected", String(charts));
+  if (charts) drawCharts();
+}
+
+try { state.stats = JSON.parse(localStorage.getItem("aof-stats-v1") || "{}") || {}; } catch (e) { state.stats = {}; }
+$("f-family").onchange = e => { state.family = e.target.value; refresh(); };
+$("f-players").onchange = e => { state.n = Number(e.target.value); state.chart = "0:0"; refresh(); };
+$("f-stack").onchange = e => { state.stack = e.target.value; showSpot(); drawCharts(); };
+$("f-focus").onchange = e => { state.focus = e.target.value; showSpot(); };
+$("b-allin").onclick = () => answer(true);
+$("b-fold").onclick = () => answer(false);
+$("b-next").onclick = showSpot;
+$("tab-drill").onclick = () => setTab(false);
+$("tab-charts").onclick = () => setTab(true);
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "SELECT" || $("drill").hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (!state.answered && (k === "a" || k === "s")) answer(true);
+  else if (!state.answered && k === "f") answer(false);
+  else if (state.answered && (k === "enter" || k === " " || k === "n")) { e.preventDefault(); showSpot(); }
+});
+refresh();
+</script>

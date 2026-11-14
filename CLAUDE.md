@@ -172,11 +172,51 @@ tells the user describes, table dynamics (who just lost a big pot), antes or
 blinds about to go up, re-entry still being open (survival matters less),
 bounties (calling gets looser).
 
+## All-In or Fold
+
+A separate format with its own solved tables. Four players, 8bb stacks (chips
+above 8bb leave the table), every player moves all-in or folds, and a fee of
+about 0.1bb comes out of every pot. The whole game is 14 situations: which
+seat you are in and who has already shoved. `tools/aof_solver.c` solves it
+with real cards and multi-way showdowns; the answers are in
+`poker_coach/data/aof.json` for 2 to 4 players and stacks of 2-8bb (cash) or
+2-20bb (tournament chips, no fee, no ICM).
+
+```bash
+python3 -m poker_coach aof --hand A5s --pos BTN --shoved CO          # one decision
+python3 -m poker_coach aof --hand Q4o --pos SB --stacks "SB=8,BB=5.5" # unequal stacks
+python3 -m poker_coach aof --hand 22 --pos BB --shoved SB --players 2 --stack 15 --mode tournament
+python3 -m poker_coach aof-chart --pos SB --shoved CO                 # the whole range, as a grid
+python3 -m poker_coach aof-sheet                                      # all 14 ranges
+python3 -m poker_coach aof-quiz --count 10 --print                    # drill questions with answers
+```
+
+Use it to teach the format, not to play it for the user:
+
+- **Drills.** Run `aof-quiz --print`, ask the questions one at a time, keep
+  the answers to yourself until they reply, and explain the misses with
+  `aof-chart`. `aof_trainer.html` is the same drill as a page they can open on
+  their own (rebuild it with `python3 tools/build_aof_page.py`).
+- **Review.** After a session, take their screenshots or hand list and check
+  each decision with `aof`. Report the mistakes by size (the bb lost), biggest
+  first, and what pattern they share.
+- **Not live.** Do not run a picture-by-picture loop while they are sitting at
+  a real-money All-In or Fold table. The act timer is a few seconds, so the
+  answer arrives late, and GGPoker forbids charts or any outside help during
+  play. If asked, say that once and offer a drill or a review instead.
+
+Reading the answer: `shoving earns +0.12bb compared with folding` is the size
+of the decision; under 0.05bb is a coin flip and either play is fine. Unequal
+stacks are answered for the effective stack, which is an approximation; for an
+exact answer run the solver on the real stacks (it needs a C compiler):
+`gcc -O3 -fopenmp -o aof tools/aof_solver.c -lm && ./aof 8,6.5,8,5 0.1 1 150000000 4000000 20000`.
+
 ## Housekeeping
 
 - State lives in `tournament/current.json` (git-ignored). `new` archives the
   previous tournament.
 - After the tournament, if asked for a review, use `log` and `show --log 30`.
 - Tests: `python3 -m unittest discover -s tests`. Rebuild data only if ranges
-  or the solver change: `tools/gen_preflop_equity.c` (equity table) and
-  `python3 -c "from poker_coach.pushfold import build_charts; build_charts()"`.
+  or the solver change: `tools/gen_preflop_equity.c` (equity table),
+  `python3 -c "from poker_coach.pushfold import build_charts; build_charts()"`,
+  and `python3 tools/build_aof.py` (All-In or Fold tables, about 35 minutes).

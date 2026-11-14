@@ -14,6 +14,7 @@ import argparse
 import json
 import sys
 
+from . import aof as A
 from . import state as S
 from .cards import (HANDS, cards_str, format_range, parse_cards, parse_hand, range_combos,
                     range_pct)
@@ -628,6 +629,85 @@ def cmd_icm(a) -> int:
 
 
 # ----------------------------------------------------------------------------
+# All-In or Fold
+# ----------------------------------------------------------------------------
+
+def _aof_stacks(a, n: int) -> list[float]:
+    stacks = [float(a.stack)] * n
+    if getattr(a, "stacks", None):
+        for item in a.stacks.replace(";", ",").split(","):
+            if not item.strip():
+                continue
+            if "=" not in item:
+                raise ValueError(f"stacks look like CO=8,BTN=6.5 (got {item!r})")
+            seat, val = item.split("=", 1)
+            stacks[A.position_index(seat, n)] = float(val)
+    return stacks
+
+
+def cmd_aof(a) -> int:
+    hand, _ = parse_hand(a.hand)
+    n = a.players
+    hero = A.position_index(a.pos, n)
+    mask = A.parse_shovers(a.shoved, n, hero)
+    ans = A.decide(hand, n, hero, mask, _aof_stacks(a, n), a.mode)
+    _out(ans.render())
+    return 0
+
+
+def cmd_aof_chart(a) -> int:
+    n = a.players
+    hero = A.position_index(a.pos, n)
+    mask = A.parse_shovers(a.shoved, n, hero)
+    family = A.FAMILIES.get(a.mode, a.mode)
+    weights, ev, used = A.node_range(family, n, hero, mask, a.stack)
+    solid = [1.0 if e > 0 else 0.0 for e in ev]
+    _out(f"{A.describe_point(n, hero, mask)} | {n}-handed, {used:g}bb, {a.mode}: "
+         f"{range_pct(solid):.1f}% of hands")
+    _out(format_range(solid))
+    _out(_grid(weights))
+    _out("  (++ here means shoving and folding are worth the same within 0.05bb)")
+    return 0
+
+
+def cmd_aof_sheet(a) -> int:
+    _out(A.sheet(a.players, a.stack, a.mode))
+    return 0
+
+
+def cmd_aof_quiz(a) -> int:
+    import random
+
+    rng = random.Random(a.seed)
+    spots = [A.random_spot(rng, a.players, a.stack, a.mode) for _ in range(a.count)]
+    if a.print or not sys.stdin.isatty():
+        _out(f"All-In or Fold drill: {a.players}-handed, {a.stack:g}bb, {a.mode}")
+        for k, sp in enumerate(spots, 1):
+            _out(f"Q{k}. {sp.question()}")
+        _out("")
+        _out("Answers")
+        for k, sp in enumerate(spots, 1):
+            ans = sp.answer()
+            _out(f"A{k}. {ans.action} ({ans.ev:+.2f}bb, {ans.confidence})")
+        return 0
+    right, lost = 0, 0.0
+    for k, sp in enumerate(spots, 1):
+        ans = sp.answer()
+        reply = input(f"{k}/{len(spots)}  {sp.question()}  (a)ll-in or (f)old? ").strip().lower()
+        if reply in ("q", "quit", "exit"):
+            break
+        mine = "FOLD" if reply.startswith("f") else "ALL-IN"
+        if mine == ans.action or ans.confidence == "close":
+            right += 1
+            _out(f"   correct: {ans.action} ({ans.ev:+.2f}bb)")
+        else:
+            lost += abs(ans.ev)
+            _out(f"   no: {ans.action} ({ans.ev:+.2f}bb). Range here: {format_range(ans.range_weights)}")
+    _out(f"Score {right}/{len(spots)}; mistakes cost {lost:.2f}bb in total.")
+    return 0
+
+
+# ----------------------------------------------------------------------------
 
 def _add_postflop_args(p) -> None:
     p.add_argument("--board", help="community cards, e.g. Ks7d2c")
@@ -779,6 +859,38 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("icm", help="ICM value and risk premiums at the tracked table")
     p.add_argument("--goal", choices=S.GOALS)
     p.set_defaults(fn=cmd_icm)
+
+    def aof_common(q, hand: bool) -> None:
+        if hand:
+            q.add_argument("--hand", required=True, help="AKo, 77, A5s or exact cards")
+        q.add_argument("--players", type=int, default=4, help="players dealt in (2-4)")
+        q.add_argument("--stack", type=float, default=8.0, help="stack in big blinds (default 8)")
+        q.add_argument("--mode", choices=["cash", "tournament"], default="cash",
+                       help="cash = 0.1bb fee per hand, 8bb cap; tournament = no fee, up to 20bb")
+
+    p = sub.add_parser("aof", help="All-In or Fold: shove or fold this hand")
+    aof_common(p, True)
+    p.add_argument("--pos", required=True, help="your seat: CO, BTN, SB, BB")
+    p.add_argument("--shoved", help="players already all-in, e.g. 'CO' or 'CO,BTN'")
+    p.add_argument("--stacks", help="unequal stacks, e.g. 'CO=8,BTN=6.5,SB=8,BB=5'")
+    p.set_defaults(fn=cmd_aof)
+
+    p = sub.add_parser("aof-chart", help="All-In or Fold: the whole range for one situation")
+    aof_common(p, False)
+    p.add_argument("--pos", required=True)
+    p.add_argument("--shoved")
+    p.set_defaults(fn=cmd_aof_chart)
+
+    p = sub.add_parser("aof-sheet", help="All-In or Fold: every range of a format, as Markdown")
+    aof_common(p, False)
+    p.set_defaults(fn=cmd_aof_sheet)
+
+    p = sub.add_parser("aof-quiz", help="All-In or Fold: drill random spots")
+    aof_common(p, False)
+    p.add_argument("--count", type=int, default=20)
+    p.add_argument("--seed", type=int)
+    p.add_argument("--print", action="store_true", help="print questions and answers instead of asking")
+    p.set_defaults(fn=cmd_aof_quiz)
     return ap
 
 
