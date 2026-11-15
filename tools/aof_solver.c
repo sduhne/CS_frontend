@@ -299,9 +299,12 @@ static void refine(long samples) {
                     int deck[50], nd = 0;
                     for (int card = 0; card < 52; card++)
                         if (card != combos[x][0] && card != combos[x][1]) deck[nd++] = card;
-                    long acc = 0, tries = 0, max_tries = per * 200000L;
+                    /* a situation the earlier players never create is given up on,
+                       and reported with zero samples */
+                    long acc = 0, tries = 0, max_tries = per * 5000L;
                     int pre = 2 * i, rest = 2 * (N - 1 - i) + 5;
                     while (acc < per && tries < max_tries) {
+                        if (acc == 0 && tries >= 1000000L) break;
                         tries++;
                         for (int k = 0; k < pre; k++) {
                             int j = k + (int)(rng_next(&seed) % (uint64_t)(50 - k));
