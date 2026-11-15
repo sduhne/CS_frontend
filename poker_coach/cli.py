@@ -650,7 +650,7 @@ def cmd_aof(a) -> int:
     n = a.players
     hero = A.position_index(a.pos, n)
     mask = A.parse_shovers(a.shoved, n, hero)
-    ans = A.decide(hand, n, hero, mask, _aof_stacks(a, n), a.mode)
+    ans = A.decide(hand, n, hero, mask, _aof_stacks(a, n), A.family_for(a.mode, a.vs))
     _out(ans.render())
     return 0
 
@@ -659,10 +659,10 @@ def cmd_aof_chart(a) -> int:
     n = a.players
     hero = A.position_index(a.pos, n)
     mask = A.parse_shovers(a.shoved, n, hero)
-    family = A.FAMILIES.get(a.mode, a.mode)
+    family = A.family_for(a.mode, a.vs)
     weights, ev, used = A.node_range(family, n, hero, mask, a.stack)
     solid = [1.0 if e > 0 else 0.0 for e in ev]
-    _out(f"{A.describe_point(n, hero, mask)} | {n}-handed, {used:g}bb, {a.mode}: "
+    _out(f"{A.describe_point(n, hero, mask)} | {n}-handed, {used:g}bb, {A.FAMILY_LABEL[family]}: "
          f"{range_pct(solid):.1f}% of hands")
     _out(format_range(solid))
     _out(_grid(weights))
@@ -671,7 +671,25 @@ def cmd_aof_chart(a) -> int:
 
 
 def cmd_aof_sheet(a) -> int:
-    _out(A.sheet(a.players, a.stack, a.mode))
+    _out(A.sheet(a.players, a.stack, A.family_for(a.mode, a.vs)))
+    return 0
+
+
+def cmd_aof_compare(a) -> int:
+    """Which table to use: every table against every kind of opponent."""
+    m = A.matrix()
+    if not m:
+        return _fail("no comparison stored; run tools/build_aof_exploit.py")
+    heroes = [("solved", "Solved table"), ("cash-loose", "Loose-table ranges"), ("cash-vloose", "Very-loose ranges")]
+    opps = [("solid", "solid"), ("cash-loose", "call 1.5x wide"), ("cash-vloose", "call 2x wide")]
+    _out("4-handed, 8bb, 0.1bb fee: your result in bb per 100 hands (swing per hand in bb)")
+    _out(f"{'You play':<20}" + "".join(f"{'vs ' + label:>22}" for _, label in opps))
+    for hk, hl in heroes:
+        cells = []
+        for ok, _ in opps:
+            c = m.get(f"{hk}|{ok}")
+            cells.append(f"{c['bb100']:+.1f} ({c['sd']:.2f})" if c else "?")
+        _out(f"{hl:<20}" + "".join(f"{c:>22}" for c in cells))
     return 0
 
 
@@ -679,9 +697,10 @@ def cmd_aof_quiz(a) -> int:
     import random
 
     rng = random.Random(a.seed)
-    spots = [A.random_spot(rng, a.players, a.stack, a.mode) for _ in range(a.count)]
+    family = A.family_for(a.mode, a.vs)
+    spots = [A.random_spot(rng, a.players, a.stack, family) for _ in range(a.count)]
     if a.print or not sys.stdin.isatty():
-        _out(f"All-In or Fold drill: {a.players}-handed, {a.stack:g}bb, {a.mode}")
+        _out(f"All-In or Fold drill: {a.players}-handed, {a.stack:g}bb, {A.FAMILY_LABEL[family]}")
         for k, sp in enumerate(spots, 1):
             _out(f"Q{k}. {sp.question()}")
         _out("")
@@ -867,6 +886,9 @@ def build_parser() -> argparse.ArgumentParser:
         q.add_argument("--stack", type=float, default=8.0, help="stack in big blinds (default 8)")
         q.add_argument("--mode", choices=["cash", "tournament"], default="cash",
                        help="cash = 0.1bb fee per hand, 8bb cap; tournament = no fee, up to 20bb")
+        q.add_argument("--vs", choices=["solid", "loose", "very-loose"], default="solid",
+                       help="opponents: solid (the solved table), loose (they call 1.5x too wide) "
+                            "or very-loose (2x); cash only")
 
     p = sub.add_parser("aof", help="All-In or Fold: shove or fold this hand")
     aof_common(p, True)
@@ -891,6 +913,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int)
     p.add_argument("--print", action="store_true", help="print questions and answers instead of asking")
     p.set_defaults(fn=cmd_aof_quiz)
+
+    p = sub.add_parser("aof-compare", help="All-In or Fold: each table against each kind of opponent")
+    p.set_defaults(fn=cmd_aof_compare)
     return ap
 
 

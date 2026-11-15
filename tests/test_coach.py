@@ -605,3 +605,68 @@ class AllInOrFold(unittest.TestCase):
         with redirect_stdout(out), redirect_stderr(err):
             code = main(["aof", "--hand", "AA", "--pos", "BB"])
         self.assertEqual(code, 2)
+
+
+class AllInOrFoldLooseTables(unittest.TestCase):
+    """Best-response ranges against opponents who call too wide."""
+
+    def setUp(self):
+        from poker_coach import aof
+        self.A = aof
+
+    def pct(self, family, hero, mask, stack=8.0, n=4):
+        _, ev, _ = self.A.node_range(family, n, hero, mask, stack)
+        return range_pct([1.0 if e > 0 else 0.0 for e in ev])
+
+    def test_families(self):
+        A = self.A
+        self.assertEqual(A.family_for("cash", None), "cash")
+        self.assertEqual(A.family_for("cash", "loose"), "cash-loose")
+        self.assertEqual(A.family_for("cash", "very-loose"), "cash-vloose")
+        self.assertEqual(A.family_for("tournament", "solid"), "chips")
+        with self.assertRaises(ValueError):
+            A.family_for("tournament", "loose")
+        with self.assertRaises(ValueError):
+            A.family_for("cash", "drunk")
+        for fam in ("cash-loose", "cash-vloose"):
+            for n in (2, 3, 4):
+                self.assertEqual(A.stack_grid(fam, n), A.stack_grid("cash", n))
+
+    def test_shove_tighter_when_nobody_folds(self):
+        for hero in (0, 1, 2):
+            solid = self.pct("cash", hero, 0)
+            loose = self.pct("cash-loose", hero, 0)
+            vloose = self.pct("cash-vloose", hero, 0)
+            self.assertLess(loose, solid, hero)
+            self.assertLess(vloose, solid, hero)
+        # the monsters never change
+        for fam in ("cash-loose", "cash-vloose"):
+            for hero, mask in self.A.decision_points(4):
+                self.assertEqual(self.A.decide(HAND_INDEX["AA"], 4, hero, mask, family=fam).action, "ALL-IN")
+
+    def test_comparison_matrix(self):
+        m = self.A.matrix()
+        self.assertEqual(len(m), 9)
+        self.assertAlmostEqual(m["solved|solid"]["bb100"], -2.5, delta=0.6)
+        for fam in ("cash-loose", "cash-vloose"):
+            # the tailored table does at least as well as the solved one against its own opponents
+            self.assertGreaterEqual(m[f"{fam}|{fam}"]["bb100"], m[f"solved|{fam}"]["bb100"] - 0.3)
+        # looser opponents are better opponents
+        self.assertGreater(m["solved|cash-vloose"]["bb100"], m["solved|solid"]["bb100"])
+
+    def test_drills_and_cli(self):
+        A = self.A
+        rng = random.Random(9)
+        for _ in range(30):
+            sp = A.random_spot(rng, family="cash-vloose")
+            self.assertIn(sp.answer().action, ("ALL-IN", "FOLD"))
+        for args, code in ((["aof", "--hand", "T5s", "--pos", "SB", "--vs", "loose"], 0),
+                           (["aof-chart", "--pos", "SB", "--vs", "very-loose"], 0),
+                           (["aof-sheet", "--vs", "loose"], 0),
+                           (["aof-quiz", "--count", "3", "--seed", "2", "--print", "--vs", "very-loose"], 0),
+                           (["aof-compare"], 0),
+                           (["aof", "--hand", "T5s", "--pos", "SB", "--mode", "tournament", "--vs", "loose"], 2)):
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                got = main(args)
+            self.assertEqual(got, code, (args, err.getvalue()))

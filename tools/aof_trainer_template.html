@@ -101,6 +101,7 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
 
   <div class="format">
     <label for="f-family">Game<select id="f-family"><option value="cash">Cash, 0.1bb fee</option><option value="chips">Tournament, no fee</option></select></label>
+    <label for="f-opp">Opponents<select id="f-opp"><option value="">Solid</option><option value="-loose">Loose: call 1.5x too wide</option><option value="-vloose">Very loose: call 2x too wide</option></select></label>
     <label for="f-players">Players<select id="f-players"><option>4</option><option>3</option><option>2</option></select></label>
     <label for="f-stack">Stack<select id="f-stack"></select></label>
     <label for="f-focus">Drill on<select id="f-focus"><option value="all">Every situation</option><option value="open">Folded to you</option><option value="one">One player all-in</option><option value="multi">Two or more all-in</option></select></label>
@@ -152,12 +153,15 @@ const DATA = /*DATA*/;
 const RANKS = "AKQJT98765432", SEATS = {2: ["SB", "BB"], 3: ["BTN", "SB", "BB"], 4: ["CO", "BTN", "SB", "BB"]};
 const SUITS = ["♣", "♦", "♥", "♠"];
 const $ = id => document.getElementById(id);
-const state = {family: "cash", n: 4, stack: "8", focus: "all", spot: null, answered: false,
+const state = {family: "cash", opp: "", n: 4, stack: "8", focus: "all", spot: null, answered: false,
                right: 0, total: 0, lost: 0, streak: 0, chart: "0:0", stats: {}};
 
 function handName(i) { const r = Math.floor(i / 13), c = i % 13; return r === c ? RANKS[r] + RANKS[r] : r < c ? RANKS[r] + RANKS[c] + "s" : RANKS[c] + RANKS[r] + "o"; }
 function classOf(a, b) { const r1 = a >> 2, r2 = b >> 2; if (r1 === r2) return (12 - r1) * 14; const hi = Math.max(r1, r2), lo = Math.min(r1, r2), row = 12 - hi, col = 12 - lo; return (a & 3) === (b & 3) ? row * 13 + col : col * 13 + row; }
-function nodes() { return DATA[state.family][state.n][state.stack].nodes; }
+function fam() { return state.family === "cash" ? "cash" + state.opp : "chips"; }
+function table() { return DATA[fam()][state.n][state.stack]; }
+function nodes() { return table().nodes; }
+function oppActs(key, cls) { const o = table().opp; return o ? o[key][cls] === "1" : nodes()[key][cls] > 0; }
 function points(n) { const out = []; for (let i = 0; i < n; i++) for (let m = 0; m < (1 << i); m++) if (!(i === n - 1 && m === 0)) out.push([i, m]); return out; }
 function shovers(hero, mask) { return SEATS[state.n].filter((_, k) => k < hero && (mask >> k) & 1); }
 function listOf(s) { return s.length > 1 ? s.slice(0, -1).join(", ") + " and " + s[s.length - 1] : s[0]; }
@@ -203,7 +207,7 @@ function newSpot() {
     for (let k = 0; k < 2 * n; k++) { const j = k + Math.floor(Math.random() * (52 - k)); [deck[k], deck[j]] = [deck[j], deck[k]]; }
     let ok = true, m = 0;
     for (let k = 0; k < hero && ok; k++) {
-      const acts = nd[k + ":" + m][classOf(deck[2 * k], deck[2 * k + 1])] > 0;
+      const acts = oppActs(k + ":" + m, classOf(deck[2 * k], deck[2 * k + 1]));
       if (acts !== Boolean((mask >> k) & 1)) ok = false; else if (acts) m |= 1 << k;
     }
     if (!ok) continue;
@@ -250,7 +254,7 @@ function answer(allin) {
   const sp = state.spot, flip = Math.abs(sp.ev) <= 0.05, best = sp.ev > 0, ok = flip || allin === best;
   state.answered = true; state.total++;
   if (ok) { state.right++; state.streak++; } else { state.lost += Math.abs(sp.ev); state.streak = 0; }
-  const sk = [state.family, state.n, state.stack, sp.key].join("|"), st = state.stats[sk] || (state.stats[sk] = [0, 0]);
+  const sk = [fam(), state.n, state.stack, sp.key].join("|"), st = state.stats[sk] || (state.stats[sk] = [0, 0]);
   st[0]++; if (ok) st[1]++;
   try { localStorage.setItem("aof-stats-v1", JSON.stringify(state.stats)); } catch (e) {}
   const v = $("verdict"), act = best ? "All-in" : "Fold";
@@ -280,7 +284,7 @@ function drawCharts() {
   if (!nd[state.chart]) state.chart = "0:0";
   box.textContent = "";
   for (const [i, m] of pts) {
-    const key = i + ":" + m, b = document.createElement("button"), st = state.stats[[state.family, n, state.stack, key].join("|")];
+    const key = i + ":" + m, b = document.createElement("button"), st = state.stats[[fam(), n, state.stack, key].join("|")];
     b.setAttribute("aria-pressed", String(key === state.chart));
     b.textContent = SEATS[n][i] + (m ? " vs " + shovers(i, m).join("+") : " first in");
     if (st) { const sm = document.createElement("small"); sm.textContent = st[1] + "/" + st[0]; b.appendChild(sm); }
@@ -291,12 +295,15 @@ function drawCharts() {
   $("c-title").textContent = summary(hi, hm, ev);
   drawGrid($("c-grid"), ev, -1);
   $("c-range").textContent = notation(ev);
-  const val = DATA[state.family][n][state.stack].value;
-  $("c-value").textContent = "When everyone plays these ranges, the average result per hand is " + SEATS[n].map((s, k) => s + " " + (val[k] >= 0 ? "+" : "−") + Math.abs(val[k]).toFixed(2)).join(", ") + " bb" + (state.family === "cash" ? ". The total is the fee: about 2.5bb per 100 hands from each player at a four-handed table." : ".");
+  const val = table().value, avg100 = 100 * val.reduce((a, b) => a + b, 0) / val.length;
+  const perSeat = SEATS[n].map((s, k) => s + " " + (val[k] >= 0 ? "+" : "\u2212") + Math.abs(val[k]).toFixed(2)).join(", ");
+  $("c-value").textContent = fam() === "cash" || fam() === "chips"
+    ? "When everyone plays these ranges, the average result per hand is " + perSeat + " bb" + (state.family === "cash" ? ". The total is the fee: about 2.5bb per 100 hands from each player at a four-handed table." : ".")
+    : "Against three opponents who call " + (state.opp === "-loose" ? "1.5" : "2") + " times too many hands, these ranges average " + (avg100 >= 0 ? "+" : "\u2212") + Math.abs(avg100).toFixed(1) + "bb per 100 hands (per hand: " + perSeat + "). They shove tighter than the solved table because nobody folds. Against solid players, switch Opponents back to Solid.";
 }
 
 function fillStacks() {
-  const sel = $("f-stack"), stacks = Object.keys(DATA[state.family][state.n]).sort((a, b) => a - b);
+  const sel = $("f-stack"), stacks = Object.keys(DATA[fam()][state.n]).sort((a, b) => a - b);
   if (!stacks.includes(state.stack)) state.stack = stacks.includes("8") ? "8" : stacks[stacks.length - 1];
   sel.textContent = "";
   for (const s of stacks) { const o = document.createElement("option"); o.value = s; o.textContent = s + " bb"; sel.appendChild(o); }
@@ -310,7 +317,8 @@ function setTab(charts) {
 }
 
 try { state.stats = JSON.parse(localStorage.getItem("aof-stats-v1") || "{}") || {}; } catch (e) { state.stats = {}; }
-$("f-family").onchange = e => { state.family = e.target.value; refresh(); };
+$("f-family").onchange = e => { state.family = e.target.value; if (state.family !== "cash") { state.opp = ""; $("f-opp").value = ""; } $("f-opp").disabled = state.family !== "cash"; refresh(); };
+$("f-opp").onchange = e => { state.opp = e.target.value; refresh(); };
 $("f-players").onchange = e => { state.n = Number(e.target.value); state.chart = "0:0"; refresh(); };
 $("f-stack").onchange = e => { state.stack = e.target.value; showSpot(); drawCharts(); };
 $("f-focus").onchange = e => { state.focus = e.target.value; showSpot(); };

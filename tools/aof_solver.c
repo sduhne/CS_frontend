@@ -209,7 +209,7 @@ static inline uint64_t rng_next(uint64_t *s) {
     return *s = x;
 }
 
-static double value_sum[MAXN];
+static double value_sum[MAXN], value_sq[MAXN];
 
 static void run(long iters, int mode) {
     #pragma omp parallel
@@ -220,7 +220,7 @@ static void run(long iters, int mode) {
         for (int c = 0; c < 52; c++) deck[c] = c;
         Deal d;
         d.mode = mode;
-        double local_val[MAXN] = {0};
+        double local_val[MAXN] = {0}, local_sq[MAXN] = {0};
         long mine = iters / nth;
         int need = 2 * N + 5;
         for (long it = 0; it < mine; it++) {
@@ -253,11 +253,11 @@ static void run(long iters, int mode) {
             d.weight = (double)(it + 1);
             double out[MAXN];
             walk(&d, 0, 0, 1.0, out);
-            if (mode == 1) for (int k = 0; k < N; k++) local_val[k] += out[k];
+            if (mode == 1) for (int k = 0; k < N; k++) { local_val[k] += out[k]; local_sq[k] += out[k] * out[k]; }
         }
         if (mode == 1) {
             #pragma omp critical
-            for (int k = 0; k < N; k++) value_sum[k] += local_val[k];
+            for (int k = 0; k < N; k++) { value_sum[k] += local_val[k]; value_sq[k] += local_sq[k]; }
         }
     }
 }
@@ -360,9 +360,47 @@ static void refine(long samples) {
     }
 }
 
+/*
+ * Fixed strategies, for play against opponents who are not at equilibrium.
+ * A strategy file is text: the number of decision points, then for each one
+ * "player mask" followed by 169 shove probabilities.
+ */
+static double strat_hero[MAXN][MAXMASK][169], strat_opp[MAXN][MAXMASK][169];
+
+static int load_strategy(const char *path, double dst[MAXN][MAXMASK][169]) {
+    FILE *f = fopen(path, "r");
+    int nodes;
+    if (!f) return -1;
+    if (fscanf(f, "%d", &nodes) != 1) { fclose(f); return -1; }
+    for (int q = 0; q < nodes; q++) {
+        int i, m;
+        if (fscanf(f, "%d %d", &i, &m) != 2 || i < 0 || i >= MAXN || m < 0 || m >= MAXMASK) { fclose(f); return -1; }
+        for (int c = 0; c < 169; c++)
+            if (fscanf(f, "%lf", &dst[i][m][c]) != 1) { fclose(f); return -1; }
+    }
+    fclose(f);
+    return 0;
+}
+
 int main(int argc, char **argv) {
-    if (argc < 6) {
-        fprintf(stderr, "usage: %s stacks(csv) fee fee_mode train_iters eval_iters [refine_samples] [ante]\n", argv[0]);
+    /* Extra modes:
+     *   aof_solver br   stacks fee fee_mode samples opp_file
+     *       best response: EV of shoving minus folding at every decision
+     *       point when every other player follows opp_file;
+     *   aof_solver eval stacks fee fee_mode deals hero_file opp_file
+     *       average result and standard deviation per hand, seat by seat,
+     *       for one player on hero_file against three on opp_file.
+     */
+    const char *mode = "solve";
+    if (argc > 1 && (strcmp(argv[1], "br") == 0 || strcmp(argv[1], "eval") == 0)) {
+        mode = argv[1];
+        argv++;
+        argc--;
+    }
+    if (argc < 6 || (strcmp(mode, "eval") == 0 && argc < 7)) {
+        fprintf(stderr, "usage: %s stacks(csv) fee fee_mode train_iters eval_iters [refine_samples] [ante]\n"
+                        "       %s br stacks fee fee_mode samples opp_file\n"
+                        "       %s eval stacks fee fee_mode deals hero_file opp_file\n", argv[0], argv[0], argv[0]);
         return 2;
     }
     char buf[256];
@@ -374,7 +412,7 @@ int main(int argc, char **argv) {
     fee_mode = atoi(argv[3]);
     long train = atol(argv[4]), evals = atol(argv[5]);
     long refine_samples = argc > 6 ? atol(argv[6]) : 20000;
-    if (argc > 7) ante_v = atof(argv[7]);
+    if (strcmp(mode, "solve") == 0 && argc > 7) ante_v = atof(argv[7]);
     double stacks[MAXN];
     for (int k = 0; k < N; k++) {
         stacks[k] = live[k];
@@ -386,6 +424,51 @@ int main(int argc, char **argv) {
 
     init_tables();
     build_masks();
+
+    if (strcmp(mode, "br") == 0) {
+        if (load_strategy(argv[5], avg)) { fprintf(stderr, "cannot read %s\n", argv[5]); return 2; }
+        refine(atol(argv[4]));
+        printf("{\"n\": %d, \"nodes\": [\n", N);
+        int first_node = 1;
+        for (int i = 0; i < N; i++)
+            for (int m = 0; m < (1 << i); m++) {
+                if (i == N - 1 && m == 0) continue;
+                long least = -1;
+                printf("%s{\"player\": %d, \"mask\": %d, \"ev\": [", first_node ? "" : ",\n", i, m);
+                first_node = 0;
+                for (int c = 0; c < 169; c++) {
+                    if (least < 0 || n_ref[i][m][c] < least) least = n_ref[i][m][c];
+                    printf("%s%d", c ? "," : "", (int)lround(100.0 * ev_ref[i][m][c]));
+                }
+                printf("], \"samples\": %ld}", least);
+            }
+        printf("\n]}\n");
+        return 0;
+    }
+    if (strcmp(mode, "eval") == 0) {
+        long deals = atol(argv[4]);
+        if (load_strategy(argv[5], strat_hero) || load_strategy(argv[6], strat_opp)) {
+            fprintf(stderr, "cannot read the strategy files\n");
+            return 2;
+        }
+        double mean[MAXN], sd[MAXN];
+        long done = (deals / omp_get_max_threads()) * omp_get_max_threads();
+        for (int h = 0; h < N; h++) {
+            for (int i = 0; i < N; i++)
+                memcpy(avg[i], i == h ? strat_hero[i] : strat_opp[i], sizeof(avg[i]));
+            memset(value_sum, 0, sizeof(value_sum));
+            memset(value_sq, 0, sizeof(value_sq));
+            run(deals, 1);
+            mean[h] = value_sum[h] / done;
+            sd[h] = sqrt(value_sq[h] / done - mean[h] * mean[h]);
+        }
+        printf("{\"n\": %d, \"value\": [", N);
+        for (int h = 0; h < N; h++) printf("%s%.5f", h ? "," : "", mean[h]);
+        printf("], \"sd\": [");
+        for (int h = 0; h < N; h++) printf("%s%.4f", h ? "," : "", sd[h]);
+        printf("]}\n");
+        return 0;
+    }
     run(train, 0);
     for (int i = 0; i < N; i++)
         for (int m = 0; m < (1 << i); m++)

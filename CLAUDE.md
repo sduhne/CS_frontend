@@ -189,7 +189,21 @@ python3 -m poker_coach aof --hand 22 --pos BB --shoved SB --players 2 --stack 15
 python3 -m poker_coach aof-chart --pos SB --shoved CO                 # the whole range, as a grid
 python3 -m poker_coach aof-sheet                                      # all 14 ranges
 python3 -m poker_coach aof-quiz --count 10 --print                    # drill questions with answers
+python3 -m poker_coach aof --hand T5s --pos SB --vs loose             # against a loose table
+python3 -m poker_coach aof-compare                                    # each table vs each kind of opponent
 ```
+
+Opponent type (`--vs`, cash only, on every `aof` command):
+
+- `solid` (default): the solved table. It assumes opponents call correctly.
+- `loose`: best reply when every opponent shoves normally but calls 1.5 times
+  too many hands. `very-loose`: they call twice too many.
+
+Real tables call too much, so the loose tables shove tighter (the steals stop
+working) and earn more there. `aof-compare` shows what each table earns
+against each kind of opponent, with the swings; quote it when the user asks
+which table to use. The loose tables assume all three opponents are loose: if
+the players left to act are solid, use `solid` for that hand.
 
 Use it to teach the format, not to play it for the user:
 
@@ -219,4 +233,6 @@ exact answer run the solver on the real stacks (it needs a C compiler):
 - Tests: `python3 -m unittest discover -s tests`. Rebuild data only if ranges
   or the solver change: `tools/gen_preflop_equity.c` (equity table),
   `python3 -c "from poker_coach.pushfold import build_charts; build_charts()"`,
-  and `python3 tools/build_aof.py` (All-In or Fold tables, about 35 minutes).
+  `python3 tools/build_aof.py` (All-In or Fold tables, about 35 minutes), then
+  `python3 tools/build_aof_exploit.py` (loose-table ranges, about 10 minutes)
+  and `python3 tools/build_aof_page.py` (trainer page).

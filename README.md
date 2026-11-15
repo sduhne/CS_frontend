@@ -82,6 +82,13 @@ python3 -m poker_coach aof-quiz                                # drill in the te
 `aof_trainer.html` is the same thing as a page: open it in a browser to drill
 random hands and browse the charts, offline.
 
+The solved table assumes opponents who call correctly. Real tables call too
+much, so there are two more sets of ranges, each the best reply to opponents
+who shove normally but call 1.5 times (`--vs loose`) or twice (`--vs
+very-loose`) too many hands. `python3 -m poker_coach aof-compare` shows what
+each set earns against each kind of opponent. The trainer page has the same
+choice under Opponents.
+
 Three things to know about this format:
 
 - **It is a memory game.** There are only 14 situations. Learn the ranges with
@@ -127,5 +134,6 @@ gcc -O3 -march=native -fopenmp -o gen tools/gen_preflop_equity.c
 ./gen 1500000 > poker_coach/data/preflop_equity.json          # about 10 minutes
 python3 -c "from poker_coach.pushfold import build_charts; build_charts()"
 python3 tools/build_aof.py          # All-In or Fold tables, about 35 minutes
+python3 tools/build_aof_exploit.py  # ranges against loose tables, about 10 minutes
 python3 tools/build_aof_page.py     # aof_trainer.html from those tables
 ```

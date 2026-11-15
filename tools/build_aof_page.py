@@ -23,10 +23,14 @@ def main() -> int:
     data: dict = {}
     for sol in raw["solutions"]:
         stack = f"{sol['stack']:g}"
-        data.setdefault(sol["family"], {}).setdefault(str(sol["n"]), {})[stack] = {
+        entry = {
             "value": sol["value"],
             "nodes": {key: node["e"] for key, node in sol["nodes"].items()},
         }
+        if any("o" in node for node in sol["nodes"].values()):
+            # loose tables: how the opponents act, so drills deal realistic spots
+            entry["opp"] = {key: node["o"] for key, node in sol["nodes"].items()}
+        data.setdefault(sol["family"], {}).setdefault(str(sol["n"]), {})[stack] = entry
     with open(os.path.join(ROOT, "tools", "aof_trainer_template.html")) as fh:
         body = fh.read().replace("/*DATA*/", json.dumps(data, separators=(",", ":")))
     page = ('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
