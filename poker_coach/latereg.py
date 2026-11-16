@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 
 from .cards import COMBO_COUNT, HANDS, format_range, range_pct
@@ -50,10 +50,25 @@ SPEEDS = {
     "regular": {"hands_per_level": 12.0, "growth": 1.17, "label": "regular (10-12 min levels)"},
     "slow": {"hands_per_level": 18.0, "growth": 1.15, "label": "slow (15 min levels)"},
 }
-HANDS_PER_MINUTE = 1.1  # hands dealt per minute at one online table
-BUST_CONSTANT = 3.0     # eliminations per table per hand = BUST_CONSTANT / average stack in bb
-BUST_SPREAD = 0.25      # uncertainty (log standard deviation) of that constant
-BUBBLE_SLOWDOWN = 0.6   # eliminations slow to this share when the bubble is next
+# How fast fields shrink.  Measured on thirteen GGPoker bracelet events (live
+# reports of players left and blinds): away from the bubble a table loses a
+# player at a rate of 180-210 per hour divided by the average stack in big
+# blinds; inside the last 10% before the money that falls to about a quarter,
+# and during hand-for-hand to about a tenth.
+HANDS_PER_MINUTE = 1.08  # about 65 hands an hour at an 8-handed table (assumed: GGPoker publishes no figure)
+BUST_CONSTANT = 3.0      # eliminations per table per hand = BUST_CONSTANT / average stack in bb
+BUST_SPREAD = 0.25       # uncertainty (log standard deviation) of that constant
+NEAR_RATIO = 1.10        # players left / places paid below which the field tightens up
+SLOW_NEAR = 0.28         # share of the normal elimination speed from there on
+SLOW_HFH = 0.10          # ... and during hand-for-hand
+HFH_PACE = 2.0           # a hand-for-hand hand takes about two normal hands of clock; the blinds keep rising
+LAST_STRETCH = 0.20      # average speed over the whole last 10% (both phases), for the mental-math rule
+SHALLOW, FORCED = 18.0, 6.0   # average stack (bb) where the slowdown starts to fade, and where it is gone
+
+
+def hfh_left(paid: int) -> float:
+    """Players from the money at which hand-for-hand starts (3 to 7 in the measured events)."""
+    return min(7.0, 2.0 + 0.007 * paid)
 
 
 # --------------------------------------------------------------------------
@@ -68,9 +83,17 @@ class Blinds:
     hands_per_level: float = 6.5
     progress: float = 0.0               # share of the current level already played
     schedule: tuple = ()                # optional: big blinds from the current level on
+    stall_from: float | None = None     # hand number at which hand-for-hand starts
+    stall_pace: float = 1.0             # normal hands of clock used by each hand from then on
+
+    def clock(self, hand: float) -> float:
+        """Hands of normal pace that have gone by after ``hand`` hands."""
+        if self.stall_from is None or hand <= self.stall_from:
+            return hand
+        return self.stall_from + (hand - self.stall_from) * self.stall_pace
 
     def level(self, hand: float) -> int:
-        return int((hand + self.progress * self.hands_per_level) / self.hands_per_level + 1e-9)
+        return int((self.clock(hand) + self.progress * self.hands_per_level) / self.hands_per_level + 1e-9)
 
     def mult(self, hand: float) -> float:
         lv = self.level(hand)
@@ -140,6 +163,7 @@ class Forecast:
     alive: list[float]                  # alive[k] = P(bubble has not burst after k hands)
     mean: float
     samples: list[int] = field(default_factory=list)
+    blinds: Blinds | None = None        # blind schedule that goes with the forecast
 
     def quantile(self, q: float) -> int:
         for k, a in enumerate(self.alive):
@@ -155,30 +179,49 @@ class Forecast:
         return 1.0 if a <= 1e-12 else max(0.0, min(1.0, 1.0 - self.alive[k + 1] / a))
 
 
-def hands_to_bubble(remaining: int, paid: int, avg_bb: float, blinds: Blinds, players: int = 8,
-                    bust: float = BUST_CONSTANT, slowdown: float = BUBBLE_SLOWDOWN,
-                    limit: int = 2000) -> int:
-    """Hands until ``remaining`` players have become ``paid``, in the elimination model.
+def bubble_path(remaining: int, paid: int, avg_bb: float, blinds: Blinds, players: int = 8,
+                bust: float = BUST_CONSTANT, near: float = SLOW_NEAR, hfh: float = SLOW_HFH,
+                limit: int = 4000) -> tuple[int, int | None, float]:
+    """(hands until the bubble bursts, hand at which hand-for-hand starts, its pace).
 
     Each hand every table loses a player with probability ``bust / A`` where
     ``A`` is the average stack in big blinds at that moment: shallow fields
-    bust quickly, deep ones slowly.  Eliminations slow down as the bubble
-    approaches, when players stop calling.
+    bust quickly, deep ones slowly.  Inside the last 10% before the money the
+    field tightens (``near``), and for the last few players the tournament goes
+    hand-for-hand (``hfh``): fewer eliminations per hand, and each hand takes
+    longer while the blinds keep rising.  ``near=1, hfh=1`` switches both off.
     """
     if remaining <= paid:
-        return 0
+        return 0, None, 1.0
     chips = remaining * avg_bb          # total chips in big blinds of the current level
     r = float(remaining)
+    clock, stall, pace_used = 0.0, None, 1.0
+    wait = hfh_left(paid)
     for k in range(limit):
-        a = chips / (r * blinds.mult(k))
+        a = chips / (r * blinds.mult(clock))
         rate = bust / max(a, 1.5)
-        ratio = r / paid
-        if ratio < 1.25:
-            rate *= slowdown + (1.0 - slowdown) * (ratio - 1.0) / 0.25
-        r -= r / players * min(rate, 0.9)
+        pace = 1.0
+        # tight bubble play only holds while stacks are deep enough to fold: under about
+        # 18 big blinds of average stack the blinds start forcing all-ins again
+        forced = max(0.0, min(1.0, (SHALLOW - a) / (SHALLOW - FORCED)))
+        if hfh < 1.0 and r - paid <= wait + 0.5:
+            rate *= hfh + (1.0 - hfh) * forced
+            pace = 1.0 + (HFH_PACE - 1.0) * min(1.0, r / players / 10.0)
+            if stall is None:
+                stall, pace_used = k, pace
+        elif r / paid < NEAR_RATIO:
+            rate *= near + (1.0 - near) * forced
+        r -= r / players * min(rate, 0.5)
+        clock += pace
         if r <= paid:
-            return k + 1
-    return limit
+            return k + 1, stall, pace_used
+    return limit, stall, pace_used
+
+
+def hands_to_bubble(remaining: int, paid: int, avg_bb: float, blinds: Blinds, players: int = 8,
+                    bust: float = BUST_CONSTANT, near: float = SLOW_NEAR, hfh: float = SLOW_HFH) -> int:
+    """Hands until ``remaining`` players have become ``paid`` (see ``bubble_path``)."""
+    return bubble_path(remaining, paid, avg_bb, blinds, players, bust, near, hfh)[0]
 
 
 def field_after(remaining: int, avg_bb: float, blinds: Blinds, hands: int, players: int = 8,
@@ -188,7 +231,7 @@ def field_after(remaining: int, avg_bb: float, blinds: Blinds, hands: int, playe
     r = float(remaining)
     for k in range(int(hands)):
         a = chips / (r * blinds.mult(k))
-        r -= r / players * min(bust / max(a, 1.5), 0.9)
+        r -= r / players * min(bust / max(a, 1.5), 0.5)
         if r <= 2:
             return 2.0
     return r
@@ -196,25 +239,33 @@ def field_after(remaining: int, avg_bb: float, blinds: Blinds, hands: int, playe
 
 def forecast(remaining: int, paid: int, avg_bb: float, blinds: Blinds, players: int = 8,
              bust: float = BUST_CONSTANT, spread: float = BUST_SPREAD, points: int = 41) -> Forecast:
-    """Forecast of the bubble time, with the uncertainty of the elimination speed."""
+    """Forecast of the bubble time, with the uncertainty of the elimination speed.
+
+    ``Forecast.blinds`` is the blind schedule to use with it: the same blinds,
+    with the levels arriving faster per hand once hand-for-hand has started.
+    """
     if remaining <= paid:
-        return Forecast([0.0], 0.0, [0])
-    samples = []
+        return Forecast([0.0], 0.0, [0], blinds)
+    samples, stalls = [], []
     for i in range(points):
         # evenly spaced quantiles of a log-normal speed
         z = _norm_ppf((i + 0.5) / points)
-        samples.append(hands_to_bubble(remaining, paid, avg_bb, blinds, players, bust * math.exp(spread * z)))
+        hands, stall, pace = bubble_path(remaining, paid, avg_bb, blinds, players, bust * math.exp(spread * z))
+        samples.append(hands)
+        stalls.append((stall, pace))
+    stall, pace = stalls[points // 2]
+    warped = replace(blinds, stall_from=stall, stall_pace=pace) if stall is not None else blinds
     # sampling noise of the eliminations themselves (few players to bust = noisy)
     to_bust = remaining - paid
     noise = 1.0 / math.sqrt(max(1.0, to_bust))
     spreaded = []
-    for s in samples:
+    for x in samples:
         for z in (-1.2, -0.4, 0.4, 1.2):
-            spreaded.append(max(1, round(s * math.exp(noise * z * 0.8))))
+            spreaded.append(max(1, round(x * math.exp(noise * z * 0.8))))
     spreaded.sort()
     top = spreaded[-1] + 1
-    alive = [sum(1 for s in spreaded if s > k) / len(spreaded) for k in range(top + 1)]
-    return Forecast(alive, sum(spreaded) / len(spreaded), spreaded)
+    alive = [sum(1 for x in spreaded if x > k) / len(spreaded) for k in range(top + 1)]
+    return Forecast(alive, sum(spreaded) / len(spreaded), spreaded, warped)
 
 
 def forecast_fixed(hands: float, spread: float = 0.12) -> Forecast:
@@ -496,6 +547,7 @@ def solve(stack_bb: float, fc: Forecast, blinds: Blinds, players: int = 8, calle
     maximises the expected prize, ``fold`` never plays a hand, ``nash`` shoves
     the chip-EV ranges whatever the situation.
     """
+    blinds = fc.blinds or blinds
     horizon = min(len(fc.alive) - 1, 1500)
     top = top or max(4.0 * stack_bb, 40.0, 1.6 * fold_cost(fc.quantile(0.98), blinds, players, None, ante) + 10.0)
     walk_gain = SB + ((players - 1) * PLAYER_ANTE if ante == "player" else 0.0)
@@ -624,6 +676,7 @@ def _nash_range(seat: int, b: float) -> tuple:
 def fold_only_chance(stack_bb: float, fc: Forecast, blinds: Blinds, players: int = 8,
                      ante: str = "player") -> float:
     """P(cash) for a player who sits out from now on (posting blinds, never winning a pot)."""
+    blinds = fc.blinds or blinds
     n = len(fc.samples)
     if not n:
         return 1.0
@@ -642,6 +695,7 @@ def fold_only_chance(stack_bb: float, fc: Forecast, blinds: Blinds, players: int
 def safe_stack(fc: Forecast, blinds: Blinds, players: int = 8, confidence: float = 0.95,
                ante: str = "player") -> float:
     """Stack (current big blinds) with which sitting out cashes with the given confidence."""
+    blinds = fc.blinds or blinds
     hands = fc.quantile(confidence)
     worst = max(fold_cost(hands, blinds, players, seat, ante) for seat in range(players))
     return worst + 0.5
@@ -652,33 +706,55 @@ def safe_stack(fc: Forecast, blinds: Blinds, players: int = 8, confidence: float
 # --------------------------------------------------------------------------
 
 LINE_FACTOR = ORBIT_COST / BUST_CONSTANT    # expected blinds paid, per chip the average stack must still grow
-LINE_SAFE = 2.0                             # multiple of the expected cost that makes sitting out safe
+
+# The sit-out line: the stack, in average stacks, from which a player who folds
+# every hand still reaches the money about 95 times in 100.  Rows are players
+# left / places paid.  Taken from the forecast (the highest value over hyper,
+# turbo, regular and slow structures and average stacks of 15 to 40 big
+# blinds), so it errs on the safe side.
+SIT_OUT_TABLE = ((1.00, 0.0), (1.02, 0.50), (1.05, 0.65), (1.10, 0.85), (1.20, 1.00), (1.30, 1.15),
+                 (1.50, 1.55), (2.00, 2.45), (3.00, 4.40), (4.00, 6.30))
 
 ZONES = (
-    # name, lowest cover (stack / safe line), what to do
+    # name, lowest share of the sit-out line, what to do
     ("safe", 1.0, "SIT OUT: the stack lasts until the money"),
-    ("close", 0.6, "nearly there: all-in with the biggest hands only"),
-    ("halfway", 0.3, "needs one double-up: all-in with strong hands"),
-    ("far", 0.0, "needs more than one double-up: all-in with the widest of the three ranges"),
+    ("close", 0.40, "nearly there: fold everything except aces and kings"),
+    ("short", 0.20, "needs one more pot: all-in with the tight chart"),
+    ("far", 0.0, "needs a double-up or two: all-in with the wide chart"),
 )
 
 
 def expected_cost(avg: float, remaining: int, paid: int) -> float:
     """Blinds (in chips) a sitting-out player is expected to pay before the bubble bursts.
 
-    While the field shrinks from ``remaining`` to ``paid`` players the average
-    stack grows from ``avg`` to ``avg * remaining / paid``; a folding player
-    pays about ``LINE_FACTOR`` chips for every chip of that growth, whatever
-    the speed of the blinds.
+    While the field shrinks the average stack grows, and a folding player pays
+    about ``LINE_FACTOR`` chips for every chip of that growth, whatever the
+    speed of the blinds.  The last 10% of the eliminations take about five
+    times as long as the rest, so they are charged five times.
     """
     if paid <= 0 or remaining <= paid:
         return 0.0
-    return LINE_FACTOR * avg * (remaining / paid - 1.0)
+    rho = remaining / paid
+    if rho >= NEAR_RATIO:
+        growth = (rho / NEAR_RATIO - 1.0) + rho * (1.0 - 1.0 / NEAR_RATIO) / LAST_STRETCH
+    else:
+        growth = (rho - 1.0) / LAST_STRETCH
+    return LINE_FACTOR * avg * growth
 
 
 def sit_out_line(avg: float, remaining: int, paid: int) -> float:
     """Stack (chips) from which sitting out reaches the money about 95 times in 100."""
-    return LINE_SAFE * expected_cost(avg, remaining, paid)
+    if paid <= 0 or remaining <= paid:
+        return 0.0
+    rho = remaining / paid
+    table = SIT_OUT_TABLE
+    if rho >= table[-1][0]:
+        (x0, y0), (x1, y1) = table[-2], table[-1]
+        return avg * (y1 + (rho - x1) * (y1 - y0) / (x1 - x0))
+    for (x0, y0), (x1, y1) in zip(table, table[1:]):
+        if rho <= x1:
+            return avg * (y0 + (rho - x0) * (y1 - y0) / (x1 - x0))
+    return avg * table[-1][1]
 
 
 def zone(stack: float, avg: float, remaining: int, paid: int) -> tuple[str, float, str]:
@@ -691,19 +767,35 @@ def zone(stack: float, avg: float, remaining: int, paid: int) -> tuple[str, floa
     return ZONES[-1][0], cover, ZONES[-1][2]
 
 
+# rough chance of cashing with the plan, by share of the sit-out line held
+_CASH_BY_COVER = ((0.0, 0.08), (0.08, 0.22), (0.15, 0.36), (0.30, 0.64), (0.40, 0.82), (0.60, 0.95),
+                  (1.00, 0.99))
+
+
+def cash_chance(cover: float) -> float:
+    """Rough chance of cashing from a stack that is ``cover`` times the sit-out line."""
+    pts = _CASH_BY_COVER
+    if cover >= pts[-1][0]:
+        return pts[-1][1]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if cover <= x1:
+            return y0 + (cover - x0) * (y1 - y0) / (x1 - x0)
+    return pts[-1][1]
+
+
 def describe_zone(stack: float, avg: float, remaining: int, paid: int) -> str:
-    name, cover, text = zone(stack, avg, remaining, paid)
     if remaining <= paid:
         return ">>> IN THE MONEY: the bubble has burst"
+    name, cover, text = zone(stack, avg, remaining, paid)
     cost, line = expected_cost(avg, remaining, paid), sit_out_line(avg, remaining, paid)
     head = "SIT OUT" if name == "safe" else "KEEP PLAYING"
-    lines = [f">>> {head}   stack {stack:,.0f} = {cover:.2f}x the sit-out line ({line:,.0f})",
-             f"  {remaining} left, {paid} paid: the average stack must grow from {avg:,.0f} to "
-             f"{avg * remaining / paid:,.0f} before the money",
-             f"  waiting costs about {cost:,.0f} in blinds; {LINE_SAFE:g}x that is the safe line",
+    lines = [f">>> {head}   stack {stack:,.0f} = {cover:.0%} of the sit-out line ({line:,.0f})",
+             f"  {remaining} left, {paid} paid ({remaining / paid:.2f} per paid place): the line is "
+             f"{line / avg:.2f} average stacks of {avg:,.0f}",
+             f"  waiting is expected to cost about {cost:,.0f} in blinds and antes",
              f"  zone: {name.upper()} - {text}"]
     if name != "safe":
-        lines.append(f"  short by {line - stack:,.0f}; rough chance of cashing from here {min(0.95, stack / line):.0%}")
+        lines.append(f"  short by {line - stack:,.0f}; rough chance of cashing from here {cash_chance(cover):.0%}")
     return "\n".join(lines)
 
 
@@ -796,6 +888,7 @@ def scout(stack_bb: float, remaining: int, paid: int | None = None, entrants: in
         if paid is None:
             raise ValueError("places paid are needed (or levels_left for a flight that ends at a fixed level)")
         fc = forecast(remaining, paid, avg_bb, blinds, players, bust)
+    blinds = fc.blinds or blinds
     hands = fc.mean
     cost = fold_cost(int(round(hands)), blinds, players, None, ante)
     safe = safe_stack(fc, blinds, players, 0.95, ante)
@@ -856,7 +949,7 @@ def describe(sc: Scout) -> str:
 
 
 def plan_for_cover(cover: float, stack_bb: float = 10.0, players: int = 8, callers: str = "normal",
-                   speed: str = "turbo", avg_ratio: float = 2.2, paid: int = 150, grid: int = 180) -> Plan:
+                   speed: str = "turbo", avg_ratio: float = 2.5, paid: int = 200, grid: int = 180) -> Plan:
     """A solved plan for a player whose stack is ``cover`` times the sit-out line.
 
     Used to print reference charts: the ranges depend mostly on how far the
@@ -865,8 +958,14 @@ def plan_for_cover(cover: float, stack_bb: float = 10.0, players: int = 8, calle
     sp = SPEEDS[speed]
     blinds = Blinds(sp["growth"], sp["hands_per_level"])
     avg = avg_ratio * stack_bb
-    ratio = 1.0 + stack_bb / (cover * LINE_SAFE * LINE_FACTOR * avg)
-    remaining = max(paid + 1, int(round(paid * ratio)))
+    lo, hi = 1.0005, 12.0
+    for _ in range(50):                 # players per paid place at which the stack is that share of the line
+        mid = (lo + hi) / 2.0
+        if sit_out_line(avg, round(mid * 100000), 100000) * cover > stack_bb:
+            hi = mid
+        else:
+            lo = mid
+    remaining = max(paid + 1, int(round(paid * lo)))
     fc = forecast(remaining, paid, avg, blinds, players)
     return solve(stack_bb, fc, blinds, players, callers, grid=grid)
 

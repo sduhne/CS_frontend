@@ -705,12 +705,40 @@ class LateRegistration(unittest.TestCase):
             sp = L.SPEEDS[speed]
             bl = L.Blinds(sp["growth"], sp["hands_per_level"])
             for remaining, paid, avg in ((300, 150, 30.0), (900, 300, 25.0), (2000, 1500, 40.0)):
-                hands = L.hands_to_bubble(remaining, paid, avg, bl, 8, bust=3.0, slowdown=1.0)
+                # without the bubble slowdown the rule is exact up to the size of a blind level
+                hands = L.hands_to_bubble(remaining, paid, avg, bl, 8, bust=3.0, near=1.0, hfh=1.0)
                 cost = L.fold_cost(hands, bl, 8)
                 rule = 2.5 / 3.0 * avg * (remaining / paid - 1.0)
                 self.assertLess(abs(cost / rule - 1.0), 0.22, (speed, remaining, paid, cost, rule))
-        self.assertAlmostEqual(L.expected_cost(30000, 300, 150), L.LINE_FACTOR * 30000)
+                # with it, the mental-math rule tracks the forecast in regular structures and is
+                # an upper bound in fast ones, where shallow stacks keep busting on the bubble
+                fc = L.forecast(remaining, paid, avg, bl)
+                slow = L.fold_cost(round(fc.mean), fc.blinds, 8)
+                self.assertGreater(slow, cost)
+                ratio = slow / L.expected_cost(avg, remaining, paid)
+                self.assertLess(ratio, 1.30, (speed, remaining, paid, slow))
+                if speed in ("regular", "slow"):
+                    self.assertGreater(ratio, 0.70, (speed, remaining, paid, slow))
         self.assertEqual(L.expected_cost(30000, 150, 150), 0.0)
+        self.assertGreater(L.expected_cost(30000, 330, 300), 0.0)
+
+    def test_bubble_slows_down(self):
+        """The last tenth of the eliminations takes far longer than the rest, as measured."""
+        L = self.L
+        bl = L.Blinds(1.259, 15 * L.HANDS_PER_MINUTE)       # 15-minute levels
+        # GGPoker bracelet event: 372 left at the close, 134 paid, average 25.8bb; the bubble
+        # burst 104 minutes of play later with the big blind 4.2 times higher
+        hands, stall, pace = L.bubble_path(372, 134, 25.8, bl)
+        clock = stall + (hands - stall) * pace
+        self.assertTrue(85 <= clock / L.HANDS_PER_MINUTE <= 125, clock)
+        self.assertTrue(3.0 <= bl.mult(clock) <= 5.5)
+        plain = L.hands_to_bubble(372, 134, 25.8, bl, near=1.0, hfh=1.0)
+        self.assertGreater(hands, plain * 1.2)
+        # hand-for-hand: the blinds keep rising while fewer hands are dealt
+        warped = L.forecast(372, 134, 25.8, bl).blinds
+        self.assertIsNotNone(warped.stall_from)
+        self.assertGreaterEqual(warped.mult(warped.stall_from + 10), bl.mult(warped.stall_from + 10))
+        self.assertTrue(2 <= L.hfh_left(134) <= 7)
 
     def test_forecast(self):
         L, bl = self.L, self.turbo
@@ -746,6 +774,7 @@ class LateRegistration(unittest.TestCase):
     def test_safe_stack_sits_out(self):
         L, bl = self.L, self.turbo
         fc = L.forecast(165, 150, 25.0, bl)
+        self.assertGreaterEqual(L.sit_out_line(25.0, 165, 150), L.safe_stack(fc, bl, 8, 0.95) * 0.9)
         plan = L.solve(30.0, fc, bl, grid=120)
         self.assertGreater(plan.fold_only, 0.97)
         self.assertGreater(plan.itm, 0.97)
@@ -755,18 +784,25 @@ class LateRegistration(unittest.TestCase):
 
     def test_zones_and_scout(self):
         L = self.L
-        self.assertEqual(L.zone(40000, 50000, 180, 150)[0], "safe")
+        # 180 left, 150 paid: the line is one average stack
+        self.assertAlmostEqual(L.sit_out_line(50000, 180, 150), 50000.0)
+        self.assertEqual(L.zone(70000, 50000, 180, 150)[0], "safe")
+        self.assertEqual(L.zone(40000, 50000, 180, 150)[0], "close")
+        self.assertEqual(L.zone(15000, 50000, 180, 150)[0], "short")
         self.assertEqual(L.zone(1000, 50000, 450, 150)[0], "far")
         self.assertEqual(L.zone(1, 50000, 150, 150)[0], "safe")
-        self.assertIn("SIT OUT", L.describe_zone(40000, 50000, 180, 150))
+        lines = [L.sit_out_line(50000, r, 150) for r in (151, 155, 165, 180, 225, 300, 450, 700)]
+        self.assertTrue(all(a < b for a, b in zip(lines, lines[1:])), lines)
+        self.assertTrue(all(L.cash_chance(a) <= L.cash_chance(b) for a, b in ((0.0, 0.1), (0.1, 0.3), (0.3, 1.0))))
+        self.assertIn("SIT OUT", L.describe_zone(70000, 50000, 180, 150))
         self.assertIn("KEEP PLAYING", L.describe_zone(5000, 50000, 300, 150))
         self.assertEqual([L.seat_name(b, 8) for b in range(7, 0, -1)], ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB"])
         self.assertEqual([L.seat_name(b, 6) for b in range(5, -1, -1)], ["LJ", "HJ", "CO", "BTN", "SB", "BB"])
         self.assertEqual(L.seat_name(6, 7), "UTG")
         ordinary = L.scout(16, 500, 150, entrants=1000, speed="turbo", buyin=10, fee=0.8)
         close = L.scout(16, 190, 150, entrants=320, speed="turbo", buyin=10, fee=0.8)
-        self.assertLess(ordinary.itm, 0.5)
-        self.assertGreater(close.itm, 0.8)
+        self.assertLess(ordinary.itm, 0.35)
+        self.assertGreater(close.itm, 0.6)
         self.assertLess(ordinary.cover, close.cover)
         self.assertIn(ordinary.verdict, ("SKIP", "MARGINAL"))
         bounty = L.scout(16, 500, 150, entrants=1000, speed="turbo", buyin=10, fee=0.8, bounty_share=0.5)
