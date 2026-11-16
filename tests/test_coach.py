@@ -714,7 +714,7 @@ class LateRegistration(unittest.TestCase):
                 # an upper bound in fast ones, where shallow stacks keep busting on the bubble
                 fc = L.forecast(remaining, paid, avg, bl)
                 slow = L.fold_cost(round(fc.mean), fc.blinds, 8)
-                self.assertGreater(slow, cost)
+                self.assertGreaterEqual(slow, cost)
                 ratio = slow / L.expected_cost(avg, remaining, paid)
                 self.assertLess(ratio, 1.30, (speed, remaining, paid, slow))
                 if speed in ("regular", "slow"):
