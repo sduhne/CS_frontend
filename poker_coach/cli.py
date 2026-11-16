@@ -15,6 +15,7 @@ import json
 import sys
 
 from . import aof as A
+from . import latereg as L
 from . import state as S
 from .cards import (HANDS, cards_str, format_range, parse_cards, parse_hand, range_combos,
                     range_pct)
@@ -744,6 +745,57 @@ def _add_postflop_args(p) -> None:
     p.add_argument("--pfr", action="store_true", help="you were the last raiser preflop")
 
 
+# ----------------------------------------------------------------------------
+# late-registration min-cash system
+# ----------------------------------------------------------------------------
+
+def _stack_in_bb(a, what: str, chips, in_bb):
+    if in_bb:
+        return float(in_bb)
+    if chips and a.bb:
+        return parse_amount(str(chips), 1.0, True) / parse_amount(str(a.bb), 1.0, True)
+    raise ValueError(f"give {what} in big blinds, or in chips together with --bb")
+
+
+def cmd_latereg(a) -> int:
+    """Rate a tournament for a last-minute entry that only wants the min-cash."""
+    stack_bb = _stack_in_bb(a, "--stack", a.stack, a.stack_bb)
+    avg_bb = None
+    if a.avg_bb or (a.avg and a.bb):
+        avg_bb = _stack_in_bb(a, "--avg", a.avg, a.avg_bb)
+    if avg_bb is None and not a.entries:
+        raise ValueError("give --entries (total entries) or the average stack (--avg-bb, or --avg with --bb)")
+    hpl = a.level_min * L.HANDS_PER_MINUTE if a.level_min else None
+    if a.paid is None and a.levels_left is None:
+        raise ValueError("give --paid, or --levels-left for a Day 1 flight that ends at a fixed level")
+    sc = L.scout(stack_bb, a.left, a.paid, entrants=a.entries, avg_bb=avg_bb, speed=a.speed, players=a.players,
+                 hands_per_level=hpl, callers=a.callers, buyin=a.buyin, fee=a.fee, min_cash=a.min_cash,
+                 bounty_share=a.bounty, levels_left=a.levels_left, ante=a.ante)
+    _out(L.describe(sc))
+    if a.chart and sc.plan:
+        _out()
+        _out(f"All-in ranges at entry ({stack_bb:.0f}bb), folded to you:")
+        for seat, text in L.chart(sc.plan, 0, stack_bb).items():
+            _out(f"  {seat:<6} {text}")
+    return 0
+
+
+def cmd_latereg_safe(a) -> int:
+    """The sit-out signal: is the stack big enough to fold into the money?"""
+    stack, avg, left, paid = a.stack, a.avg, a.left, a.paid
+    if None in (stack, avg, left, paid) and S.exists():
+        st = _need_state()
+        stack = stack if stack is not None else S.hero_stack(st)
+        avg = avg if avg is not None else S.avg_stack(st)
+        left = left if left is not None else st["tournament"].get("remaining")
+        paid = paid if paid is not None else S.paid_places(st)
+    if None in (stack, avg, left, paid):
+        raise ValueError("need --stack, --avg, --left and --paid (or a tracked tournament with them)")
+    stack, avg = parse_amount(str(stack), 1.0, True), parse_amount(str(avg), 1.0, True)
+    _out(L.describe_zone(stack, avg, int(left), int(paid)))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="poker_coach", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -916,6 +968,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("aof-compare", help="All-In or Fold: each table against each kind of opponent")
     p.set_defaults(fn=cmd_aof_compare)
+
+    p = sub.add_parser("latereg", help="late-registration min-cash plan: rate a tournament before entering")
+    p.add_argument("--stack-bb", type=float, help="the starting stack in big blinds at the level you would enter")
+    p.add_argument("--stack", help="... or the starting stack in chips, with --bb")
+    p.add_argument("--bb", help="big blind at the level you would enter")
+    p.add_argument("--left", type=int, required=True, help="players still in")
+    p.add_argument("--paid", type=int, help="places paid")
+    p.add_argument("--levels-left", type=float,
+                   help="Day 1 flight that pays everyone who survives it: blind levels still to play")
+    p.add_argument("--ante", choices=["player", "bb"], default="player",
+                   help="player = everyone antes each hand (GGPoker); bb = big-blind ante")
+    p.add_argument("--entries", type=int, help="total entries so far")
+    p.add_argument("--avg-bb", type=float, help="average stack in big blinds")
+    p.add_argument("--avg", help="... or the average stack in chips, with --bb")
+    p.add_argument("--speed", choices=list(L.SPEEDS), default="turbo")
+    p.add_argument("--level-min", type=float, help="minutes per blind level (overrides the speed's default)")
+    p.add_argument("--players", type=int, default=8, help="seats per table")
+    p.add_argument("--buyin", type=float, default=1.0, help="the part of the price that goes to the prize pool")
+    p.add_argument("--fee", type=float, default=0.0, help="the fee on top")
+    p.add_argument("--min-cash", type=float, help="smallest prize, same currency as --buyin")
+    p.add_argument("--bounty", type=float, default=0.0, help="share of the prize pool paid as bounties (0.5 for PKO)")
+    p.add_argument("--callers", choices=list(L.CALLERS), default="normal", help="how light the table calls all-ins")
+    p.add_argument("--chart", action="store_true", help="also print the all-in ranges by seat at entry")
+    p.set_defaults(fn=cmd_latereg)
+
+    p = sub.add_parser("latereg-safe", help="sit-out signal: can this stack fold into the money?")
+    p.add_argument("--stack", help="your stack in chips (default: the tracked table)")
+    p.add_argument("--avg", help="average stack in chips")
+    p.add_argument("--left", type=int, help="players still in")
+    p.add_argument("--paid", type=int, help="places paid")
+    p.set_defaults(fn=cmd_latereg_safe)
     return ap
 
 

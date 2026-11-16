@@ -670,3 +670,120 @@ class AllInOrFoldLooseTables(unittest.TestCase):
             with redirect_stdout(out), redirect_stderr(err):
                 got = main(args)
             self.assertEqual(got, code, (args, err.getvalue()))
+
+
+class LateRegistration(unittest.TestCase):
+    """The late-registration min-cash system (poker_coach/latereg.py)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from poker_coach import latereg
+        cls.L = latereg
+        cls.turbo = latereg.Blinds(1.20, 6.5)
+
+    def test_blinds_and_fold_cost(self):
+        L, bl = self.L, self.turbo
+        self.assertEqual(bl.mult(0), 1.0)
+        self.assertAlmostEqual(bl.mult(13), 1.2 ** 2, places=6)
+        self.assertAlmostEqual(bl.hands_until(1.2 ** 3), 19.5, places=6)
+        # one orbit costs the small blind, the big blind and the ante, whatever the seat
+        flat = L.Blinds(1.0, 1000.0)
+        for seat in range(8):
+            self.assertAlmostEqual(L.fold_cost(8, flat, 8, seat), 2.5)
+        self.assertAlmostEqual(L.fold_cost(8, flat, 8), 2.5)
+        # rising blinds cost more, and a schedule is followed level by level
+        self.assertGreater(L.fold_cost(40, bl, 8), L.fold_cost(40, flat, 8))
+        sched = L.Blinds(1.2, 8.0, 0.0, (1000, 1200, 1500))
+        self.assertAlmostEqual(sched.mult(8), 1.2)
+        self.assertAlmostEqual(sched.mult(17), 1.5)
+        self.assertAlmostEqual(sched.mult(24), 1.5 * 1.2)
+
+    def test_waiting_costs_the_growth_of_the_average_stack(self):
+        """Whatever the speed, a folder pays about 2.5/c chips per chip the average stack grows."""
+        L = self.L
+        for speed in ("hyper", "turbo", "regular", "slow"):
+            sp = L.SPEEDS[speed]
+            bl = L.Blinds(sp["growth"], sp["hands_per_level"])
+            for remaining, paid, avg in ((300, 150, 30.0), (900, 300, 25.0), (2000, 1500, 40.0)):
+                hands = L.hands_to_bubble(remaining, paid, avg, bl, 8, bust=3.0, slowdown=1.0)
+                cost = L.fold_cost(hands, bl, 8)
+                rule = 2.5 / 3.0 * avg * (remaining / paid - 1.0)
+                self.assertLess(abs(cost / rule - 1.0), 0.22, (speed, remaining, paid, cost, rule))
+        self.assertAlmostEqual(L.expected_cost(30000, 300, 150), L.LINE_FACTOR * 30000)
+        self.assertEqual(L.expected_cost(30000, 150, 150), 0.0)
+
+    def test_forecast(self):
+        L, bl = self.L, self.turbo
+        near, far = L.forecast(180, 150, 25.0, bl), L.forecast(450, 150, 25.0, bl)
+        for fc in (near, far):
+            self.assertAlmostEqual(fc.alive[0], 1.0)
+            self.assertAlmostEqual(fc.alive[-1], 0.0)
+            self.assertTrue(all(a >= b - 1e-12 for a, b in zip(fc.alive, fc.alive[1:])))
+            self.assertLessEqual(fc.quantile(0.05), fc.quantile(0.5))
+            self.assertLessEqual(fc.quantile(0.5), fc.quantile(0.95))
+        self.assertLess(near.mean, far.mean)
+        self.assertEqual(L.forecast(150, 150, 25.0, bl).mean, 0.0)
+
+    def test_plan_is_the_best_of_the_policies(self):
+        L, bl = self.L, self.turbo
+        fc = L.forecast(300, 150, 30.0, bl)
+        reward = L.bubble_reward(600, 150, None, 1.0, 300 * 30.0)
+        plans = {pol: L.solve(15.0, fc, bl, reward=reward, policy=pol, grid=120) for pol in ("itm", "fold", "nash", "ev")}
+        best = plans["itm"]
+        self.assertGreater(best.itm, plans["fold"].itm)
+        self.assertGreaterEqual(best.itm + 1e-9, plans["nash"].itm)
+        self.assertGreaterEqual(best.itm + 1e-9, plans["ev"].itm)
+        self.assertGreaterEqual(plans["ev"].prize + 1e-9, best.prize)
+        self.assertTrue(0.0 < best.itm < 1.0)
+        # a bigger stack never hurts
+        chances = [best.chance(0, 4, b) for b in (4, 8, 15, 30, 60)]
+        self.assertTrue(all(a <= b + 1e-9 for a, b in zip(chances, chances[1:])), chances)
+        # premiums before trash, and the range never includes the big blind's seat
+        rng = best.shove_range(0, 2, 15.0)
+        self.assertGreaterEqual(rng[HAND_INDEX["AA"]], rng[HAND_INDEX["72o"]])
+        self.assertEqual(sum(best.shove_range(0, 0, 15.0)), 0.0)
+
+    def test_safe_stack_sits_out(self):
+        L, bl = self.L, self.turbo
+        fc = L.forecast(165, 150, 25.0, bl)
+        plan = L.solve(30.0, fc, bl, grid=120)
+        self.assertGreater(plan.fold_only, 0.97)
+        self.assertGreater(plan.itm, 0.97)
+        for seat in range(1, 8):
+            self.assertLess(range_pct(plan.shove_range(0, seat, 30.0)), 1.5)
+        self.assertGreaterEqual(L.safe_stack(fc, bl, 8, 0.99), L.safe_stack(fc, bl, 8, 0.9))
+
+    def test_zones_and_scout(self):
+        L = self.L
+        self.assertEqual(L.zone(40000, 50000, 180, 150)[0], "safe")
+        self.assertEqual(L.zone(1000, 50000, 450, 150)[0], "far")
+        self.assertEqual(L.zone(1, 50000, 150, 150)[0], "safe")
+        self.assertIn("SIT OUT", L.describe_zone(40000, 50000, 180, 150))
+        self.assertIn("KEEP PLAYING", L.describe_zone(5000, 50000, 300, 150))
+        self.assertEqual([L.seat_name(b, 8) for b in range(7, 0, -1)], ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB"])
+        self.assertEqual([L.seat_name(b, 6) for b in range(5, -1, -1)], ["LJ", "HJ", "CO", "BTN", "SB", "BB"])
+        self.assertEqual(L.seat_name(6, 7), "UTG")
+        ordinary = L.scout(16, 500, 150, entrants=1000, speed="turbo", buyin=10, fee=0.8)
+        close = L.scout(16, 190, 150, entrants=320, speed="turbo", buyin=10, fee=0.8)
+        self.assertLess(ordinary.itm, 0.5)
+        self.assertGreater(close.itm, 0.8)
+        self.assertLess(ordinary.cover, close.cover)
+        self.assertIn(ordinary.verdict, ("SKIP", "MARGINAL"))
+        bounty = L.scout(16, 500, 150, entrants=1000, speed="turbo", buyin=10, fee=0.8, bounty_share=0.5)
+        self.assertLess(bounty.min_cash, ordinary.min_cash)
+        self.assertLess(bounty.roi, ordinary.roi)
+        fixed = L.payouts_with_min_cash(1000, 150, 10000.0, 21.0)
+        self.assertAlmostEqual(fixed[-1], 21.0)
+        self.assertAlmostEqual(sum(fixed), 10000.0, places=4)
+
+    def test_cli(self):
+        for args, code in ((["latereg", "--stack-bb", "16", "--left", "190", "--paid", "150", "--entries", "1000"], 0),
+                           (["latereg", "--stack", "8000", "--bb", "500", "--left", "26", "--paid", "8",
+                             "--avg", "16320", "--buyin", "27.6", "--fee", "2.4", "--chart"], 0),
+                           (["latereg-safe", "--stack", "34k", "--avg", "52000", "--left", "180", "--paid", "150"], 0),
+                           (["latereg", "--stack-bb", "16", "--left", "190", "--paid", "150"], 2)):
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                got = main(args)
+            self.assertEqual(got, code, (args, err.getvalue()))
+
