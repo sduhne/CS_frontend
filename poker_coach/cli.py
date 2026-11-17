@@ -6,6 +6,7 @@ Table tracking:  new, sync, set, seat, stack, bust, away, back, type, note,
                  button, next, payouts, show, undo, log
 Decisions:       advise (uses the tracked table), quick (no table needed)
 All-in or fold:  binary, binary-chart, binary-sheet (a whole tournament on two moves)
+Spins:           spin, spin-sheet, spin-odds (3-player winner-take-all games)
 Tools:           equity, range, chart, icm
 """
 
@@ -18,6 +19,7 @@ import sys
 from . import aof as A
 from . import binary as BN
 from . import latereg as L
+from . import spin as SP
 from . import state as S
 from .cards import (HANDS, cards_str, format_range, parse_cards, parse_hand, range_combos,
                     range_pct)
@@ -888,6 +890,83 @@ def cmd_binary_sheet(a) -> int:
     return 0
 
 
+def _spin_spot(a) -> str:
+    """The row of the spin tables for a seat and what happened before it."""
+    pos = a.pos.upper().replace("BUTTON", "BTN")
+    players = a.players
+    if players not in (2, 3):
+        raise ValueError("spins are for 3 players, or 2 when one is out (--players 2)")
+    if pos == "BTN" and players == 2:
+        pos = "SB"                                    # heads-up the button is the small blind
+    if pos not in ("BTN", "SB", "BB"):
+        raise ValueError("--pos is BTN, SB or BB")
+    shoved = sorted(w.upper() for w in (a.shoved or "").replace(",", " ").split())
+    facing = (a.facing or "").lower().split()
+    if facing:
+        if len(facing) < 2 or facing[1] not in ("limp", "limps", "call", "raise", "raises", "minraise", "open"):
+            raise ValueError("--facing is '<seat> limp' or '<seat> raise'")
+        who, what = facing[0].upper(), ("limp" if facing[1] in ("limp", "limps", "call") else "raise")
+        if players == 2:
+            key = f"hu_bb_vs_{what}"
+        else:
+            key = {"SB": "sb", "BB": "bb"}.get(pos, "") + f"_vs_{who.lower()}_{what}"
+        if key not in SP.OPENERS or pos == "BTN":
+            raise ValueError(f"no row for {pos} facing '{a.facing}' with {players} players")
+        return key
+    if players == 2:
+        if pos == "SB" and not shoved:
+            return "hu_sb"
+        if pos == "BB" and shoved == ["SB"]:
+            return "hu_bb"
+        raise ValueError("heads-up: SB first to act, or BB with --shoved SB (a big blind nobody raised has no decision)")
+    key = {("BTN", ()): "btn", ("SB", ()): "sb", ("SB", ("BTN",)): "sb_vs_btn", ("BB", ("BTN",)): "bb_vs_btn",
+           ("BB", ("SB",)): "bb_vs_sb", ("BB", ("BTN", "SB")): "bb_vs_both"}.get((pos, tuple(shoved)))
+    if key is None:
+        raise ValueError(f"no decision for {pos} with all-ins from {', '.join(shoved) or 'nobody'}")
+    return key
+
+
+def cmd_spin(a) -> int:
+    """One all-in or fold decision in a 3-player winner-take-all game."""
+    hand, _cards = parse_hand(a.hand)
+    spot = _spin_spot(a)
+    action, why = SP.decide(hand, spot, a.stack, a.vs)
+    _out(f">>> {action}   {HANDS[hand]}, {a.stack:g}bb effective, {'heads-up' if a.players == 2 else 'three players'}")
+    _out(f"  why: {why}")
+    if spot in SP.SPOTS:
+        _out(f"  num: this seat plays {SP.width(spot, a.stack, a.vs):.0f}% of hands here"
+             + ("" if SP._profile(a.vs) != "solid" else
+                f"; against players who call too wide, {SP.width(spot, a.stack, 'loose'):.0f}%"))
+    return 0
+
+
+def cmd_spin_sheet(a) -> int:
+    _out(SP.sheet_text(a.vs))
+    return 0
+
+
+def cmd_spin_odds(a) -> int:
+    """What a win rate is worth in Spin & Gold, and what the tables won in the simulation."""
+    first, second, third = SP.average_prizes()
+    _out(f"Spin & Gold, 3 players, {100 * SP.FEE:.0f}% fee: the three buy-ins pay back {first + second + third:.2f} on average")
+    small = sum(share for m, share, _p in SP.PRIZES if m <= 3)
+    _out("  " + ", ".join(f"x{m} in {100 * share:.1f}% of games" for m, share, _p in SP.PRIZES[:5])
+         + f" (x2 or x3: {100 * small:.1f}%)")
+    _out(f"  break even: win {100 * SP.break_even():.1f}% of games ({100 * SP.break_even(False):.1f}% if the jackpot never comes); "
+         f"an even player wins 33.3% and loses {-100 * SP.roi(1 / 3):.0f}% a game")
+    for w in ([a.win / 100.0] if a.win else [0.34, 0.36, 0.38, 0.40]):
+        _out(f"  win {100 * w:.0f}%: {100 * SP.roi(w):+.1f}% of a buy-in a game")
+    if SP.sim():
+        _out("  whole games played all-in or fold (simulation, opponents also all-in or fold):")
+        for hero, label in (("sheet", "the standard table"), ("sheet-loose", "the table for loose callers")):
+            cells = []
+            for opp in ("solid", "loose", "vloose"):
+                w = SP.simulated_win(hero, opp)
+                cells.append(f"{100 * w:.1f}% against {SP.PROFILE_NAMES[opp]} ({100 * SP.simulated_roi(hero, opp):+.1f}%)")
+            _out(f"    {label}: wins " + "; ".join(cells))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="poker_coach", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1119,6 +1198,25 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("binary-sheet", help="all-in or fold: every table as text")
     p.add_argument("--players", type=int, default=BN.PLAYERS, help="players at the table: 6, 7 or 8 (default 8)")
     p.set_defaults(fn=cmd_binary_sheet)
+
+    p = sub.add_parser("spin", help="3-player winner-take-all game: all-in or fold this hand")
+    p.add_argument("--hand", required=True)
+    p.add_argument("--pos", required=True, help="BTN, SB or BB (heads-up: SB is the button)")
+    p.add_argument("--stack", type=float, required=True, help="effective stack in big blinds: the smaller of yours "
+                                                               "and the biggest stack that can still call")
+    p.add_argument("--players", type=int, default=3, help="3, or 2 when one player is out")
+    p.add_argument("--shoved", help="who is all-in before you: BTN, SB or 'BTN,SB'")
+    p.add_argument("--facing", help="'SB limp', 'BTN raise' or 'SB raise' (a small raise)")
+    p.add_argument("--vs", default="solid", help="solid (default), loose (they call 1.5 times too wide) or very-loose")
+    p.set_defaults(fn=cmd_spin)
+
+    p = sub.add_parser("spin-sheet", help="3-player games: every table as text, three players and heads-up")
+    p.add_argument("--vs", default="solid", help="solid (default), loose or very-loose")
+    p.set_defaults(fn=cmd_spin_sheet)
+
+    p = sub.add_parser("spin-odds", help="Spin & Gold: the win rate that breaks even, and what a win rate is worth")
+    p.add_argument("--win", type=float, help="your share of games won, in percent")
+    p.set_defaults(fn=cmd_spin_odds)
     return ap
 
 

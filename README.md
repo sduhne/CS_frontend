@@ -144,6 +144,30 @@ to play a short stack, which is what an entry at the close of late
 registration has, and not a proven winner: the model has a late entry
 returning -24% in a turbo. The details are in [PLAYBOOK.md](PLAYBOOK.md).
 
+## Spins (3 players, winner takes all)
+
+GGPoker Spin & Gold and games like it: three players, a random multiplier,
+and in almost every game one prize. With one prize chips are money, so the
+tables are the exact all-in or fold solution of the chip game, for three
+players and heads-up at 2 to 30 big blinds, with a second set for tables
+that call too much and rows for a limp or a small raise in front.
+
+```bash
+python3 -m poker_coach spin --hand K7s --pos BTN --stack 12
+python3 -m poker_coach spin --hand A5o --pos BB --stack 9 --shoved BTN
+python3 -m poker_coach spin --hand Q8o --pos SB --stack 11 --players 2 --vs loose
+python3 -m poker_coach spin --hand KJo --pos BB --stack 14 --facing "SB limp"
+python3 -m poker_coach spin-sheet
+python3 -m poker_coach spin-odds --win 37
+```
+
+What the evidence says: the winner gets 2 buy-ins in 48% of games and 3 in
+45%, the site keeps 7%, and break-even is 35.9% of games. In a simulation of
+whole games the tables won 33.1% against players who call correctly and
+36.4% at best against players who call far too much. Winning regulars
+report 38% to 39%, and get there with small raises and play after the flop,
+which all-in or fold leaves out. The details are in [PLAYBOOK.md](PLAYBOOK.md).
+
 ## Limits
 
 - Opponent ranges are estimates from position, stack and the type you (or the
@@ -167,7 +191,7 @@ you play.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests        # about 60 tests, 30 seconds
+python3 -m unittest discover -s tests        # about 80 tests, under a minute
 ```
 
 The data files in `poker_coach/data/` are generated:
@@ -181,4 +205,6 @@ python3 tools/build_aof_exploit.py  # ranges against loose tables, about 10 minu
 python3 tools/build_aof_page.py     # aof_trainer.html from those tables
 python3 tools/build_latereg.py      # late-registration shove spots, about a minute
 python3 tools/build_binary.py       # all-in or fold tournament tables, half a minute
+python3 tools/build_spin.py         # spin tables (3 players and heads-up), about 7 minutes
+python3 tools/spin_sim.py           # whole spin games played with those tables, about 6 minutes
 ```

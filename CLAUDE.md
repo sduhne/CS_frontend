@@ -349,6 +349,64 @@ python3 -m poker_coach binary-sheet                 # every table as text (--pla
   the numbers are about half as wide as the charts they have seen.
 - The sheet is a study aid, like everything else here.
 
+## Spins (3 players, winner takes all)
+
+GGPoker Spin & Gold: three players, a random multiplier, and in 97.6% of
+games one prize. `poker_coach/spin.py` holds the tables (three players and
+heads-up, 2 to 30 big blinds); the evidence is in @PLAYBOOK.md under "Spins".
+
+```bash
+python3 -m poker_coach spin --hand K7s --pos BTN --stack 12                      # nobody has entered
+python3 -m poker_coach spin --hand A5o --pos BB --stack 9 --shoved BTN           # call an all-in, or fold
+python3 -m poker_coach spin --hand 98s --pos BB --stack 10 --shoved "BTN,SB"     # both are all-in
+python3 -m poker_coach spin --hand Q8o --pos SB --stack 11 --players 2           # two players left
+python3 -m poker_coach spin --hand KJo --pos BB --stack 14 --facing "SB limp"    # a limp or a small raise first
+python3 -m poker_coach spin --hand T5s --pos SB --stack 10 --vs loose            # against players who call too much
+python3 -m poker_coach spin-sheet                    # every table as text (--vs loose for the loose table)
+python3 -m poker_coach spin-odds --win 37            # break-even, and what a win rate is worth
+```
+
+- **Answer in two words:** ALL-IN or FOLD (CALL or FOLD against an all-in,
+  CHECK when the small blind only called), then the reason in one line.
+  `--stack` is the effective stack: the smaller of the user's stack and the
+  biggest stack that can still call, in big blinds.
+- **Not the tournament tables.** One prize means chips are money and there
+  is nothing to survive for, so these ranges are far wider than `binary`.
+  Do not use `binary`, `advise` with ICM or the late-registration charts for
+  a spin.
+- **Loose callers: tighter, not wider.** `--vs loose` drops the weak steals
+  when first in; calls do not change. Use it once the user has seen a player
+  call an all-in with a hand that is not on the call table. `very-loose`
+  exists and wins the same within the noise.
+- **Limps and small raises.** `--facing "SB limp"`, `"BTN raise"` or
+  `"SB raise"`. The rows assume a wide raiser or limper; against a player who
+  only raises strong hands use `--shoved` instead.
+- **Do not oversell it.** Say these plainly when asked whether it makes
+  money:
+  - The winner gets 2 buy-ins in 47.9% of games and 3 in 44.6%; the site
+    keeps 7%.
+  - Break-even is 35.9% of games. An even player wins 33.3% and loses 7% a
+    game. The best regulars report 38% to 39%. Nobody wins half.
+  - In the simulation of whole games these tables won 33.1% against
+    players who call correctly (−8% a game), 34.8% with the loose table
+    against players who call 1.5 times too wide (−3%), and 36.4% against
+    players who call twice too wide (+2%). About break-even is the best
+    case.
+  - All-in or fold is how solvers play under about 8 big blinds. With 10 to
+    25 they raise small and limp, and that is where winning regulars get
+    their edge.
+- **Which games.** The x2 and x3 games (92.5%) start at 15 big blinds with 1
+  and 2 minute levels and last about 10 to 12 hands. The x4, x5 and x10
+  games start at 25 big blinds: all-in or fold gives the most away there.
+- **Teach it, do not play it.** Drill with `spin` and the sheet, review a
+  session's hands afterwards and report the mistakes by size. No
+  picture-by-picture loop at a real-money table: the act timer is 10
+  seconds and GGPoker forbids charts during play. Say that once.
+- **Numbers are estimates.** Stack sizes and level lengths come from two
+  2026 guides, not from GGPoker, and the simulation's opponents also play
+  all-in or fold. When the user reports their own results (games, wins),
+  keep them: a few hundred games is the first real check.
+
 ## Housekeeping
 
 - State lives in `tournament/current.json` (git-ignored). `new` archives the
@@ -362,4 +420,7 @@ python3 -m poker_coach binary-sheet                 # every table as text (--pla
   and `python3 tools/build_aof_page.py` (trainer page);
   `python3 tools/build_latereg.py` (late-registration shove spots, about a
   minute), then `python3 tools/build_binary.py` (all-in or fold tournament
-  tables, half a minute; it reads the late-registration data).
+  tables, half a minute; it reads the late-registration data);
+  `python3 tools/build_spin.py` (spin tables, about 7 minutes; it reads the
+  All-In or Fold tables), then `python3 tools/spin_sim.py` (the whole-game
+  simulation, about 6 minutes).

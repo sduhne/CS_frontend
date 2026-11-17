@@ -462,3 +462,243 @@ late entry earns about the same at every table size in the model (turbo:
   0.02 big blinds per big blind of stack over 10. Stacks are taken as equal.
   Read every range as plus or minus one notch, and price real stacks with
   `advise` when there is time.
+
+## Spins: three players, one prize
+
+A spin (GGPoker Spin & Gold) is a three-player sit & go. A random multiplier
+sets the prize and in 97.6% of games the winner takes all of it.
+`python3 -m poker_coach spin` answers a spot from the tables below and
+`spin-odds` does the money.
+
+### Does the idea hold?
+
+The idea: the game pays about 1 to 1, players call too wide, so aggressive
+all-in play wins more than half the games and makes money. Checked against
+GGPoker's own prize tables, published results and a simulation of whole games:
+
+- **The prizes.** The site keeps 7%, so three buy-ins pay back
+  2.79 on average. The winner gets 2 buy-ins in 47.9%
+  of games and 3 in 44.6%. x4 and x5 come in 2.6% and 2.5% of games, x10 (8
+  and 2 buy-ins for first and second) in 2.4%, anything bigger about once in
+  8,000 games.
+- **Winning half does not happen.** Equal players win 33.3% each and lose 7%
+  a game. Break-even is 35.9% of games. The best regulars report 38% to 39%
+  over 10,000 to 40,000 games, worth 1% to 8% a game before rewards. Half
+  the games would be +38% a game, and nobody reports it. Over 30 games a 36%
+  player shows half or better about one time in twenty, which is why it can
+  look possible.
+- **All-in or fold is right only when short.** Under about 8 big blinds it
+  is how solvers play. Deeper, they raise small or just call with most
+  hands: heads-up at 10 big blinds the small blind plays 88% of hands and
+  moves all-in with 22%. In the solved all-in or fold game the small blind
+  loses 0.05 big blinds a hand at 10 big blinds, 0.13 at 15 and 0.19 at 20,
+  where a player with every move makes it a winning seat. GGPoker's x2 and
+  x3 games (92.5% of all games) start at 15 big blinds with 1 and 2 minute
+  levels, so stacks are under 10 big blinds within a few hands and the cost
+  is small. In the x4 to x10 games, which start at 25, it is larger.
+- **Loose callers call for tighter all-ins, not wider.** When they call too
+  much the weak steals stop working and the strong hands get paid. The best
+  reply drops the bottom of the first-in ranges: at 10 big blinds the button
+  goes from 33% of hands to 26%, the small blind from 57% to 43%.
+- **What weak players really do.** In one professional's database of over a
+  million hands they move all-in about half as often as a solver (button at
+  9 big blinds: 15% against 30%), raise small or limp instead, and then call
+  an all-in far too often (65% against 26% after a small raise). The all-in
+  over a limp or a small raise is where the money is against them.
+- **The tournament tables.** They are built to survive until a prize; here a
+  chip won is worth exactly what a chip lost costs, so against players who
+  call correctly they are too tight (32.0% of games against 33.1%).
+  Against weak players they do about as well as the loose table, because
+  tight is the right answer to players who call too much.
+
+What the tables won: whole games with GGPoker's blind levels, everybody
+all-in or fold, 200,000 games of each common kind, weighted by how often
+each multiplier comes. Share of games won, and the return per game:
+
+| Opponents | Standard table | Loose table | Tournament sheet |
+|---|---|---|---|
+| They call correctly | 33.1% (−8%) | 33.0% (−8%) | 32.0% (−10%) |
+| They call 1.5 times too wide | 34.0% (−5%) | 34.8% (−3%) | 34.2% (−4%) |
+| They call twice too wide | 35.6% (−1%) | 36.4% (+2%) | 36.1% (+1%) |
+| They call 1.5 times too wide and move all-in half as often | 35.5% (−1%) | 36.5% (+2%) | 37.0% (+3%) |
+
+An x2 game lasts about 10 hands and an x3 game about 12, which leaves
+little room for an edge to add up. So: these tables are the correct base for
+the format. They lose the fee against competent players and get to about
+break-even against players who call far too much. The step from there to the
+38% of a winning regular is everything all-in or fold leaves out: small
+raises, limps and play after the flop with 10 to 25 big blinds.
+
+### Three players
+
+The stack is the effective one: the smaller of yours and the biggest stack
+that can still call; against an all-in, its size or your stack if smaller.
+
+**BTN, nobody has entered: all-in with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 22+, A2s+, K2s+, Q4s+, J7s+, T7s+, 97s+, 87s, A2o+, K4o+, Q8o+, J9o+ |
+| 6 to 8bb | 22+, A2s+, K3s+, Q6s+, J7s+, T7s+, 97s+, 86s+, 76s, A2o+, K9o+, Q9o+, JTo |
+| 9 to 12bb | 22+, A2s+, K6s+, Q8s+, J7s+, T7s+, 97s+, 86s+, 76s, A2o+, KTo+, QTo+, JTo |
+| 13 to 17bb | 22+, A2s+, K9s+, Q9s+, J8s+, T8s+, 98s, 87s, A8o+, KTo+, QJo |
+| 18 to 24bb | 22+, A2s+, K9s+, Q9s+, J8s+, T9s, 87s, A9o+, KTo+, QJo |
+| 25bb or more | 55+, A4s+, K9s+, Q9s+, JTs, T9s, ATo+, KJo+ |
+
+**SB, the button folded: all-in with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 92s+, 84s+, 74s+, 64s+, 53s+, A2o+, K2o+, Q2o+, J2o+, T6o+, 96o+, 87o, 76o |
+| 6 to 8bb | 22+, A2s+, K2s+, Q2s+, J4s+, T4s+, 95s+, 85s+, 74s+, 64s+, 53s+, A2o+, K2o+, Q4o+, J7o+, T8o+, 97o+, 87o, 76o |
+| 9 to 12bb | 22+, A2s+, K2s+, Q2s+, J3s+, T3s+, 95s+, 84s+, 74s+, 63s+, 54s, 43s, A2o+, K2o+, Q7o+, J8o+, T8o+, 98o, 87o |
+| 13 to 17bb | 22+, A2s+, K2s+, Q5s+, J5s+, T6s+, 96s+, 85s+, 75s+, 65s, 54s, A2o+, K8o+, Q9o+, J9o+, T8o+, 98o |
+| 18 to 24bb | 22+, A2s+, K4s+, Q6s+, J8s+, T6s+, 96s+, 86s+, 76s, 65s, A2o+, K9o+, Q9o+, J9o+, T9o, 98o, 87o |
+| 25bb or more | 22+, A2s+, K5s+, Q6s+, J7s+, T7s+, 96s+, 87s, 65s, A2o+, KTo+, QJo, JTo, T9o |
+
+**SB, the button is all-in: call with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 22+, A2s+, K2s+, Q7s+, J8s+, T8s+, 98s, 87s, 76s, A2o+, K7o+, Q9o+, JTo |
+| 6 to 8bb | 22+, A2s+, K9s+, Q9s+, JTs, A4o+, KTo+, QJo |
+| 9 to 12bb | 33+, A3s+, KTs+, QTs+, A7o+, KJo+ |
+| 13 to 17bb | 44+, A7s+, KJs+, A8o+, KQo |
+| 18 to 24bb | 55+, A9s+, KQs, ATo+ |
+| 25bb or more | 88+, AJs+, AQo+ |
+
+**BB, the button is all-in: call with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 22+, A2s+, K2s+, Q2s+, J2s+, T3s+, 95s+, 84s+, 74s+, 64s+, 53s+, 43s, A2o+, K2o+, Q5o+, J7o+, T7o+, 98o, 87o, 76o |
+| 6 to 8bb | 22+, A2s+, K4s+, Q8s+, J9s+, T9s, A2o+, K9o+, QTo+, JTo |
+| 9 to 12bb | 22+, A2s+, K9s+, QTs+, A4o+, KTo+, QJo |
+| 13 to 17bb | 44+, A4s+, KTs+, QJs, A8o+, KJo+ |
+| 18 to 24bb | 55+, A9s+, KJs+, ATo+, KQo |
+| 25bb or more | 77+, ATs+, AJo+ |
+
+**BB, the small blind is all-in: call with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 93s+, 85s+, 74s+, 64s+, 54s, A2o+, K2o+, Q2o+, J2o+, T6o+, 96o+, 87o |
+| 6 to 8bb | 22+, A2s+, K2s+, Q2s+, J6s+, T7s+, 98s, A2o+, K2o+, Q6o+, J8o+, T9o |
+| 9 to 12bb | 22+, A2s+, K2s+, Q7s+, J9s+, T9s, A2o+, K6o+, Q9o+, JTo |
+| 13 to 17bb | 33+, A2s+, K8s+, QTs+, JTs, A2o+, K9o+, QJo |
+| 18 to 24bb | 33+, A2s+, K9s+, QTs+, A6o+, KTo+ |
+| 25bb or more | 44+, A5s+, KJs+, A8o+, KQo |
+
+**BB, both are all-in: call with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 22+, A2s+, K2s+, Q2s+, J3s+, T4s+, 95s+, 84s+, 74s+, 63s+, 52s+, 43s, A2o+, K6o+, Q8o+, J8o+, T8o+, 98o, 87o, 76o, 65o |
+| 6 to 8bb | 33+, A4s+, K9s+, Q8s+, J8s+, T8s+, 98s, 87s, 76s, A9o+, KTo+, QJo |
+| 9 to 12bb | 44+, A9s+, KTs+, QTs+, JTs, T9s, ATo+, KQo |
+| 13 to 17bb | 66+, ATs+, KQs, AQo+ |
+| 18 to 24bb | 88+, AJs+, AQo+ |
+| 25bb or more | TT+, AKs, AKo |
+
+### Two players left
+
+Heads-up the button is the small blind and acts first.
+
+**SB (button), first to act: all-in with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 93s+, 84s+, 74s+, 64s+, 53s+, A2o+, K2o+, Q2o+, J2o+, T5o+, 96o+, 86o+, 76o |
+| 6 to 8bb | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 94s+, 84s+, 74s+, 64s+, 53s+, A2o+, K2o+, Q3o+, J7o+, T7o+, 97o+, 87o, 54o |
+| 9 to 12bb | 22+, A2s+, K2s+, Q2s+, J3s+, T6s+, 95s+, 84s+, 74s+, 64s+, 53s+, A2o+, K2o+, Q6o+, J8o+, T7o+, 97o+, 87o |
+| 13 to 17bb | 22+, A2s+, K2s+, Q6s+, J6s+, T6s+, 96s+, 85s+, 75s+, 64s+, 54s, A2o+, K6o+, Q8o+, J8o+, T8o+, 98o, 87o |
+| 18 to 24bb | 22+, A2s+, K3s+, Q6s+, J7s+, T7s+, 96s+, 85s+, 76s, 65s, 54s, A2o+, KTo+, QTo+, J8o+, T8o+ |
+| 25bb or more | 22+, A2s+, K4s+, Q6s+, J7s+, T8s+, 97s+, 86s+, 76s, 65s, A4o+, KTo+, QJo, JTo |
+
+**BB, the small blind is all-in: call with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 93s+, 84s+, 75s+, 64s+, 53s+, 43s, A2o+, K2o+, Q2o+, J2o+, T6o+, 96o+, 86o+ |
+| 6 to 8bb | 22+, A2s+, K2s+, Q2s+, J5s+, T7s+, 97s+, 87s, A2o+, K2o+, Q6o+, J8o+, T9o |
+| 9 to 12bb | 22+, A2s+, K2s+, Q6s+, J8s+, T9s, A2o+, K5o+, Q9o+, JTo |
+| 13 to 17bb | 33+, A2s+, K7s+, Q9s+, JTs, A2o+, K9o+, QJo |
+| 18 to 24bb | 33+, A2s+, K9s+, QTs+, A5o+, KTo+, QJo |
+| 25bb or more | 44+, A5s+, KTs+, A8o+, KQo |
+
+### Against players who call too much
+
+Only the first-in ranges change; the call tables stay as they are.
+
+**BTN, nobody has entered: all-in with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 33+, A2s+, K2s+, Q5s+, J7s+, T8s+, 98s, A2o+, K5o+, Q8o+, J9o+ |
+| 6 to 8bb | 22+, A2s+, K5s+, Q9s+, J9s+, A2o+, K8o+, QTo+ |
+| 9 to 12bb | 22+, A2s+, K9s+, QTs+, JTs, A2o+, KTo+, QJo |
+| 13 to 17bb | 22+, A2s+, KTs+, A7o+, KJo+ |
+| 18 to 24bb | 44+, A4s+, KJs+, A9o+, KQo |
+| 25bb or more | 55+, ATs+, KQs, ATo+ |
+
+**SB, the button folded: all-in with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 95s+, 85s+, 76s, A2o+, K2o+, Q2o+, J2o+, T5o+, 96o+, 87o |
+| 6 to 8bb | 22+, A2s+, K2s+, Q2s+, J5s+, T6s+, 97s+, A2o+, K2o+, Q3o+, J7o+, T8o+, 98o |
+| 9 to 12bb | 22+, A2s+, K2s+, Q5s+, J8s+, T9s, A2o+, K2o+, Q7o+, J9o+ |
+| 13 to 17bb | 22+, A2s+, K4s+, Q8s+, J9s+, T9s, A2o+, K7o+, QTo+, JTo |
+| 18 to 24bb | 22+, A2s+, K6s+, QTs+, JTs, A2o+, K9o+, QTo+ |
+| 25bb or more | 22+, A2s+, KTs+, QTs+, A5o+, KJo+ |
+
+**SB (button), first to act: all-in with**
+
+| Effective stack | Hands |
+|---|---|
+| up to 5bb | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 94s+, 85s+, 75s+, A2o+, K2o+, Q2o+, J2o+, T5o+, 96o+, 87o |
+| 6 to 8bb | 22+, A2s+, K2s+, Q2s+, J3s+, T6s+, 97s+, 87s, A2o+, K2o+, Q3o+, J7o+, T8o+ |
+| 9 to 12bb | 22+, A2s+, K2s+, Q4s+, J8s+, T8s+, 98s, A2o+, K2o+, Q7o+, J9o+ |
+| 13 to 17bb | 22+, A2s+, K2s+, Q8s+, JTs, T9s, A2o+, K7o+, QTo+, JTo |
+| 18 to 24bb | 22+, A2s+, K6s+, Q9s+, JTs, A2o+, K9o+, QJo |
+| 25bb or more | 22+, A2s+, KTs+, QTs+, T9s, A4o+, KJo+ |
+
+### A limp or a small raise before you
+
+All-in with these hands; otherwise fold to a raise and check when the small
+blind only called. Never just call a raise.
+
+| You are, and before you | up to 5bb | 6 to 8bb | 9 to 12bb | 13 to 17bb | 18 to 24bb | 25bb or more |
+|---|---|---|---|---|---|---|
+| SB, the button raised small (3 players) | as an all-in | 22+, A2s+, K4s+, Q8s+, J9s+, T9s, A2o+, K7o+, QTo+, JTo | 22+, A2s+, K7s+, Q9s+, J9s+, T9s, A2o+, KTo+, QJo | 22+, A2s+, K9s+, Q9s+, J9s+, T8s+, 98s, A4o+, KJo+, QJo | 22+, A2s+, K9s+, Q9s+, J9s+, T8s+, 98s, A7o+, KJo+, QJo | 22+, A5s+, K9s+, Q9s+, J9s+, T9s, 98s, ATo+, KQo |
+| BB, the button raised small (3 players) | as an all-in | 22+, A2s+, K2s+, Q7s+, J8s+, T9s, A2o+, K6o+, Q9o+, JTo | 22+, A2s+, K3s+, Q8s+, J8s+, T8s+, 98s, A2o+, K8o+, QTo+, JTo | 22+, A2s+, K6s+, Q8s+, J8s+, T8s+, 97s+, 87s, 76s, A2o+, KTo+, QTo+, JTo | 22+, A2s+, K9s+, Q8s+, J8s+, T8s+, 97s+, 87s, 76s, A2o+, KTo+, QTo+, JTo | 22+, A2s+, K9s+, Q9s+, J8s+, T8s+, 98s, 87s, A8o+, KJo+, QJo, JTo |
+| BB, the small blind raised small (3 players) | as an all-in | 22+, A2s+, K2s+, Q5s+, J8s+, T8s+, A2o+, K4o+, Q8o+, J9o+ | 22+, A2s+, K2s+, Q6s+, J8s+, T7s+, 97s+, 87s, 76s, A2o+, K5o+, Q9o+, JTo | 22+, A2s+, K4s+, Q8s+, J8s+, T7s+, 97s+, 86s+, 76s, 65s, A2o+, K9o+, QTo+, JTo | 22+, A2s+, K6s+, Q8s+, J8s+, T7s+, 97s+, 86s+, 76s, 65s, A2o+, KTo+, QTo+, JTo | 22+, A2s+, K9s+, Q9s+, J8s+, T8s+, 98s, 87s, A4o+, KTo+, QTo+, JTo |
+| BB, the small blind limped (3 players) | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 94s+, 85s+, 75s+, 64s+, 54s, A2o+, K2o+, Q2o+, J3o+, T6o+, 96o+, 87o | 22+, A2s+, K2s+, Q2s+, J3s+, T5s+, 95s+, 85s+, 74s+, 64s+, 53s+, A2o+, K2o+, Q5o+, J8o+, T8o+, 98o, 87o | 22+, A2s+, K2s+, Q2s+, J4s+, T6s+, 95s+, 85s+, 74s+, 64s+, 53s+, A2o+, K2o+, Q8o+, J9o+, T8o+, 98o | 22+, A2s+, K2s+, Q5s+, J7s+, T6s+, 96s+, 85s+, 75s+, 65s, 54s, A2o+, K9o+, QTo+, J9o+, T9o | 22+, A2s+, K4s+, Q8s+, J7s+, T7s+, 96s+, 86s+, 75s+, 65s, 54s, A2o+, KTo+, QTo+, JTo, T9o | 22+, A2s+, K7s+, Q8s+, J8s+, T8s+, 97s+, 87s, A7o+, KTo+, QTo+, JTo |
+| BB, the small blind raised small (heads-up) | as an all-in | 22+, A2s+, K2s+, Q4s+, J7s+, T8s+, 98s, A2o+, K2o+, Q8o+, J9o+, T9o | 22+, A2s+, K2s+, Q4s+, J7s+, T7s+, 97s+, 87s, 76s, A2o+, K3o+, Q9o+, J9o+, T9o | 22+, A2s+, K2s+, Q6s+, J7s+, T7s+, 96s+, 86s+, 75s+, 65s, 54s, A2o+, K8o+, QTo+, JTo, T9o | 22+, A2s+, K4s+, Q8s+, J8s+, T7s+, 97s+, 86s+, 76s, 65s, A2o+, KTo+, QTo+, JTo | 22+, A2s+, K8s+, Q8s+, J8s+, T8s+, 97s+, 87s, 76s, A3o+, KTo+, QTo+, JTo |
+| BB, the small blind limped (heads-up) | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 92s+, 84s+, 74s+, 64s+, 53s+, A2o+, K2o+, Q2o+, J2o+, T5o+, 96o+, 86o+, 76o | 22+, A2s+, K2s+, Q2s+, J2s+, T3s+, 95s+, 84s+, 74s+, 64s+, 53s+, 43s, A2o+, K2o+, Q3o+, J7o+, T7o+, 97o+, 87o, 76o | 22+, A2s+, K2s+, Q2s+, J4s+, T4s+, 95s+, 85s+, 74s+, 64s+, 53s+, 43s, A2o+, K2o+, Q8o+, J8o+, T8o+, 98o, 87o | 22+, A2s+, K2s+, Q5s+, J7s+, T6s+, 96s+, 85s+, 75s+, 64s+, 54s, A2o+, K8o+, QTo+, J9o+, T9o, 98o | 22+, A2s+, K4s+, Q7s+, J7s+, T7s+, 96s+, 86s+, 75s+, 65s, 54s, A2o+, KTo+, QTo+, J9o+, T9o | 22+, A2s+, K7s+, Q8s+, J8s+, T7s+, 97s+, 87s, 76s, A4o+, KTo+, QTo+, JTo |
+
+These rows assume the button raises about 45% of hands and the small blind
+raises 55% to 60% and limps 70% to 75%. Against a player who only raises
+strong hands, use the all-in tables. A raise of a third of the raiser's stack
+or more is an all-in in practice. After a free flop in the big blind: all-in
+with top pair or better or a draw with 12 outs, otherwise check and fold to a
+bet.
+
+### Limits
+
+- Pages 1 to 3 of the sheet (the tables above) are the exact solution of the
+  all-in or fold game with real cards, for equal stacks. Unequal stacks are
+  read at the effective stack, which is an approximation; the simulation
+  plays it that way, so its cost is in the numbers.
+- The simulation's opponents also play all-in or fold. Real ones raise small
+  and limp. Good players gain from that against an all-in or fold player;
+  weak ones lose more with it.
+- Prizes and the fee are GGPoker's own tables (November 2026). Starting
+  stacks and level lengths come from two 2026 guides, whether there is an
+  ante is not confirmed, and 3 hands a minute is assumed (2 to 4 moves the
+  win rate by 0.3 points).
+- In the 2.4% of games that pay second place the ranges are not adjusted.
+- Swings: at a 36% win rate a run of 13 lost games comes about once in 1,000
+  games and a drop of 60 buy-ins is ordinary. Published bankroll advice is
+  120 to 300 buy-ins.
+- GGPoker forbids charts during play. The sheet is a study aid.

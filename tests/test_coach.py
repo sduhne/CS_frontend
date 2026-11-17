@@ -1093,3 +1093,183 @@ class AllInOrFoldTournament(unittest.TestCase):
         pairs, suited, offsuit = B.range_groups(rng)
         self.assertEqual((pairs, suited, offsuit), ("22+", "A2s+, K8s+, QTs+, JTs", "A2o+, K9o+, QJo"))
         self.assertEqual(format_range(rng), ", ".join((pairs, suited, offsuit)))
+
+
+class Spins(unittest.TestCase):
+    """All-in or fold for 3-player winner-take-all games (poker_coach/spin.py)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from poker_coach import spin
+        cls.S = spin
+
+    def test_data(self):
+        S = self.S
+        d = S.data()
+        self.assertEqual(d["version"], S.DATA_VERSION)
+        for n, spots in (("3", ["0:0", "1:0", "1:1", "2:1", "2:2", "2:3"]), ("2", ["0:0", "1:1"])):
+            self.assertEqual(sorted(d["games"][n], key=float), [f"{s:g}" for s in S.STACKS])
+            for stack, game in d["games"][n].items():
+                for vs in S.PROFILES:
+                    for key in spots:
+                        self.assertEqual(len(game["play"][vs][key]), 169, (n, stack, vs, key))
+                        self.assertEqual(len(game["ev"][vs][key]), 169)
+                # the tidied table gives nothing away against players who call correctly
+                self.assertLess(abs(sum(game["value"]["solid|solid"])) / int(n), 0.004, (n, stack))
+        self.assertEqual(set(d["raise"]), set(S.OPENERS))
+
+    def test_ranges_make_sense(self):
+        S = self.S
+        # heads-up at 10 big blinds is the textbook solution: all-in about 58%, call about 37%
+        self.assertTrue(55 < S.width("hu_sb", 10) < 62, S.width("hu_sb", 10))
+        self.assertTrue(34 < S.width("hu_bb", 10) < 41, S.width("hu_bb", 10))
+        aa, seven_two = HAND_INDEX["AA"], HAND_INDEX["72o"]
+        for spot in S.SPOTS:
+            widths = [S.width(spot, s) for s in S.STACKS if s >= 4]
+            for a, b in zip(widths, widths[1:]):
+                self.assertLess(b, a + 2.5, (spot, widths))           # deeper stacks never play clearly more hands
+            for s in S.STACKS:
+                self.assertEqual(S.play(spot, s)[aa], 1.0, (spot, s))
+            self.assertEqual(S.play(spot, 12)[seven_two], 0.0, spot)
+        for s in (8, 10, 15, 20):
+            # a second all-in in front shrinks the call; the button is tighter than the small blind
+            self.assertLess(S.width("bb_vs_both", s), S.width("bb_vs_btn", s))
+            self.assertLess(S.width("bb_vs_btn", s), S.width("bb_vs_sb", s))
+            self.assertLess(S.width("btn", s), S.width("sb", s))
+            # against players who call too much the steals shrink
+            for spot in ("btn", "sb", "hu_sb"):
+                self.assertLess(S.width(spot, s, "loose"), S.width(spot, s) - 3, (spot, s))
+
+    def test_wider_than_the_tournament_tables(self):
+        from poker_coach import binary as B
+        S = self.S
+        for s in (6, 10, 15):
+            self.assertGreater(S.width("btn", s), B.width("before", 2, s, 6) + 3, s)
+            self.assertGreater(S.width("sb", s), B.width("before", 1, s, 6) + 8, s)
+
+    def test_tidy(self):
+        S = self.S
+        ev = [-1.0] * 169
+        for h in ("AA", "KK", "QQ", "AKs", "AQs", "ATs", "A5s", "AKo"):
+            ev[HAND_INDEX[h]] = 1.0
+        ev[HAND_INDEX["AJs"]] = -0.5                      # a gap worth filling: AQs, AJs, ATs earn 1.5 together
+        got = S.tidy(ev)
+        self.assertEqual(format_range([float(x) for x in got]), "QQ+, ATs+, AKo")
+        # every printed range reads without gaps
+        for vs in S.PROFILES:
+            for spot, row in S.rows(vs).items():
+                for text in row:
+                    self.assertNotIn("-", text, (vs, spot, text))
+
+    def test_values(self):
+        S = self.S
+        for n in (2, 3):
+            for s in (6, 8, 10, 12, 15):
+                # the reply to loose callers beats the standard table against them, and costs little otherwise
+                self.assertGreater(S.value(n, s, "loose", "loose"), S.value(n, s, "solid", "loose") + 0.005, (n, s))
+                self.assertGreater(S.value(n, s, "solid", "loose"), 0.01, (n, s))
+                self.assertGreater(S.value(n, s, "loose", "solid"), -0.012, (n, s))
+                self.assertGreater(S.value(n, s, "solid", "vloose"), S.value(n, s, "solid", "loose"), (n, s))
+
+    def test_money(self):
+        S = self.S
+        self.assertAlmostEqual(sum(share for _m, share, _p in S.PRIZES), 1.0, places=6)
+        self.assertAlmostEqual(sum(S.average_prizes()), 3 * (1 - S.FEE), places=3)
+        self.assertAlmostEqual(S.roi(1 / 3), -S.FEE, places=3)
+        self.assertTrue(0.357 < S.break_even() < 0.361, S.break_even())
+        self.assertGreater(S.break_even(False), S.break_even())
+        self.assertAlmostEqual(S.roi(S.break_even()), 0.0, places=6)
+        self.assertTrue(0.3 < S.roi(0.5) < 0.4)             # half the games would be +38%: nobody does that
+
+    def test_decisions(self):
+        S = self.S
+        aa, trash = HAND_INDEX["AA"], HAND_INDEX["72o"]
+        for spot in S.SPOTS:
+            action, why = S.decide(aa, spot, 10)
+            self.assertEqual(action, "ALL-IN" if S.SPOTS[spot][3] == "all-in" else "CALL", spot)
+            self.assertIn("bb", why)
+            self.assertEqual(S.decide(trash, spot, 15)[0], "FOLD", spot)
+        self.assertEqual(S.decide(trash, "bb_vs_sb_limp", 15)[0], "CHECK")
+        self.assertEqual(S.decide(aa, "bb_vs_sb_limp", 15)[0], "ALL-IN")
+        self.assertEqual(S.decide(trash, "bb_vs_btn_raise", 15)[0], "FOLD")
+        # a small raise from a very short stack is answered as an all-in
+        action, why = S.decide(HAND_INDEX["KJo"], "bb_vs_btn_raise", 4)
+        self.assertEqual(action, "CALL")
+        self.assertIn("is an all-in", why)
+        # the edge is in big blinds, not in the solver's hundredths
+        self.assertTrue(0 < S.edge("btn", 10, "AA") < 12)
+        with self.assertRaises(ValueError):
+            S.decide(aa, "btn", 10, "wild")
+        with self.assertRaises(ValueError):
+            S.decide(aa, "utg", 10)
+
+    def test_simulation(self):
+        import os
+        import sys
+        S = self.S
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import spin_sim as M
+        self.assertAlmostEqual(sum(v[3] for v in M.STRUCTURES.values()), sum(sh for m, sh, _p in S.PRIZES if m <= 10), places=3)
+        games, wins, hands = M.play_games(("sheet", "calls:1", "x3", 1500, 5, M.HANDS_PER_MINUTE))
+        self.assertEqual(games, 1500)
+        self.assertTrue(0.28 < wins / games < 0.39, wins / games)
+        self.assertTrue(8 < hands / games < 25, hands / games)
+        # the stored results: an even game against correct callers, more against loose ones, never half
+        sim = S.sim()
+        self.assertEqual(set(sim["results"]), set(M.STRUCTURES))
+        for hero in ("sheet", "sheet-loose"):
+            self.assertTrue(0.32 < S.simulated_win(hero, "solid") < 0.34, hero)
+            self.assertGreater(S.simulated_win(hero, "loose"), S.simulated_win(hero, "solid") + 0.005)
+            self.assertGreater(S.simulated_win(hero, "vloose"), S.simulated_win(hero, "loose"))
+            self.assertLess(S.simulated_win(hero, "vloose"), 0.40)
+        self.assertGreater(S.simulated_win("sheet-loose", "loose"), S.simulated_win("sheet", "loose"))
+        # the tournament tables are too tight for a game with one prize
+        self.assertLess(S.simulated_win("mtt", "solid"), S.simulated_win("sheet", "solid") - 0.005)
+        self.assertLess(S.simulated_roi("sheet", "solid"), -0.05)
+
+    def test_cli_and_playbook(self):
+        import io
+        import os
+        from contextlib import redirect_stderr, redirect_stdout
+        from poker_coach.cli import main
+        S = self.S
+        for args, expect in (
+                (["spin", "--hand", "K7s", "--pos", "BTN", "--stack", "12"], "ALL-IN"),
+                (["spin", "--hand", "72o", "--pos", "BTN", "--stack", "12"], "FOLD"),
+                (["spin", "--hand", "A5o", "--pos", "BB", "--stack", "9", "--shoved", "BTN"], "CALL"),
+                (["spin", "--hand", "98s", "--pos", "BB", "--stack", "10", "--shoved", "BTN,SB"], "FOLD"),
+                (["spin", "--hand", "Q8o", "--pos", "SB", "--stack", "11", "--players", "2"], "ALL-IN"),
+                (["spin", "--hand", "Q8o", "--pos", "BTN", "--stack", "11", "--players", "2", "--vs", "loose"], "ALL-IN"),
+                (["spin", "--hand", "K4o", "--pos", "BB", "--stack", "20", "--players", "2", "--shoved", "SB"], "FOLD"),
+                (["spin", "--hand", "KJo", "--pos", "BB", "--stack", "14", "--facing", "SB limp"], "ALL-IN"),
+                (["spin", "--hand", "83o", "--pos", "BB", "--stack", "14", "--facing", "SB limp"], "CHECK"),
+                (["spin", "--hand", "T9s", "--pos", "BB", "--stack", "12", "--players", "2", "--facing", "SB raise"], "ALL-IN"),
+                (["spin", "--hand", "AJo", "--pos", "SB", "--stack", "15", "--facing", "BTN raise"], "ALL-IN"),
+                (["spin-sheet"], "THREE PLAYERS"),
+                (["spin-sheet", "--vs", "loose"], "1.5 times too wide"),
+                (["spin-odds"], "break even: win 35.9%"),
+                (["spin-odds", "--win", "38"], "win 38%: +5.6%")):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(main(args), 0, args)
+            self.assertIn(expect, out.getvalue(), args)
+        for args in (["spin", "--hand", "AA", "--pos", "UTG", "--stack", "10"],
+                     ["spin", "--hand", "AA", "--pos", "BTN", "--stack", "10", "--shoved", "SB"],
+                     ["spin", "--hand", "AA", "--pos", "BB", "--stack", "10", "--players", "4"],
+                     ["spin", "--hand", "AA", "--pos", "BTN", "--stack", "10", "--facing", "SB limp"]):
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                self.assertNotEqual(main(args), 0, args)
+        # the playbook prints the engine's tables
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "PLAYBOOK.md")) as fh:
+            book = fh.read()
+        for vs, spots in (("solid", list(S.SPOTS)), ("loose", ["btn", "sb", "hu_sb"])):
+            for spot in spots:
+                for (label, _s), text in zip(S.BANDS, S.rows(vs)[spot]):
+                    self.assertIn(f"| {label} | {text} |", book, (vs, spot, label))
+        for spot, row in S.raise_rows().items():
+            for k, text in enumerate(row):
+                if not (spot in S.AS_ALLIN and k == 0):
+                    self.assertIn(text, book, (spot, k))
+        self.assertIn(f"{100 * S.break_even():.1f}%", book)
