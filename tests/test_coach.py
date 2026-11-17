@@ -840,6 +840,23 @@ class LateRegistration(unittest.TestCase):
             self.assertLessEqual(range_pct(ch["early"]), range_pct(ch["late"]) + 1e-9)
         self.assertLess(range_pct(tight["late"]), range_pct(wide["late"]))
 
+    def test_playbook_prints_the_engine_charts(self):
+        # the charts in PLAYBOOK.md are the ones the calculator plays, and its sit-out line is the engine's
+        L = self.L
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "PLAYBOOK.md")) as fh:
+            text = fh.read()
+        section = text[text.index("## Late-registration min-cash plan"):]
+        charts = L.reference_charts(8)
+        for seat in charts["wide"]["open"]:
+            row = " | ".join([seat] + [format_range(charts[name]["open"][seat]) for name in ("wide", "short", "tight")])
+            self.assertIn(f"| {row} |", section)
+        for kind in ("late", "early"):
+            row = " | ".join(format_range(charts[name][kind]) for name in ("wide", "short", "tight"))
+            self.assertIn(f"| {row} |", section)
+        ratios = [x for x, _ in L.SIT_OUT_TABLE[1:9]]
+        self.assertIn("| " + " | ".join(f"{x:.2f}" for x in ratios) + " |", section)
+        self.assertIn("| " + " | ".join(f"{y:.2f}" for _, y in L.SIT_OUT_TABLE[1:9]) + " |", section)
+
     def test_sheet_is_what_gets_delivered(self):
         """The printed rules, played exactly, cash a little less than the solver and more than folding."""
         L, bl = self.L, self.turbo

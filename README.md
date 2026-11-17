@@ -110,16 +110,18 @@ once the stack can be blinded down safely.
 ```bash
 python3 -m poker_coach latereg --stack-bb 12 --left 400 --paid 150 --entries 1000 --buyin 27.6 --fee 2.4 --min-cash 60
 python3 -m poker_coach latereg-safe --stack 14000 --avg 52000 --left 180 --paid 150   # sit out yet?
-python3 -m poker_coach latereg-chart                                                    # the all-in charts
+python3 -m poker_coach latereg-chart                                                    # the wide, short-stack and tight charts
 ```
 
 `latereg` forecasts how many hands pass before the bubble bursts (fitted to
 how fast 13 GGPoker fields shrank, including the slowdown near the money),
-adds up the blinds a folding player pays over them, and solves the all-in or
-fold plan that maximises the chance of cashing. The short version of what it
-finds: the plan cashes about one time in four in an ordinary tournament and
-needs one in two, so it only pays where few players are left per paid place
-when registration closes. The details are in [PLAYBOOK.md](PLAYBOOK.md).
+adds up the blinds a folding player pays over them, and plays the printed
+all-in charts hand by hand to get the chance of cashing; a solver's best
+all-in or fold play is shown beside it. The short version of what it finds:
+in an ordinary tournament (15% of entries paid, 40% to 50% still alive when
+registration closes) the plan cashes about 18% in a turbo and 13% at regular
+speed, and it needs 50%. It gets there only where about 30% of the entries
+are paid. The details are in [PLAYBOOK.md](PLAYBOOK.md).
 
 ## Limits
 

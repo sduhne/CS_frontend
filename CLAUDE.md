@@ -240,33 +240,56 @@ python3 -m poker_coach latereg --stack 8000 --bb 600 --left 25 --paid 8 --avg 16
 python3 -m poker_coach latereg --stack-bb 10 --left 2000 --entries 4500 --levels-left 4   # Day 1 flight ending at a fixed level
 # the sit-out signal: stack against the line, and which chart applies
 python3 -m poker_coach latereg-safe --stack 14000 --avg 52000 --left 180 --paid 150
-python3 -m poker_coach latereg-chart                 # the wide and the tight all-in charts by seat
+python3 -m poker_coach latereg-chart                 # the wide, short-stack and tight all-in charts by seat
 ```
 
 `latereg` options: `--speed hyper|turbo|fast|regular|slow` or `--level-min`,
 `--players`, `--bounty 0.5` (share of the pool paid as bounties), `--callers
 loose|normal|tight`, `--ante player|bb` (GGPoker: every player antes).
 
+Reading the answer: `cash 19% of the time` is what the printed charts deliver
+when they are played exactly; `a perfect solver: 22%` is the ceiling for
+all-in or fold play. Without `--min-cash` the answer assumes twice the full
+price and marks it `(assumed)`: ask for the smallest prize in the lobby.
+
 What to tell the user, in the usual answer shape:
 
-- **One number decides it:** players left divided by places paid at the moment
-  of entry. An ordinary GGPoker tournament closes registration near 3 with a
-  10 to 13 big blind stack, and the plan then cashes about 25% in a turbo and
-  17% at regular speed, against the 50% it needs at a min-cash of twice the
-  price. Say SKIP plainly; do not soften it.
-- **Worth entering:** 1.6 or fewer players per paid place in a turbo, 1.4 or
-  fewer at regular speed, no bounty, min-cash about twice the full price. The
-  Weekender ($50, 20% of each flight reaches a paid Day 2) is the format to
-  check first; its late-registration numbers have to be read in the lobby.
+- **Two numbers decide it:** the share of entries that gets paid, and the
+  share still alive when registration closes. An ordinary GGPoker tournament
+  pays about 15% and closes with 40% to 50% alive and a 10 to 13 big blind
+  stack. The plan then cashes about 18% in a turbo and 13% at regular speed,
+  against the 50% it needs at a min-cash of twice the price. Say SKIP plainly;
+  do not soften it.
+- **Worth entering:** about 30% of the entries paid in a turbo, or 25% paid
+  with registration closing very late, no bounty, min-cash about twice the
+  full price. None of the GGPoker formats checked pays that many. The
+  Weekender ($50, 20% of each flight reaches a paid Day 2) comes to 20% to
+  35%; its late-registration numbers have to be read in the lobby. The other
+  case is a flight that ends a few levels after registration closes with every
+  Day 2 seat paid: rate it with `--levels-left`, and check in the lobby that
+  Day 2 really is all paid.
 - **Lobby picture before registering:** read entries, players left, places
   paid, average stack, blinds, level length and the smallest prize, run
   `latereg`, and give the verdict with the cash rate and the return.
 - **Sit-out signal:** `latereg-safe` gives the stack as a share of the sit-out
-  line. 100% or more: sit out. 50 to 100%: fold everything except aces and
-  kings. 20 to 50%: tight chart. Under 20%: wide chart.
+  line. 100% or more: sit out. 50 to 100%: fold everything; only aces, and
+  only when nobody has raised. 20 to 50%: tight chart. Under 20%: wide chart,
+  or the short-stack chart under 6 big blinds. Over 20 big blinds: QQ+ and AK
+  only. In a field that pays fewer than about 20 places the line is out of
+  reach: say so instead of promising a sit-out.
+- **After the bubble** the plan is over: stop sitting out, go back to the
+  normal shove chart and the default goal.
+- **It gives up money.** The same late stack played for chips returned 10 to
+  14 points more per entry in the model. Say that when the user asks whether
+  the plan is worth using at all.
+- **The charts expect callers.** They are tight because a 10 big blind all-in
+  gets called about half the time. Against a table that folds to every
+  all-in, steal wider from the cutoff, button and small blind.
 - **Numbers are estimates.** The forecast is fitted to 13 GGPoker fields and
   agrees with an independent simulation to within about 5 points. Hyper-turbos
-  were not measured. Say so when a decision is within that margin.
+  were not measured, and the turbo advantage rests on an assumption (shallow
+  fields keep busting on the bubble). When a decision is within that margin,
+  say so and quote the regular-speed number.
 - **House rules.** One player sitting out is allowed; agreeing a sit-out with
   another player, or running the clock, is not. A late entry has no Bubble
   Protection. The charts are for study, like everything else here.
