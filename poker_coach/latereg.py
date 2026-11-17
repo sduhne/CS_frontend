@@ -718,10 +718,11 @@ SIT_OUT_TABLE = ((1.00, 0.0), (1.02, 0.50), (1.05, 0.65), (1.10, 0.85), (1.20, 1
 ZONES = (
     # name, lowest share of the sit-out line, what to do
     ("safe", 1.0, "SIT OUT: the stack lasts until the money"),
-    ("close", 0.40, "nearly there: fold everything except aces and kings"),
-    ("short", 0.20, "needs one more pot: all-in with the tight chart"),
-    ("far", 0.0, "needs a double-up or two: all-in with the wide chart"),
+    ("close", 0.5, "nearly there: fold everything except aces and kings"),
+    ("short", 0.2, "one pot short: all-in with the tight chart"),
+    ("far", 0.0, "a double-up or two short: all-in with the wide chart"),
 )
+CHART_COVER = {"far": 0.12, "short": 0.32}     # share of the line at which each reference chart is solved
 
 
 def expected_cost(avg: float, remaining: int, paid: int) -> float:
@@ -938,8 +939,11 @@ def describe(sc: Scout) -> str:
                  f"average stack {sc.avg_bb:.0f}bb")
     lines.append(f"  bubble: about {sc.hands:.0f} hands away ({sc.orbits:.1f} orbits); sitting out until then "
                  f"costs {sc.cost_bb:.1f}bb")
-    lines.append(f"  you:   {sc.stack_bb:.0f}bb = {sc.cover:.2f}x that cost; safe to sit out with "
-                 f"{sc.safe_bb:.0f}bb; folding every hand cashes {sc.fold_only:.0%}")
+    line = sit_out_line(sc.avg_bb, sc.remaining, sc.paid)
+    name, share, text = zone(sc.stack_bb, sc.avg_bb, sc.remaining, sc.paid)
+    lines.append(f"  you:   {sc.stack_bb:.0f}bb = {share:.0%} of the sit-out line ({line:.0f}bb, "
+                 f"{line / sc.avg_bb:.2f} average stacks); folding every hand cashes {sc.fold_only:.0%}")
+    lines.append(f"  zone:  {name.upper()} - {text}")
     if sc.min_cash:
         lines.append(f"  money: min-cash {sc.min_cash:.2f} buy-ins, so min-cashes alone break even at "
                      f"{sc.breakeven:.0%}" + (f"; expected prize {sc.prize:.2f} buy-ins" if sc.prize else ""))
@@ -980,6 +984,28 @@ def zone_chart(cover: float, stack_bb: float = 10.0, players: int = 8, callers: 
     for seat in range(players - 1, 0, -1):
         out["open"][seat_name(seat, players)] = plan.shove_range(0, seat, stack_bb)
     out["raise"] = plan.shove_range(0, 2, stack_bb, facing_raise=True)
+    return out
+
+
+def reference_charts(players: int = 8, stack_bb: float = 10.0, callers: str = "normal",
+                     speed: str = "turbo") -> dict:
+    """The two printed charts: ``far`` (wide) and ``short`` (tight), keyed by zone name.
+
+    Each is ``{"open": {seat: weights}, "raise": weights, "itm": chance of cashing}``.  The
+    tight chart is kept inside the wide one, so a hand never appears only when closer to safety.
+    """
+    out = {}
+    for name in ("far", "short"):
+        plan = plan_for_cover(CHART_COVER[name], stack_bb, players, callers, speed)
+        chart_ = {"open": {}, "itm": plan.itm, "fold_only": plan.fold_only}
+        for seat in range(players - 1, 0, -1):
+            chart_["open"][seat_name(seat, players)] = plan.shove_range(0, seat, stack_bb)
+        chart_["raise"] = plan.shove_range(0, 2, stack_bb, facing_raise=True)
+        out[name] = chart_
+    wide, tight = out["far"], out["short"]
+    for seat, w in tight["open"].items():
+        wide["open"][seat] = [max(a, b) for a, b in zip(wide["open"][seat], w)]
+    wide["raise"] = [max(a, b) for a, b in zip(wide["raise"], tight["raise"])]
     return out
 
 

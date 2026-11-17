@@ -225,6 +225,56 @@ stacks are answered for the effective stack, which is an approximation; for an
 exact answer run the solver on the real stacks (it needs a C compiler):
 `gcc -O3 -fopenmp -o aof tools/aof_solver.c -lm && ./aof 8,6.5,8,5 0.1 1 150000000 4000000 20000`.
 
+## Late-registration min-cash plan
+
+A plan the user asked for: buy in at the very end of late registration, play
+all-in or fold with one aim (the first paid place), and sit out once the stack
+can be blinded down safely. `poker_coach/latereg.py` rates tournaments for it
+and gives the sit-out signal and the charts; the reasoning and the evidence
+are in @PLAYBOOK.md under the same heading.
+
+```bash
+# before registering: rate the tournament from the lobby (numbers at the level you would enter)
+python3 -m poker_coach latereg --stack-bb 12 --left 400 --paid 150 --entries 1000 --buyin 27.6 --fee 2.4 --min-cash 60
+python3 -m poker_coach latereg --stack 8000 --bb 600 --left 25 --paid 8 --avg 16320 --level-min 5 --chart
+python3 -m poker_coach latereg --stack-bb 10 --left 2000 --entries 4500 --levels-left 4   # Day 1 flight ending at a fixed level
+# the sit-out signal: stack against the line, and which chart applies
+python3 -m poker_coach latereg-safe --stack 14000 --avg 52000 --left 180 --paid 150
+python3 -m poker_coach latereg-chart                 # the wide and the tight all-in charts by seat
+```
+
+`latereg` options: `--speed hyper|turbo|fast|regular|slow` or `--level-min`,
+`--players`, `--bounty 0.5` (share of the pool paid as bounties), `--callers
+loose|normal|tight`, `--ante player|bb` (GGPoker: every player antes).
+
+What to tell the user, in the usual answer shape:
+
+- **One number decides it:** players left divided by places paid at the moment
+  of entry. An ordinary GGPoker tournament closes registration near 3 with a
+  10 to 13 big blind stack, and the plan then cashes about 25% in a turbo and
+  17% at regular speed, against the 50% it needs at a min-cash of twice the
+  price. Say SKIP plainly; do not soften it.
+- **Worth entering:** 1.6 or fewer players per paid place in a turbo, 1.4 or
+  fewer at regular speed, no bounty, min-cash about twice the full price. The
+  Weekender ($50, 20% of each flight reaches a paid Day 2) is the format to
+  check first; its late-registration numbers have to be read in the lobby.
+- **Lobby picture before registering:** read entries, players left, places
+  paid, average stack, blinds, level length and the smallest prize, run
+  `latereg`, and give the verdict with the cash rate and the return.
+- **Sit-out signal:** `latereg-safe` gives the stack as a share of the sit-out
+  line. 100% or more: sit out. 50 to 100%: fold everything except aces and
+  kings. 20 to 50%: tight chart. Under 20%: wide chart.
+- **Numbers are estimates.** The forecast is fitted to 13 GGPoker fields and
+  agrees with an independent simulation to within about 5 points. Hyper-turbos
+  were not measured. Say so when a decision is within that margin.
+- **House rules.** One player sitting out is allowed; agreeing a sit-out with
+  another player, or running the clock, is not. A late entry has no Bubble
+  Protection. The charts are for study, like everything else here.
+
+When the user reports how a late-registration entry went (players left over
+time, when the bubble burst), keep the numbers: they are the best check on
+the forecast's speed constant (`BUST_CONSTANT` in `latereg.py`).
+
 ## Housekeeping
 
 - State lives in `tournament/current.json` (git-ignored). `new` archives the
@@ -235,4 +285,6 @@ exact answer run the solver on the real stacks (it needs a C compiler):
   `python3 -c "from poker_coach.pushfold import build_charts; build_charts()"`,
   `python3 tools/build_aof.py` (All-In or Fold tables, about 35 minutes), then
   `python3 tools/build_aof_exploit.py` (loose-table ranges, about 10 minutes)
-  and `python3 tools/build_aof_page.py` (trainer page).
+  and `python3 tools/build_aof_page.py` (trainer page);
+  `python3 tools/build_latereg.py` (late-registration shove spots, about a
+  minute).

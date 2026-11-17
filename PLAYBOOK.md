@@ -157,3 +157,98 @@ strong: 99+, AQ+. On the bubble subtract most of that.
 - Flat-calling raises out of position "to see a flop".
 - Paying off river bets from passive players with one pair.
 - Bluffing calling stations.
+
+## Late-registration min-cash plan
+
+The idea: buy in at the very end of late registration, play all-in or fold
+with one aim (the first paid place), and sit out as soon as the stack can be
+blinded down safely. A min-cash pays about twice the price, so cashing more
+than half the time would be profitable. `python3 -m poker_coach latereg`
+rates a tournament for it.
+
+### What the evidence says
+
+- **The payout premise holds.** On GGPoker a non-bounty min-cash is about 1.9
+  to 2.15 times the full price (8% fee included), so min-cashes alone break
+  even at 47% to 52%. Bounty formats pay only 1.15 to 1.5 times: never use
+  them for this.
+- **The 50% does not, in ordinary tournaments.** Registration closes when a
+  fresh stack is 10 to 13 big blinds, with 37% to 49% of entries alive and
+  about 15% paid: roughly 3 players left per paid place, and the newcomer
+  holds 40% to 50% of an average stack. Standard shove-or-fold cashes about
+  15% from there; this plan about 25% in a turbo and 17% at regular speed.
+- **One number decides it:** players left divided by places paid at the
+  moment of entry.
+
+| Players left per paid place | 3.0 | 2.5 | 2.0 | 1.7 | 1.5 | 1.3 | 1.2 | 1.1 |
+|---|---|---|---|---|---|---|---|---|
+| Turbo (5-6 minute levels) | 25% | 30% | 40% | 48% | 57% | 67% | 77% | 87% |
+| Regular (10-12 minutes) | 17% | 22% | 30% | 38% | 46% | 58% | 66% | 79% |
+
+  So the plan needs about 1.6 or fewer in a turbo and 1.4 or fewer at regular
+  speed. Turbos are better because shallow fields keep busting on the bubble,
+  so fewer blinds are paid while waiting.
+- **Where that happens.** Flights in which a fixed share advances to a paid
+  Day 2 (The Weekender, $50: 20% of each flight), long late-registration
+  periods, and overlays (the min-cash is then a bigger multiple of the price).
+  Each has to be checked in the lobby; "Day 2 is in the money" is not a
+  general rule.
+
+### Why waiting is expensive
+
+A table loses a player at a rate of about 3 divided by the average stack in
+big blinds per hand, so a folding player pays about 0.83 chips for every chip
+the average stack grows. That holds whatever the speed of the blinds. But
+inside the last 10% before the money the field tightens to about a quarter of
+that speed, and during hand-for-hand to a tenth, while the blinds keep rising:
+the last tenth of the eliminations costs about as much as all the others.
+
+### The sit-out line
+
+The stack, in average stacks, from which folding every hand still cashes
+about 95 times in 100:
+
+| Players left / paid | 1.02 | 1.05 | 1.10 | 1.20 | 1.30 | 1.50 | 2.00 | 3.00 |
+|---|---|---|---|---|---|---|---|---|
+| Line (average stacks) | 0.50 | 0.65 | 0.85 | 1.00 | 1.15 | 1.55 | 2.45 | 4.40 |
+
+Your share = your stack / (line x average stack).
+
+| Share of the line | What to do | Cashes about |
+|---|---|---|
+| 100% or more | Sit out | 97% |
+| 50% to 100% | Fold everything except AA, KK | 9 in 10 |
+| 20% to 50% | Tight chart | 2 in 3 |
+| under 20% | Wide chart (where a fresh entry starts) | 1 in 3 |
+
+### The charts (all-in when nobody has raised, 8-handed)
+
+| Seat | Wide | Tight |
+|---|---|---|
+| UTG | 88+, AQs+, AQo+ | JJ+, AKs |
+| UTG+1 | 88+, AJs+, AQo+ | JJ+, AKs |
+| LJ | 77+, ATs+, AJo+ | TT+, AKs, AKo |
+| HJ | 77+, ATs+, ATo+ | TT+, AQs+, AKo |
+| CO | 66+, A9s+, ATo+ | TT+, AJs+, AQo+ |
+| BTN | 55+, A6s+, KJs+, A8o+, KQo | 88+, ATs+, ATo+ |
+| SB | 33+, A2s+, K6s+, Q9s+, A2o+, K8o+, QTo+ | 77+, A8s+, KJs+, ATo+, KQo |
+
+Over a raise: 99+, AQs+, AQo+ (wide), QQ+ (tight). Never just call.
+
+These are far tighter than chip-EV push/fold. The reason: a called loss ends
+the tournament, and the blinds a steal wins are small next to what the stack
+still needs, so with many hands left it is better to wait for a hand that
+wins when called. Once the bubble has burst the aim changes back: play the
+standard shove chart and climb.
+
+### Limits
+
+- Cash rates are a model fitted to 13 GGPoker fields and checked against an
+  independent simulation; read them as plus or minus 5 points. Hyper-turbos
+  were not measured.
+- One player sitting out is within GGPoker's rules. Agreeing a sit-out with
+  anyone, or stalling, is not. Late entries get no Bubble Protection, and
+  registration can close before the time in the lobby.
+- The plan gives up most of the prize pool: about 70% of it sits above the
+  bottom prize. Where it does not clear 50%, ordinary play with the coach's
+  default goal (cash first, then climb) is the better use of a buy-in.

@@ -101,6 +101,26 @@ Three things to know about this format:
   Tournament mode is chip EV with no ICM. The fee is modelled as 0.1bb from
   every pot; it varies a little by stake.
 
+## Late-registration min-cash plan
+
+A calculator for one specific plan: enter at the very end of late registration,
+play all-in or fold with the single aim of the first paid place, and sit out
+once the stack can be blinded down safely.
+
+```bash
+python3 -m poker_coach latereg --stack-bb 12 --left 400 --paid 150 --entries 1000 --buyin 27.6 --fee 2.4 --min-cash 60
+python3 -m poker_coach latereg-safe --stack 14000 --avg 52000 --left 180 --paid 150   # sit out yet?
+python3 -m poker_coach latereg-chart                                                    # the all-in charts
+```
+
+`latereg` forecasts how many hands pass before the bubble bursts (fitted to
+how fast 13 GGPoker fields shrank, including the slowdown near the money),
+adds up the blinds a folding player pays over them, and solves the all-in or
+fold plan that maximises the chance of cashing. The short version of what it
+finds: the plan cashes about one time in four in an ordinary tournament and
+needs one in two, so it only pays where few players are left per paid place
+when registration closes. The details are in [PLAYBOOK.md](PLAYBOOK.md).
+
 ## Limits
 
 - Opponent ranges are estimates from position, stack and the type you (or the
@@ -124,7 +144,7 @@ you play.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests        # 40 tests, about 20 seconds
+python3 -m unittest discover -s tests        # about 60 tests, 30 seconds
 ```
 
 The data files in `poker_coach/data/` are generated:
@@ -136,4 +156,5 @@ python3 -c "from poker_coach.pushfold import build_charts; build_charts()"
 python3 tools/build_aof.py          # All-In or Fold tables, about 35 minutes
 python3 tools/build_aof_exploit.py  # ranges against loose tables, about 10 minutes
 python3 tools/build_aof_page.py     # aof_trainer.html from those tables
+python3 tools/build_latereg.py      # late-registration shove spots, about a minute
 ```

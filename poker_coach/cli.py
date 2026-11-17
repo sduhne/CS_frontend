@@ -796,6 +796,22 @@ def cmd_latereg_safe(a) -> int:
     return 0
 
 
+def cmd_latereg_chart(a) -> int:
+    """The two reference charts of the plan: wide (far from the line) and tight (one pot short)."""
+    charts = L.reference_charts(a.players, a.stack_bb, a.callers, a.speed)
+    titles = {"far": "WIDE chart: stack under 20% of the sit-out line",
+              "short": "TIGHT chart: stack 20% to 50% of the sit-out line"}
+    for name in ("far", "short"):
+        ch = charts[name]
+        _out(f"{titles[name]}  (cashes about {ch['itm']:.0%} from there)")
+        for seat, w in ch["open"].items():
+            _out(f"  {seat:<6} {range_pct(w):4.1f}%  {format_range(w) or 'nothing'}")
+        _out(f"  over a raise: {format_range(ch['raise']) or 'nothing'}")
+        _out()
+    _out("50% to 100% of the line: fold everything except AA and KK.  100% or more: sit out.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="poker_coach", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -992,6 +1008,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--callers", choices=list(L.CALLERS), default="normal", help="how light the table calls all-ins")
     p.add_argument("--chart", action="store_true", help="also print the all-in ranges by seat at entry")
     p.set_defaults(fn=cmd_latereg)
+
+    p = sub.add_parser("latereg-chart", help="late-registration plan: the all-in charts by seat")
+    p.add_argument("--players", type=int, default=8)
+    p.add_argument("--stack-bb", type=float, default=10.0, help="stack depth the charts are solved for")
+    p.add_argument("--speed", choices=list(L.SPEEDS), default="turbo")
+    p.add_argument("--callers", choices=list(L.CALLERS), default="normal")
+    p.set_defaults(fn=cmd_latereg_chart)
 
     p = sub.add_parser("latereg-safe", help="sit-out signal: can this stack fold into the money?")
     p.add_argument("--stack", help="your stack in chips (default: the tracked table)")

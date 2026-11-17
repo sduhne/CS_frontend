@@ -812,8 +812,28 @@ class LateRegistration(unittest.TestCase):
         self.assertAlmostEqual(fixed[-1], 21.0)
         self.assertAlmostEqual(sum(fixed), 10000.0, places=4)
 
+    def test_reference_charts(self):
+        L = self.L
+        charts = L.reference_charts(8, 10.0)
+        wide, tight = charts["far"], charts["short"]
+        self.assertEqual(list(wide["open"]), ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB"])
+        self.assertGreater(tight["itm"], wide["itm"])
+        widths = [range_pct(w) for w in wide["open"].values()]
+        self.assertTrue(all(a <= b + 1e-9 for a, b in zip(widths, widths[1:])), widths)   # later seats shove wider
+        for seat, w in wide["open"].items():
+            t = tight["open"][seat]
+            self.assertTrue(all(a >= b for a, b in zip(w, t)), seat)       # tight sits inside wide
+            self.assertEqual(w[HAND_INDEX["AA"]], 1.0)
+            self.assertEqual(t[HAND_INDEX["KK"]], 1.0)
+            self.assertEqual(w[HAND_INDEX["72o"]], 0.0)
+            # far tighter than chip-EV shove-or-fold: a called loss ends the tournament
+            self.assertLess(range_pct(w), range_pct(nash_push_range(8 - 1 - list(wide["open"]).index(seat), 10.0)))
+        self.assertLess(range_pct(tight["raise"]), range_pct(wide["raise"]) + 1e-9)
+
     def test_cli(self):
         for args, code in ((["latereg", "--stack-bb", "16", "--left", "190", "--paid", "150", "--entries", "1000"], 0),
+                           (["latereg-chart"], 0),
+                           (["latereg", "--stack-bb", "10", "--left", "2000", "--entries", "4500", "--levels-left", "4"], 0),
                            (["latereg", "--stack", "8000", "--bb", "500", "--left", "26", "--paid", "8",
                              "--avg", "16320", "--buyin", "27.6", "--fee", "2.4", "--chart"], 0),
                            (["latereg-safe", "--stack", "34k", "--avg", "52000", "--left", "180", "--paid", "150"], 0),
