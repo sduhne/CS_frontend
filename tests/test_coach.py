@@ -1273,3 +1273,188 @@ class Spins(unittest.TestCase):
                 if not (spot in S.AS_ALLIN and k == 0):
                     self.assertIn(text, book, (spot, k))
         self.assertIn(f"{100 * S.break_even():.1f}%", book)
+
+
+class TagSheet(unittest.TestCase):
+    """The tight-aggressive sheet for 6, 7 and 8 players (poker_coach/tag.py)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from poker_coach import binary, tag
+        cls.T, cls.B = tag, binary
+
+    @staticmethod
+    def has(text: str, hand: str) -> bool:
+        return bool(text) and text != "nothing" and parse_range(text)[HAND_INDEX[hand]] >= 0.5
+
+    @staticmethod
+    def inside(small: str, big: str) -> bool:
+        a = parse_range(small) if small and small != "nothing" else [0.0] * 169
+        b = parse_range(big) if big and big != "nothing" else [0.0] * 169
+        return all(y >= 0.5 for x, y in zip(a, b) if x >= 0.5)
+
+    def test_data(self):
+        T, B = self.T, self.B
+        self.assertEqual(T.data()["version"], T.DATA_VERSION)
+        self.assertEqual(T.order(8), ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB", "BB"])
+        self.assertEqual(T.order(6), ["LJ", "HJ", "CO", "BTN", "SB", "BB"])
+        self.assertEqual(T.groups(6), ["middle", "late", "sb"])
+        self.assertEqual(T.group_label("early", 8), "UTG or UTG+1")
+        self.assertEqual(T.group_label("early", 7), "UTG")
+        for players in T.TABLES:
+            t = T.table(players)
+            self.assertEqual(set(t["first_in"]), {str(nb) for nb in T.seats(players)})
+            # every seat but the first can have callers in front, the big blind included
+            self.assertEqual(set(t["limpers"]), {str(nb) for nb in range(players - 2, -1, -1)})
+            self.assertEqual({k.split("|")[0] for k in t["vs_raise"]}, set(T.groups(players)))
+            for part in ("reraised", "shoved_on"):
+                self.assertEqual(list(t[part]), T.groups(players))
+            self.assertEqual(list(t["cold"]), [g for g in T.groups(players) if g != "sb"])
+            self.assertEqual(t["call"], B.table(players)["call"])
+        with self.assertRaises(ValueError):
+            T.table(9)
+
+    def test_first_in(self):
+        T, B = self.T, self.B
+        for players in T.TABLES:
+            t = T.table(players)["first_in"]
+            for nb in T.seats(players):
+                row = t[str(nb)]
+                self.assertEqual(row["raise"][0], format_range(rfi_range(nb, 100.0)))
+                self.assertTrue(self.inside(row["raise"][1], row["raise"][0]), (players, nb))
+                for s, text in zip(T.SHORT_STACKS, row["allin"]):
+                    self.assertEqual(text, format_range(B.first_in_range("before", nb, s, players)))
+                self.assertTrue(self.has(row["raise"][0], "AA") and self.has(row["allin"][0], "AA"))
+            # later seats raise more hands
+            widths = [sum(parse_range(t[str(nb)]["raise"][0])) for nb in range(players - 1, 1, -1)]
+            self.assertEqual(widths, sorted(widths))
+
+    def test_limpers(self):
+        T, B = self.T, self.B
+        for players in T.TABLES:
+            t = T.table(players)["limpers"]
+            for nb, row in t.items():
+                self.assertEqual(len(row["raise"]), min(3, players - 1 - int(nb)), (players, nb))
+                for a, b in zip(row["raise"], row["raise"][1:]):
+                    self.assertTrue(self.inside(b, a), (players, nb))       # more callers, fewer raises
+                for hand in ("AA", "99", "AJs", "AQo", "KQs"):
+                    self.assertTrue(all(self.has(r, hand) for r in row["raise"]), (players, nb, hand))
+                self.assertFalse(self.has(row["raise"][0], "72o"))
+                # 16bb or less: the all-in hands of the seat before (the big blind: the small blind's)
+                self.assertEqual(row["allin"], [format_range(B.first_in_range("before", int(nb) + 1, s, players))
+                                                for s in T.SHORT_STACKS])
+                for text in row["call"]:
+                    self.assertTrue(self.inside(text, T.CALL_ALONG), (players, nb, text))
+            self.assertEqual(t["0"]["call"], ["", "", ""])                     # the big blind checks instead
+            self.assertTrue(any(t["2"]["call"]))                              # the button may call along
+
+    def test_facing_a_raise(self):
+        T = self.T
+        for players in T.TABLES:
+            t = T.table(players)
+            for key, row in t["vs_raise"].items():
+                group, where = key.split("|")
+                for hand in ("AA", "KK", "AKs"):
+                    self.assertTrue(self.has(row["value"], hand), (players, key))
+                self.assertFalse(self.has(row["value"], "76s"))
+                if where == "bb":
+                    self.assertGreater(sum(parse_range(row["call"])), 40, (players, key))
+                if where == "sb":
+                    self.assertLess(sum(parse_range(row["call"])) if row["call"] else 0, 8, (players, key))
+            # a late raise is attacked with more hands than an early one
+            first, last = T.groups(players)[0], "late"
+            self.assertTrue(self.inside(t["vs_raise"][f"{first}|ip"]["value"], t["vs_raise"][f"{last}|ip"]["value"]))
+            # the big blind's short-stack call rule stays inside what the engine allows
+            for key, _label, _nb in self.B.raisers(players):
+                allowed = [max(a, b) for a, b in zip(parse_range(t["bb_call"][key]),
+                                                     parse_range(self.B.reshove("before", key, 20.0, players)))]
+                for h, w in enumerate(parse_range(T.BB_CALL_SHORT)):
+                    if w >= 0.5:
+                        self.assertGreaterEqual(allowed[h], 0.5, (players, key, HANDS[h]))
+            # a raise and a re-raise in front: the best hands only, fewer as stacks deepen
+            for group, row in t["cold"].items():
+                self.assertTrue(all(self.has(r, "AA") and self.has(r, "KK") for r in row), (players, group))
+                self.assertTrue(self.inside(row[2], row[1]) and self.inside(row[1], row[0]), (players, group))
+                self.assertFalse(self.has(row[0], "TT"))
+
+    def test_after_raising(self):
+        T = self.T
+        for players in T.TABLES:
+            t = T.table(players)
+            for group, row in t["reraised"].items():
+                self.assertTrue(self.has(row["allin"], "AA") and self.has(row["allin"], "KK"), (players, group))
+                self.assertTrue(self.has(row["fourbet"], "AA"))
+                self.assertFalse(self.has(row["allin"], "99"))
+            for group, rows in t["shoved_on"].items():
+                opened = T.opened(players, group)
+                for k in range(5):
+                    self.assertTrue(self.inside(rows["bubble"][k], rows["normal"][k]), (players, group, k))
+                    self.assertTrue(self.inside(rows["normal"][k], opened), (players, group, k))
+                    self.assertTrue(self.has(rows["bubble"][k], "AA"))
+                # a smaller all-in is called with more hands (bands run from small to big in the data)
+                for a, b in zip(rows["normal"], rows["normal"][1:]):
+                    self.assertTrue(self.inside(b, a), (players, group))
+                self.assertEqual(T.over_raise(players, group, opened), "every hand you raised")
+
+    def test_matches_the_engine(self):
+        # the sheet is what the coach answers far from the money
+        from poker_coach.icm import Prizes as P
+        from poker_coach.preflop import Act, Spot
+        T = self.T
+
+        def action(players, hero_nb, stack, acts, hand):
+            setup = HandSetup([float(stack)] * players, 0.5, 1.0, 0.0, players * 0.125)
+            sp = Spot(setup=setup, hero=players - 1 - hero_nb, hand=HAND_INDEX[hand], prizes=P(), field_prizes=P())
+            sp.acts = [Act(players - 1 - nb, kind, amount) for nb, kind, amount in acts]
+            return advise(sp).action
+
+        t = T.table(8)
+        for hand in ("AQs", "T9s", "55", "KJo", "72o", "A5s"):
+            got = action(8, 2, 60, [(4, "raise", 2.3)], hand)                 # button against a HJ raise
+            row = t["vs_raise"]["middle|ip"]
+            if self.has(row["value"], hand):
+                self.assertTrue(got.startswith("3-BET"), (hand, got))
+            elif self.has(row["bluff"], hand):
+                self.assertIn("semi-bluff", got)
+            elif any(self.has(row[k], hand) for k in ("call", "setmine", "button")):
+                self.assertEqual(got, "CALL", hand)
+            else:
+                self.assertEqual(got, "FOLD", hand)
+        for hand in ("AJo", "76s", "Q5o", "22"):
+            got = action(8, 0, 40, [(4, "limp", 1.0)], hand)                   # big blind, one caller
+            want = "RAISE" if self.has(t["limpers"]["0"]["raise"][0], hand) else "CHECK"
+            self.assertTrue(got.startswith(want), (hand, got))
+        for hand in ("KK", "QQ", "AKo", "JJ"):
+            got = action(8, 0, 40, [(7, "raise", 2.2), (2, "raise", 6.6)], hand)   # a raise and a re-raise
+            self.assertEqual("ALL-IN" in got, self.has(t["cold"]["early"][1], hand), (hand, got))
+
+    def test_sheet_cli_and_playbook(self):
+        import io
+        import os
+        from contextlib import redirect_stderr, redirect_stdout
+        from poker_coach.cli import main
+        T = self.T
+        for players in T.TABLES:
+            text = T.sheet_text(players)
+            for part in ("1. NOBODY HAS ENTERED", "2. PLAYERS ONLY CALLED", "3. A RAISE BEFORE YOU, 25BB OR MORE",
+                         "4. A RAISE BEFORE YOU, 24BB OR LESS", "5. YOU RAISED FIRST", "6. AN ALL-IN BEFORE YOU", "7. THE PLAN",
+                         "otherwise: check", "every hand you raised", T.CALL_ALONG, T.BB_CALL_WORDS):
+                self.assertIn(part, text, (players, part))
+            self.assertNotIn("(nothing)", text)
+            self.assertEqual("UTG+1" in text, players == 8)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(main(["tag-sheet", "--players", "7"]), 0)
+        self.assertIn("SHEET, 7 PLAYERS", out.getvalue())
+        with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+            self.assertNotEqual(main(["tag-sheet", "--players", "9"]), 0)
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "PLAYBOOK.md")) as fh:
+            book = fh.read()
+        for text in (T.CALL_ALONG, T.BB_CALL_WORDS, "tag-sheet"):
+            self.assertIn(text, book)
+        for group, row in T.table(8)["reraised"].items():
+            self.assertIn(row["allin"], book, group)
+        for group, row in T.table(8)["cold"].items():
+            for text in row:
+                self.assertIn(text, book, group)

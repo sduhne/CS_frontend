@@ -349,6 +349,43 @@ python3 -m poker_coach binary-sheet                 # every table as text (--pla
   the numbers are about half as wide as the charts they have seen.
 - The sheet is a study aid, like everything else here.
 
+## Tight-aggressive sheet (6, 7 and 8 players)
+
+The user's current plan: tournaments, entering at any point, normal
+tight-aggressive play. `poker_coach/tag.py` holds one sheet per table size
+with every preflop situation as text; the rules are in @PLAYBOOK.md under
+"Every preflop situation".
+
+```bash
+python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 7 or 8 players)
+```
+
+- **Seven parts, by what happened before the user acts:** nobody has
+  entered; players only called; a raise with 25bb or more; a raise with 24bb
+  or less, a raise and a call, a raise and a re-raise; the user raised first
+  and was re-raised or met an all-in; an all-in in front; the plan (gears,
+  stages, sizes, after the flop).
+- **A decision still gets one engine call.** The sheet is for study. For a
+  live question use `advise` (table tracked) or `quick`, as in the speed
+  rules, and answer in the usual shape.
+- **Sheet and engine.** The raise, call and re-raise lists are what `advise`
+  answers far from the money. Every all-in list comes from `binary`, which
+  is tighter than chip EV. So with 16bb or less, or facing a raise with 24bb
+  or less, `advise` can say ALL-IN where the sheet folds. Before the money
+  follow the sheet; in the money, or when the fold clock says CANNOT, follow
+  `advise`. Say which you followed in one clause.
+- **Big blind.** When players only called, the answer is RAISE or CHECK,
+  never FOLD. Against one small raise with 9 to 24bb the sheet lets the big
+  blind call with any pair, any suited hand, any ace, K9o+, Q9o+, J9o+ and
+  T9o; the engine allows more.
+- **Table size.** A seat is the number of players behind it. Six-handed the
+  first seat is LJ; with 5 or fewer players use the 6-player sheet and name
+  the seat by the players behind.
+- **Printed sheet.** One PDF per table size, seven pages, with a seat map at
+  the top right of every page. Stack columns run from deep to short on
+  every page.
+- The sheet is a study aid, like everything else here.
+
 ## Spins (3 players, winner takes all)
 
 GGPoker Spin & Gold: three players, a random multiplier, and in 97.6% of
@@ -421,6 +458,8 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   `python3 tools/build_latereg.py` (late-registration shove spots, about a
   minute), then `python3 tools/build_binary.py` (all-in or fold tournament
   tables, half a minute; it reads the late-registration data);
+  `python3 tools/build_tag.py` (the tight-aggressive sheet, about 5
+  minutes; it asks the engine and reads the all-in or fold tables);
   `python3 tools/build_spin.py` (spin tables, about 7 minutes; it reads the
   All-In or Fold tables), then `python3 tools/spin_sim.py` (the whole-game
   simulation, about 6 minutes).

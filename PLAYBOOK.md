@@ -463,6 +463,63 @@ late entry earns about the same at every table size in the model (turbo:
   Read every range as plus or minus one notch, and price real stacks with
   `advise` when there is time.
 
+## Every preflop situation (6, 7 and 8 players)
+
+Normal tight-aggressive play at any stack, entering at any point.
+`python3 -m poker_coach tag-sheet --players 8` (or 7, or 6) prints every hand
+list as text; the printed sheet has the same seven parts. It is organised by
+what has happened before you act. Stacks are effective, in big blinds.
+
+| Before you act | 17bb or more | 16bb or less |
+|---|---|---|
+| Nobody has entered | Raise the opening range of your seat (17 to 24bb: without the small suited connectors) | All-in with the all-in or fold hands of your seat. QQ+ and AK may raise 2bb at 12 to 16bb and call any all-in |
+| Players only called | Raise to 3bb plus 1bb per caller (4bb plus 1bb from the blinds) with the opening range of the seat one line tighter for each caller, and always with 99+, AJs+, AQo+, KQs. Otherwise fold; the big blind checks | All-in with the all-in hands of the seat before yours (big blind: the small blind's). Otherwise fold; the big blind checks |
+| One raise | 25bb or more: re-raise, call or fold by where the raise came from and where you sit | 24bb or less: all-in or fold, from the raise table of the all-in or fold section |
+| A raise and a call | The same hands; the re-raise is one raise bigger for each caller | The same all-in hands |
+| A raise and a re-raise | The table below | The table below |
+| You raised and were re-raised | The table below | (you do not raise small this short) |
+| You raised and met an all-in | Call with the hands of your opening range that beat the pot odds by 6 points, 16 on the bubble. Against 7bb or less: every hand you raised | |
+| An all-in, or two | The call tables of the all-in or fold section, by the size of the all-in | The same |
+
+A raise and a re-raise before you (everything else folds):
+
+| The first raise came from | Re-raise, more than 60bb | All-in, 25 to 60bb | All-in, up to 24bb |
+|---|---|---|---|
+| UTG or UTG+1 | KK+ | KK+, AKs | JJ+, AKs, AKo |
+| LJ or HJ | KK+, AKs | KK+, AKs, AKo | JJ+, AKs, AKo |
+| CO or BTN | KK+, AKs, AKo | JJ+, AKs, AKo | JJ+, AKs, AKo |
+
+You raised and were re-raised, not all-in (everything else folds):
+
+| You raised from | All-in, 45bb or less | Re-raise, more than 45bb | Call, more than 45bb |
+|---|---|---|---|
+| UTG or UTG+1 | KK+, AKs | KK+ | QQ, AKs |
+| LJ or HJ | QQ+, AKs, AKo | KK+ | QQ-JJ, AKs |
+| CO or BTN | TT+, AQs+, AKo | KK+ | QQ-44, AJs+, AKo |
+| SB | TT+, AQs+, AKo | KK+ | QQ-22, ATs+, AKo |
+
+- **Calling along** behind players who only called: with 25bb or more, from
+  the cutoff, the button or the small blind, when the hand is not on the
+  raise list: 22-88, A2s-A9s, K9s, KTs, Q9s, QTs, J9s, JTs, T9s, 98s, 87s, 76s, 65s, 54s.
+- **Big blind, players only called:** raise from the list or check. A check
+  costs nothing; never fold. After the flop bet top pair or better and
+  strong draws, otherwise check and fold to a bet.
+- **Big blind against one raise of 2.5bb or less, with 9 to 24bb:** instead
+  of folding it may call with any pair, any suited hand, any ace, K9o+, Q9o+, J9o+ and T9o.
+  The engine's own list is close to any two cards; the sheet keeps the part
+  that makes top pair or a real draw.
+- **You only called and a player raised:** fold. With a pair and 15 times
+  the raise behind you may call once.
+- **Where the hands come from.** The raise, call and re-raise lists are what
+  `advise` answers far from the money for each of the 169 hands; a test
+  checks it. Every all-in list is taken from the all-in or fold section, so
+  it is tighter than the chip-EV push/fold table earlier in this playbook.
+  That chip-EV table is still what opponents are assumed to play, and what
+  the coach leans to when survival does not matter.
+- **Limits.** Stacks are taken as equal and every player posts an ante.
+  Three stack columns stand for every stack under 17bb. With the table
+  tracked, `advise` prices the real stacks and prizes.
+
 ## Spins: three players, one prize
 
 A spin (GGPoker Spin & Gold) is a three-player sit & go. A random multiplier

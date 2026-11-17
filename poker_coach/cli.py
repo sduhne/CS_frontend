@@ -7,6 +7,7 @@ Table tracking:  new, sync, set, seat, stack, bust, away, back, type, note,
 Decisions:       advise (uses the tracked table), quick (no table needed)
 All-in or fold:  binary, binary-chart, binary-sheet (a whole tournament on two moves)
 Spins:           spin, spin-sheet, spin-odds (3-player winner-take-all games)
+Sheet:           tag-sheet (every preflop situation as text, for 6, 7 or 8 players)
 Tools:           equity, range, chart, icm
 """
 
@@ -20,6 +21,7 @@ from . import aof as A
 from . import binary as BN
 from . import latereg as L
 from . import spin as SP
+from . import tag as TG
 from . import state as S
 from .cards import (HANDS, cards_str, format_range, parse_cards, parse_hand, range_combos,
                     range_pct)
@@ -967,6 +969,12 @@ def cmd_spin_odds(a) -> int:
     return 0
 
 
+def cmd_tag_sheet(a) -> int:
+    """The tight-aggressive sheet for a table size: every preflop situation, as text."""
+    _out(TG.sheet_text(a.players))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="poker_coach", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1217,6 +1225,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("spin-odds", help="Spin & Gold: the win rate that breaks even, and what a win rate is worth")
     p.add_argument("--win", type=float, help="your share of games won, in percent")
     p.set_defaults(fn=cmd_spin_odds)
+
+    p = sub.add_parser("tag-sheet", help="tight-aggressive tournament sheet: every preflop situation as text")
+    p.add_argument("--players", type=int, default=8, help="players at the table: 6, 7 or 8 (default 8)")
+    p.set_defaults(fn=cmd_tag_sheet)
     return ap
 
 

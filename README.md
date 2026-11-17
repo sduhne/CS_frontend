@@ -144,6 +144,21 @@ to play a short stack, which is what an entry at the close of late
 registration has, and not a proven winner: the model has a late entry
 returning -24% in a turbo. The details are in [PLAYBOOK.md](PLAYBOOK.md).
 
+## Tight-aggressive sheet (6, 7 and 8 players)
+
+Every preflop situation of normal tournament play as text, one sheet per
+table size: nobody has entered, players only called, a raise, a raise and a
+re-raise, your own raise re-raised or met by an all-in, and an all-in in
+front, each by seat and stack.
+
+```bash
+python3 -m poker_coach tag-sheet --players 8      # or 7, or 6
+```
+
+The raise, call and re-raise lists are the engine's own answers for each of
+the 169 hands, far from the money. The all-in lists are the all-in or fold
+tournament tables. The rules are in [PLAYBOOK.md](PLAYBOOK.md).
+
 ## Spins (3 players, winner takes all)
 
 GGPoker Spin & Gold and games like it: three players, a random multiplier,
@@ -205,6 +220,7 @@ python3 tools/build_aof_exploit.py  # ranges against loose tables, about 10 minu
 python3 tools/build_aof_page.py     # aof_trainer.html from those tables
 python3 tools/build_latereg.py      # late-registration shove spots, about a minute
 python3 tools/build_binary.py       # all-in or fold tournament tables, half a minute
+python3 tools/build_tag.py          # tight-aggressive sheet for 6, 7 and 8 players, about 5 minutes
 python3 tools/build_spin.py         # spin tables (3 players and heads-up), about 7 minutes
 python3 tools/spin_sim.py           # whole spin games played with those tables, about 6 minutes
 ```
