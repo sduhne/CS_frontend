@@ -405,6 +405,42 @@ left (the small-blind row already counts it). Against a raise and an all-in,
 or two all-ins: AA and KK, plus QQ and AK when the stacks are 12 big blinds
 or less.
 
+### Six and seven players
+
+A seat is the number of players still to act behind it, so the names shift
+with the table: the first to act is UTG at eight and seven players and LJ at
+six. With fewer players the blinds come round sooner, which widens the
+ranges, and there is less ante money to win, which tightens them; the two
+nearly cancel, so each seat stays within a notch of the eight-handed row
+with the same players behind. The tables are solved for each size all the
+same (`--players 6` or `--players 7` on every `binary` command).
+
+Seven players, nobody has raised:
+
+| Seat | up to 7bb | 8 to 11bb | 12 to 16bb | 17 to 24bb | 25 to 40bb |
+|---|---|---|---|---|---|
+| UTG | 33+, A4s+, KTs+, A7o+, KQo | 55+, A9s+, KQs, ATo+ | 88+, AJs+, AQo+ | 99+, AQs+, AQo+ | JJ+, AKs, AKo |
+| LJ | 33+, A3s+, KTs+, A7o+, KJo+ | 44+, A8s+, KQs, A9o+ | 77+, ATs+, AJo+ | 88+, AJs+, AQo+ | JJ+, AKs, AKo |
+| HJ | 33+, A2s+, KTs+, QJs, A5o+, KJo+ | 44+, A7s+, KJs+, A8o+ | 66+, ATs+, KQs, ATo+ | 77+, AJs+, AJo+ | TT+, AQs+, AKo |
+| CO | 22+, A2s+, K8s+, QTs+, A2o+, K9o+ | 33+, A2s+, KTs+, A6o+, KQo | 44+, A8s+, KQs, A9o+ | 66+, ATs+, KQs, ATo+ | 88+, AQs+, AQo+ |
+| BTN | 22+, A2s+, K4s+, Q8s+, JTs, A2o+, K7o+, QTo+ | 22+, A2s+, K8s+, QTs+, JTs, A2o+, KTo+ | 33+, A2s+, KTs+, A7o+, KQo | 44+, A7s+, A5s, KJs+, A8o+, KQo | 66+, ATs+, ATo+ |
+| SB | 22+, A2s+, K2s+, Q2s+, J4s+, T7s+, 97s+, A2o+, K2o+, Q4o+, J7o+, T8o+ | 22+, A2s+, K2s+, Q4s+, J8s+, T8s+, 98s, A2o+, K2o+, Q7o+, J9o+ | 22+, A2s+, K3s+, Q9s+, JTs, A2o+, K7o+, QTo+ | 22+, A2s+, K7s+, QTs+, JTs, A2o+, K9o+, QJo | 33+, A3s+, KJs+, A7o+, KQo |
+
+Six players, nobody has raised:
+
+| Seat | up to 7bb | 8 to 11bb | 12 to 16bb | 17 to 24bb | 25 to 40bb |
+|---|---|---|---|---|---|
+| LJ | 22+, A2s+, KTs+, QJs, A5o+, KJo+ | 44+, A8s+, KJs+, A9o+ | 77+, ATs+, AJo+ | 88+, AJs+, AQo+ | JJ+, AKs, AKo |
+| HJ | 22+, A2s+, K9s+, QTs+, A3o+, KTo+ | 33+, A5s+, KJs+, A8o+, KQo | 55+, A9s+, KQs, ATo+ | 77+, AJs+, AJo+ | TT+, AQs+, AKo |
+| CO | 22+, A2s+, K7s+, QTs+, JTs, A2o+, K9o+, QJo | 22+, A2s+, KTs+, QJs, A5o+, KJo+ | 44+, A8s+, KQs, A9o+ | 66+, ATs+, KQs, ATo+ | 88+, AQs+, AQo+ |
+| BTN | 22+, A2s+, K3s+, Q8s+, JTs, A2o+, K7o+, QTo+ | 22+, A2s+, K8s+, QTs+, JTs, A2o+, KTo+ | 33+, A2s+, KTs+, A7o+, KQo | 44+, A7s+, KJs+, A8o+ | 77+, ATs+, AJo+ |
+| SB | 22+, A2s+, K2s+, Q2s+, J5s+, T7s+, 98s, A2o+, K2o+, Q4o+, J7o+, T8o+ | 22+, A2s+, K2s+, Q5s+, J8s+, T9s, A2o+, K2o+, Q8o+, J9o+ | 22+, A2s+, K4s+, Q9s+, JTs, A2o+, K7o+, QTo+ | 22+, A2s+, K8s+, QTs+, JTs, A2o+, K9o+, QJo | 44+, A5s+, KJs+, A8o+, KQo |
+
+The raise and all-in tables for six and seven players differ from the ones
+above by a notch here and there: `binary-sheet --players 6` prints them. A
+late entry earns about the same at every table size in the model (turbo:
+-26% at six players, -26% at seven, -24% at eight).
+
 ### Small print
 
 - **A limper before you:** use the range of the seat before yours.

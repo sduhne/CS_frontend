@@ -817,24 +817,26 @@ def cmd_latereg_chart(a) -> int:
     return 0
 
 
-def _binary_seat(name: str) -> int:
-    """Players still to act behind a named seat at an 8-handed table (0 = big blind)."""
-    i = pos_to_index(name, BN.PLAYERS)
+def _binary_seat(name: str, players: int) -> int:
+    """Players still to act behind a named seat at a table of ``players`` (0 = big blind)."""
+    i = pos_to_index(name, players)
     if i is None:
-        raise ValueError(f"unknown position {name!r}")
-    return BN.PLAYERS - 1 - i
+        raise ValueError(f"unknown position {name!r} at a {players}-handed table "
+                         f"(seats: {', '.join(BN.seats(players).values())}, BB)")
+    return players - 1 - i
 
 
 def cmd_binary(a) -> int:
     """One all-in or fold decision, from the tables of the sheet."""
     hand, _cards = parse_hand(a.hand)
-    n_behind = _binary_seat(a.pos)
+    BN.table(a.players)
+    n_behind = _binary_seat(a.pos, a.players)
     facing, seat, size = "", None, None
     if a.facing:
         words = a.facing.replace(",", " ").split()
         if len(words) < 2:
             raise ValueError("--facing is '<seat> raise' or '<seat> allin [big blinds]'")
-        seat = _binary_seat(words[0])
+        seat = _binary_seat(words[0], a.players)
         verb = words[1].lower().replace("-", "")
         if verb in ("raise", "raises", "open", "opens", "minraise"):
             facing = "raise"
@@ -844,30 +846,33 @@ def cmd_binary(a) -> int:
                 size = float(words[2].lower().replace("bb", ""))
         else:
             raise ValueError(f"--facing: {words[1]!r} is neither a raise nor an all-in")
-    action, why = BN.decide(hand, n_behind, a.stack, a.stage, facing, seat, size, a.bubble)
-    _out(f">>> {action}   {HANDS[hand]} in {a.pos.upper()} with {a.stack:g}bb, {BN.STAGE_NAMES[BN._stage(a.stage)]}")
+    action, why = BN.decide(hand, n_behind, a.stack, a.stage, facing, seat, size, a.bubble, a.players)
+    seat_label = BN.seat_name(n_behind, a.players)
+    _out(f">>> {action}   {HANDS[hand]} in {seat_label} with {a.stack:g}bb, {BN.STAGE_NAMES[BN._stage(a.stage)]}"
+         + ("" if a.players == BN.PLAYERS else f", {a.players}-handed"))
     _out(f"  why: {why}")
     if not facing and n_behind:
         other = "money" if BN._stage(a.stage) == "before" else "before"
-        _out(f"  num: {BN.SEATS[BN._seat(n_behind)]} moves all-in with {BN.width(a.stage, n_behind, a.stack):.0f}% of hands at "
-             f"this stack; {BN.STAGE_NAMES[other]} this hand goes to {BN.limit(other, n_behind, hand) or 'no'}"
-             f"{'bb' if BN.limit(other, n_behind, hand) else ' stack'}")
+        lim = BN.limit(other, n_behind, hand, a.players)
+        _out(f"  num: {seat_label} moves all-in with {BN.width(a.stage, n_behind, a.stack, a.players):.0f}% of hands at "
+             f"this stack; {BN.STAGE_NAMES[other]} this hand goes to {lim or 'no'}{'bb' if lim else ' stack'}")
     return 0
 
 
 def cmd_binary_chart(a) -> int:
-    seats = [_binary_seat(a.pos)] if a.pos else sorted(BN.SEATS, reverse=True)
+    BN.table(a.players)
+    seats = [_binary_seat(a.pos, a.players)] if a.pos else list(BN.seats(a.players))
     for k, nb in enumerate(seats):
         if nb == 0:
             raise ValueError("the big blind has no first-in chart: with no raise it checks")
         if k:
             _out()
-        _out(BN.grid_text(a.stage, nb))
+        _out(BN.grid_text(a.stage, nb, a.players))
     return 0
 
 
-def cmd_binary_sheet(_a) -> int:
-    _out(BN.sheet_text())
+def cmd_binary_sheet(a) -> int:
+    _out(BN.sheet_text(a.players))
     return 0
 
 
@@ -1083,7 +1088,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("binary", help="all-in or fold for a whole tournament: one decision from the tables")
     p.add_argument("--hand", required=True)
-    p.add_argument("--pos", required=True, help="your seat: UTG, UTG+1, LJ, HJ, CO, BTN, SB or BB (8-handed)")
+    p.add_argument("--pos", required=True, help="your seat: UTG, UTG+1, LJ, HJ, CO, BTN, SB or BB")
+    p.add_argument("--players", type=int, default=BN.PLAYERS, help="players at the table: 6, 7 or 8 (default 8)")
     p.add_argument("--stack", type=float, required=True, help="your stack in big blinds (the smaller of yours and "
                                                                "the biggest stack still to act)")
     p.add_argument("--stage", default="before", help="before (the money) or money")
@@ -1094,9 +1100,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("binary-chart", help="all-in or fold: the deepest stack that moves all-in, hand by hand")
     p.add_argument("--pos", help="one seat (default: every seat)")
     p.add_argument("--stage", default="before", help="before (the money) or money")
+    p.add_argument("--players", type=int, default=BN.PLAYERS, help="players at the table: 6, 7 or 8 (default 8)")
     p.set_defaults(fn=cmd_binary_chart)
 
     p = sub.add_parser("binary-sheet", help="all-in or fold: every table as text")
+    p.add_argument("--players", type=int, default=BN.PLAYERS, help="players at the table: 6, 7 or 8 (default 8)")
     p.set_defaults(fn=cmd_binary_sheet)
     return ap
 

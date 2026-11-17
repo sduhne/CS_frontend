@@ -919,8 +919,8 @@ class AllInOrFoldTournament(unittest.TestCase):
 
     def test_data(self):
         B = self.B
-        d = B.data()
-        self.assertEqual(d["version"], B.DATA_VERSION)
+        self.assertEqual(B.data()["version"], B.DATA_VERSION)
+        d = B.table(8)
         allowed = set(B.STACKS) | {0}
         for stage in B.STAGES:
             for nb in B.SEATS:
@@ -952,7 +952,7 @@ class AllInOrFoldTournament(unittest.TestCase):
 
     def test_tables(self):
         B = self.B
-        d = B.data()
+        d = B.table(8)
         for stage in B.STAGES:
             for key, _label, _nb in B.RAISERS:
                 row = d["reshove"][stage][key]
@@ -995,6 +995,47 @@ class AllInOrFoldTournament(unittest.TestCase):
         with self.assertRaises(ValueError):
             B.decide(h["AA"], 2, 10, stage="early")
 
+    def test_six_and_seven_players(self):
+        B = self.B
+        h = HAND_INDEX
+        self.assertEqual(list(B.seats(8).values()), ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB"])
+        self.assertEqual(list(B.seats(7).values()), ["UTG", "LJ", "HJ", "CO", "BTN", "SB"])
+        self.assertEqual(list(B.seats(6).values()), ["LJ", "HJ", "CO", "BTN", "SB"])
+        self.assertEqual([r[1] for r in B.raisers(6)][0], "LJ")
+        self.assertEqual([r[1] for r in B.raisers(7)][0], "UTG or LJ")
+        with self.assertRaises(ValueError):
+            B.table(9)
+        for players in (6, 7):
+            d = B.table(players)
+            self.assertEqual(set(d["first_in"]["before"]), {str(nb) for nb in B.seats(players)})
+            rows = B.first_in_rows("before", players)
+            self.assertEqual(len(rows), players - 1)
+            for nb in B.seats(players):
+                self.assertEqual(B.limit("before", nb, "AA", players), B.TOP)
+                self.assertLessEqual(B.limit("before", nb, "72o", players), 4)
+                # with the same number of players behind the range stays close to the 8-handed one:
+                # the blinds come round sooner (wider), and there is less ante money to win (tighter)
+                self.assertLess(abs(B.width("before", nb, 10, players) - B.width("before", nb, 10, 8)), 6.0)
+            widths = [B.width("before", nb, 10, players) for nb in B.seats(players)]
+            self.assertTrue(all(a <= b + 2.0 for a, b in zip(widths, widths[1:])), (players, widths))
+            for key, _label, _nb in B.shovers(players):
+                for i in range(len(B.BANDS)):
+                    normal, bubble = (parse_range(d["call"][k][key][i]) for k in ("normal", "bubble"))
+                    self.assertTrue(all(a >= b for a, b in zip(normal, bubble)), (players, key, i))
+            self.assertTrue(0.12 < d["entry_result"]["cash"] < 0.24)
+            self.assertLess(d["entry_result"]["return"], 0.0)
+        # six-handed the first seat has five players behind: its name is LJ, and UTG does not exist
+        self.assertEqual(B.decide(h["A9o"], 5, 10, players=6)[0], "ALL-IN")
+        self.assertIn("LJ", B.decide(h["A9o"], 5, 10, players=6)[1])
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            self.assertEqual(main(["binary", "--hand", "A9o", "--pos", "LJ", "--stack", "10", "--players", "6"]), 0)
+            self.assertEqual(main(["binary-sheet", "--players", "7"]), 0)
+            self.assertEqual(main(["binary-chart", "--pos", "BTN", "--players", "6"]), 0)
+            self.assertEqual(main(["binary", "--hand", "A9o", "--pos", "BTN", "--stack", "10", "--players", "5"]), 2)
+        self.assertIn("6-handed", out.getvalue())
+        self.assertIn("ALL-IN OR FOLD, the whole tournament (7-handed)", out.getvalue())
+
     def test_cli_and_playbook(self):
         B = self.B
         for args, word in ((["binary", "--hand", "A8o", "--pos", "BTN", "--stack", "12"], "ALL-IN"),
@@ -1012,7 +1053,7 @@ class AllInOrFoldTournament(unittest.TestCase):
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "PLAYBOOK.md")) as fh:
             text = fh.read()
         section = text[text.index("## All-in or fold for a whole tournament"):]
-        d = B.data()
+        d = B.table(8)
         for rows in (d["reshove"]["before"], d["call"]["normal"], d["call"]["bubble"]):
             for cells in rows.values():
                 self.assertIn("| " + " | ".join(cells) + " |", section)
@@ -1022,6 +1063,9 @@ class AllInOrFoldTournament(unittest.TestCase):
         for nb, cells in B.first_in_rows("before").items():
             self.assertEqual(len(cells), len(B.BANDS))
             self.assertIn(f"| {B.SEATS[nb]} | " + " | ".join(cells) + " |", section)
+        for players in (6, 7):
+            for nb, cells in B.first_in_rows("before", players).items():
+                self.assertIn(f"| {B.seat_name(nb, players)} | " + " | ".join(cells) + " |", section)
         # a cell splits into pairs, suited and offsuit hands, and nothing is lost in the split
         rng = B.first_in_range("before", 2, 10)
         pairs, suited, offsuit = B.range_groups(rng)

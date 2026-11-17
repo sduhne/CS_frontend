@@ -309,15 +309,19 @@ python3 -m poker_coach binary --hand A8o --pos BTN --stack 12                   
 python3 -m poker_coach binary --hand KTs --pos CO --stack 14 --stage money         # after the bubble
 python3 -m poker_coach binary --hand 99 --pos BTN --stack 15 --facing "CO raise"   # all-in over a raise, or fold
 python3 -m poker_coach binary --hand AJo --pos BB --stack 20 --facing "HJ allin 9" # call an all-in, or fold
+python3 -m poker_coach binary --hand A9o --pos LJ --stack 10 --players 6            # a 6- or 7-handed table
 python3 -m poker_coach binary-chart --pos BTN       # deepest stack that moves all-in, hand by hand
-python3 -m poker_coach binary-sheet                 # every table as text
+python3 -m poker_coach binary-sheet                 # every table as text (--players 6 or 7 for a short table)
 ```
 
 - **Answer in two words.** In this mode a decision is ALL-IN or FOLD (CALL or
   FOLD against an all-in, CHECK in an unraised big blind), then the reason in
   one line. `--stack` is the smaller of the user's stack and the biggest stack
-  still to act, in big blinds; seats are for an 8-handed table, so at a short
-  table name the seat by the players behind.
+  still to act, in big blinds.
+- **Table size.** The tables are solved for 8 players (the default), 7 and 6:
+  pass `--players`. A seat is the number of players behind it, so six-handed
+  the first to act is LJ and there is no UTG; with 5 or fewer players use the
+  6-handed tables and name the seat by the players behind.
 - **Stage.** Far from the money is the default. Close to it (under 2 players
   left per paid place in a turbo, 1.5 at regular speed) a hand must be good
   for twice the stack: run it with `--stack` doubled. On the bubble (under

@@ -134,6 +134,7 @@ python3 -m poker_coach binary --hand A8o --pos BTN --stack 12
 python3 -m poker_coach binary --hand 99 --pos BTN --stack 15 --facing "CO raise"
 python3 -m poker_coach binary --hand AJo --pos BB --stack 20 --facing "HJ allin 9"
 python3 -m poker_coach binary-chart --pos BTN
+python3 -m poker_coach binary-sheet --players 6        # the tables for a 6-handed table (6, 7 or 8)
 ```
 
 Before the money the ranges are the play that earns the most prize money in
