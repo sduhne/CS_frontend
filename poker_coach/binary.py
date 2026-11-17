@@ -184,17 +184,17 @@ def decide(hand: int, n_behind: int, stack_bb: float, stage: str = "before", fac
 # Printing
 # --------------------------------------------------------------------------
 
-_RANKS = "AKQJT98765432"
-
-
 def grid_text(stage: str, n_behind: int) -> str:
-    """The seat's first-in table: each cell is the deepest stack (bb) that moves all-in."""
+    """The seat's first-in table: every hand by name with the deepest stack (bb) that moves all-in.
+
+    The name says what the hand is: ``A5s`` suited, ``A5o`` offsuit, ``55`` a pair.  Pairs run down
+    the diagonal, suited hands sit to their right and offsuit hands below them.
+    """
     lim = limits(stage, n_behind)
-    lines = [f"{SEATS[_seat(n_behind)]}, {STAGE_NAMES[_stage(stage)]}: deepest stack (bb) that moves all-in "
-             f"(suited above the diagonal, offsuit below; . = fold)",
-             "    " + " ".join(f"{r:>2}" for r in _RANKS)]
-    for i, r in enumerate(_RANKS):
-        lines.append(f"  {r} " + " ".join(f"{lim[i * 13 + j] or '.':>2}" for j in range(13)))
+    lines = [f"{SEATS[_seat(n_behind)]}, {STAGE_NAMES[_stage(stage)]}: each hand and the deepest stack (bb) that moves all-in",
+             "  s = suited (right of the pairs), o = offsuit (below the pairs), . = fold"]
+    for i in range(13):
+        lines.append("  " + " ".join(f"{HANDS[i * 13 + j]:<3}{lim[i * 13 + j] or '.':>3}" for j in range(13)))
     return "\n".join(lines)
 
 
