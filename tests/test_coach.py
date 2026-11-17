@@ -784,27 +784,32 @@ class LateRegistration(unittest.TestCase):
 
     def test_zones_and_scout(self):
         L = self.L
-        # 180 left, 150 paid: the line is one average stack
-        self.assertAlmostEqual(L.sit_out_line(50000, 180, 150), 50000.0)
-        self.assertEqual(L.zone(70000, 50000, 180, 150)[0], "safe")
-        self.assertEqual(L.zone(40000, 50000, 180, 150)[0], "close")
-        self.assertEqual(L.zone(15000, 50000, 180, 150)[0], "short")
-        self.assertEqual(L.zone(1000, 50000, 450, 150)[0], "far")
-        self.assertEqual(L.zone(1, 50000, 150, 150)[0], "safe")
-        lines = [L.sit_out_line(50000, r, 150) for r in (151, 155, 165, 180, 225, 300, 450, 700)]
+        # 240 left, 200 paid: the line is one average stack
+        self.assertAlmostEqual(L.sit_out_line(50000, 240, 200), 50000.0)
+        self.assertEqual(L.zone(70000, 50000, 240, 200)[0], "safe")
+        self.assertEqual(L.zone(40000, 50000, 240, 200)[0], "close")
+        self.assertEqual(L.zone(15000, 50000, 240, 200)[0], "short")
+        self.assertEqual(L.zone(1000, 50000, 600, 200)[0], "far")
+        self.assertEqual(L.zone(1, 50000, 200, 200)[0], "safe")
+        lines = [L.sit_out_line(50000, r, 200) for r in (201, 205, 220, 240, 300, 400, 600, 900)]
         self.assertTrue(all(a < b for a, b in zip(lines, lines[1:])), lines)
         self.assertTrue(all(L.cash_chance(a) <= L.cash_chance(b) for a, b in ((0.0, 0.1), (0.1, 0.3), (0.3, 1.0))))
-        self.assertIn("SIT OUT", L.describe_zone(70000, 50000, 180, 150))
-        self.assertIn("KEEP PLAYING", L.describe_zone(5000, 50000, 300, 150))
+        self.assertIn("SIT OUT", L.describe_zone(70000, 50000, 240, 200))
+        self.assertIn("KEEP PLAYING", L.describe_zone(5000, 50000, 400, 200))
         self.assertEqual([L.seat_name(b, 8) for b in range(7, 0, -1)], ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB"])
         self.assertEqual([L.seat_name(b, 6) for b in range(5, -1, -1)], ["LJ", "HJ", "CO", "BTN", "SB", "BB"])
         self.assertEqual(L.seat_name(6, 7), "UTG")
         ordinary = L.scout(16, 500, 150, entrants=1000, speed="turbo", buyin=10, fee=0.8)
         close = L.scout(16, 190, 150, entrants=320, speed="turbo", buyin=10, fee=0.8)
-        self.assertLess(ordinary.itm, 0.35)
-        self.assertGreater(close.itm, 0.6)
+        self.assertLess(ordinary.itm, 0.30)
+        self.assertGreater(close.itm, 0.55)
         self.assertLess(ordinary.cover, close.cover)
-        self.assertIn(ordinary.verdict, ("SKIP", "MARGINAL"))
+        self.assertEqual(ordinary.verdict, "SKIP")
+        self.assertLessEqual(ordinary.itm, ordinary.best_itm + 1e-9)
+        # without a min-cash the scout assumes GGPoker's usual two full prices, and says so
+        self.assertTrue(ordinary.assumed_min_cash)
+        self.assertAlmostEqual(ordinary.min_cash, 2.0, places=2)
+        self.assertIn("(assumed)", L.describe(ordinary))
         bounty = L.scout(16, 500, 150, entrants=1000, speed="turbo", buyin=10, fee=0.8, bounty_share=0.5)
         self.assertLess(bounty.min_cash, ordinary.min_cash)
         self.assertLess(bounty.roi, ordinary.roi)
@@ -814,21 +819,64 @@ class LateRegistration(unittest.TestCase):
 
     def test_reference_charts(self):
         L = self.L
-        charts = L.reference_charts(8, 10.0)
-        wide, tight = charts["far"], charts["short"]
+        charts = L.reference_charts(8)
+        wide, short, tight = charts["wide"], charts["short"], charts["tight"]
         self.assertEqual(list(wide["open"]), ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB"])
-        self.assertGreater(tight["itm"], wide["itm"])
         widths = [range_pct(w) for w in wide["open"].values()]
         self.assertTrue(all(a <= b + 1e-9 for a, b in zip(widths, widths[1:])), widths)   # later seats shove wider
-        for seat, w in wide["open"].items():
+        for k, (seat, w) in enumerate(wide["open"].items()):
             t = tight["open"][seat]
             self.assertTrue(all(a >= b for a, b in zip(w, t)), seat)       # tight sits inside wide
             self.assertEqual(w[HAND_INDEX["AA"]], 1.0)
             self.assertEqual(t[HAND_INDEX["KK"]], 1.0)
             self.assertEqual(w[HAND_INDEX["72o"]], 0.0)
-            # far tighter than chip-EV shove-or-fold: a called loss ends the tournament
-            self.assertLess(range_pct(w), range_pct(nash_push_range(8 - 1 - list(wide["open"]).index(seat), 10.0)))
-        self.assertLess(range_pct(tight["raise"]), range_pct(wide["raise"]) + 1e-9)
+            # tighter than chip-EV shove-or-fold: a called loss ends the tournament
+            self.assertLess(range_pct(w), range_pct(nash_push_range(7 - k, 10.0)))
+            # a 4bb stack cannot wait: it shoves wider than the 10bb chart from the early seats
+            if k < 5:
+                self.assertGreater(range_pct(short["open"][seat]), range_pct(w))
+        for ch in (wide, short, tight):
+            # an early raiser is stronger than a late one
+            self.assertLessEqual(range_pct(ch["early"]), range_pct(ch["late"]) + 1e-9)
+        self.assertLess(range_pct(tight["late"]), range_pct(wide["late"]))
+
+    def test_sheet_is_what_gets_delivered(self):
+        """The printed rules, played exactly, cash a little less than the solver and more than folding."""
+        L, bl = self.L, self.turbo
+        fc = L.forecast(400, 150, 27.5, bl)
+        best = L.solve(11.0, fc, bl, grid=120)
+        sheet = L.sheet_plan(11.0, fc, bl, grid=120)
+        self.assertLessEqual(sheet.itm, best.itm + 1e-9)
+        self.assertGreater(sheet.itm, best.itm - 0.08)
+        self.assertGreater(sheet.itm, best.fold_only)
+        rules = L.build_sheet(8)
+        self.assertIsNone(rules.pick(1.2, 10.0))
+        self.assertEqual(rules.pick(0.7, 10.0), "aces")
+        self.assertEqual(rules.pick(0.3, 10.0), "tight")
+        self.assertEqual(rules.pick(0.1, 10.0), "wide")
+        self.assertEqual(rules.pick(0.1, 4.0), "short")
+        self.assertEqual(rules.pick(0.1, 30.0), "premium")
+        # the raiser is called first: a short re-shove gets the equity against a raising range, not random cards
+        fe, eq = L.spots(8)["raise"][("late", 3.0)]
+        self.assertLess(eq[HAND_INDEX["K9s"]], 0.5)
+        self.assertLess(fe[HAND_INDEX["K9s"]], 0.05)
+        # walks are rare: the small blind usually plays when it is folded to
+        self.assertLess(L._folded_to(8)[0], 0.10)
+
+    def test_sit_out_line_grows_in_small_fields(self):
+        L = self.L
+        big, mid, small = (L.sit_out_line(1.0, round(p * 1.2), p) for p in (300, 60, 15))
+        self.assertAlmostEqual(big, 1.0)
+        self.assertGreater(mid, big + 0.3)
+        self.assertGreater(small, mid + 1.0)
+        # where no extra is added the line is safe in the forecast
+        for speed, avg in (("turbo", 25.0), ("regular", 30.0)):
+            sp = L.SPEEDS[speed]
+            bl = L.Blinds(sp["growth"], sp["hands_per_level"])
+            for paid in (30, 60, 150):
+                fc = L.forecast(round(paid * 1.2), paid, avg, bl)
+                line = L.sit_out_line(avg, round(paid * 1.2), paid)
+                self.assertGreater(L.fold_only_chance(line, fc, bl), 0.90, (speed, paid))
 
     def test_cli(self):
         for args, code in ((["latereg", "--stack-bb", "16", "--left", "190", "--paid", "150", "--entries", "1000"], 0),

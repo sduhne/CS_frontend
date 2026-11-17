@@ -55,6 +55,7 @@ SPEEDS = {
 # player at a rate of 180-210 per hour divided by the average stack in big
 # blinds; inside the last 10% before the money that falls to about a quarter,
 # and during hand-for-hand to about a tenth.
+MIN_CASH_MULTIPLE = 2.0  # smallest prize / full price in GGPoker non-bounty events (1.9 to 2.15 measured)
 HANDS_PER_MINUTE = 1.08  # about 65 hands an hour at an 8-handed table (assumed: GGPoker publishes no figure)
 BUST_CONSTANT = 3.0      # eliminations per table per hand = BUST_CONSTANT / average stack in bb
 BUST_SPREAD = 0.25       # uncertainty (log standard deviation) of that constant
@@ -164,6 +165,16 @@ class Forecast:
     mean: float
     samples: list[int] = field(default_factory=list)
     blinds: Blinds | None = None        # blind schedule that goes with the forecast
+    left: list[float] = field(default_factory=list)   # players left before each hand, central path
+    paid: int = 0
+    chips: float = 0.0                  # all chips in play, in big blinds of the entry level
+
+    def field_at(self, hand: int) -> tuple[float, float]:
+        """(players left, average stack in entry-level big blinds) before ``hand`` on the central path."""
+        if not self.left:
+            return 0.0, 0.0
+        r = self.left[min(hand, len(self.left) - 1)]
+        return r, self.chips / r if r > 0 else 0.0
 
     def quantile(self, q: float) -> int:
         for k, a in enumerate(self.alive):
@@ -181,7 +192,7 @@ class Forecast:
 
 def bubble_path(remaining: int, paid: int, avg_bb: float, blinds: Blinds, players: int = 8,
                 bust: float = BUST_CONSTANT, near: float = SLOW_NEAR, hfh: float = SLOW_HFH,
-                limit: int = 4000) -> tuple[int, int | None, float]:
+                limit: int = 4000, trace: list | None = None) -> tuple[int, int | None, float]:
     """(hands until the bubble bursts, hand at which hand-for-hand starts, its pace).
 
     Each hand every table loses a player with probability ``bust / A`` where
@@ -198,6 +209,8 @@ def bubble_path(remaining: int, paid: int, avg_bb: float, blinds: Blinds, player
     clock, stall, pace_used = 0.0, None, 1.0
     wait = hfh_left(paid)
     for k in range(limit):
+        if trace is not None:
+            trace.append(r)
         a = chips / (r * blinds.mult(clock))
         rate = bust / max(a, 1.5)
         pace = 1.0
@@ -246,13 +259,16 @@ def forecast(remaining: int, paid: int, avg_bb: float, blinds: Blinds, players: 
     """
     if remaining <= paid:
         return Forecast([0.0], 0.0, [0], blinds)
-    samples, stalls = [], []
+    samples, stalls, path = [], [], []
     for i in range(points):
         # evenly spaced quantiles of a log-normal speed
         z = _norm_ppf((i + 0.5) / points)
-        hands, stall, pace = bubble_path(remaining, paid, avg_bb, blinds, players, bust * math.exp(spread * z))
+        trace = path if i == points // 2 else None
+        hands, stall, pace = bubble_path(remaining, paid, avg_bb, blinds, players, bust * math.exp(spread * z),
+                                         trace=trace)
         samples.append(hands)
         stalls.append((stall, pace))
+    path.append(float(paid))
     stall, pace = stalls[points // 2]
     warped = replace(blinds, stall_from=stall, stall_pace=pace) if stall is not None else blinds
     # sampling noise of the eliminations themselves (few players to bust = noisy)
@@ -265,7 +281,7 @@ def forecast(remaining: int, paid: int, avg_bb: float, blinds: Blinds, players: 
     spreaded.sort()
     top = spreaded[-1] + 1
     alive = [sum(1 for x in spreaded if x > k) / len(spreaded) for k in range(top + 1)]
-    return Forecast(alive, sum(spreaded) / len(spreaded), spreaded, warped)
+    return Forecast(alive, sum(spreaded) / len(spreaded), spreaded, warped, path, paid, remaining * avg_bb)
 
 
 def forecast_fixed(hands: float, spread: float = 0.12) -> Forecast:
@@ -305,6 +321,8 @@ def _norm_ppf(p: float) -> float:
 # --------------------------------------------------------------------------
 
 CALLERS = {"loose": -0.03, "normal": 0.0, "tight": 0.04}
+DATA_VERSION = 2
+SB_PLAYS = 0.70         # folded to the small blind, it raises, limps or shoves this often (the rest are walks)
 _DATA = os.path.join(os.path.dirname(__file__), "data", "latereg.json")
 
 
@@ -326,6 +344,9 @@ def _pack(values) -> str:
     return "".join(f"{max(0, min(999, round(v * 999))):03d}" for v in values)
 
 
+RAISERS = {"late": 3, "early": 6}      # who raised: the cutoff (3 behind) or an early seat (6 behind)
+
+
 @lru_cache(maxsize=16)
 def spots(players: int = 8, callers: str = "normal") -> dict:
     """For every seat and stack depth: per hand, P(everyone folds) and equity when called.
@@ -333,24 +354,27 @@ def spots(players: int = 8, callers: str = "normal") -> dict:
     The opponents cover the hero and call the way they would call a standard
     (chip-EV) shoving range from that seat, shifted by the ``callers`` profile:
     ``loose`` tables call 3 points of equity lighter, ``tight`` (bubble) tables
-    4 points tighter.  ``raise`` holds the same for moving all-in over one
-    open raise.  Tables for 8 players are stored in ``data/latereg.json``
-    (``tools/build_latereg.py``); other sizes are solved on first use.
+    4 points tighter.  ``raise`` holds the same for moving all-in over one open
+    raise, from a late or an early seat; the raiser, who is priced in against a
+    short stack, calls first.  Tables for 8 players are stored in
+    ``data/latereg.json`` (``tools/build_latereg.py``); other sizes are solved
+    on first use.
     """
     stored = _stored().get("spots", {}).get(f"{players}:{callers}")
-    if stored:
+    if stored and _stored().get("version") == DATA_VERSION:
         out = {"open": {}, "raise": {}, "depths": DEPTHS}
         for key, (fe, eq) in stored["open"].items():
             nb, d = key.split(":")
             out["open"][(int(nb), float(d))] = (_unpack(fe), _unpack(eq))
         for key, (fe, eq) in stored["raise"].items():
-            out["raise"][float(key)] = (_unpack(fe), _unpack(eq))
+            kind, d = key.split(":")
+            out["raise"][(kind, float(d))] = (_unpack(fe), _unpack(eq))
         return out
     return compute_spots(players, callers)
 
 
 def compute_spots(players: int = 8, callers: str = "normal") -> dict:
-    """Solve the spot tables (about 15 seconds for 8 players)."""
+    """Solve the spot tables (about 20 seconds for 8 players)."""
     shift = CALLERS[callers]
     out = {"open": {}, "raise": {}, "depths": DEPTHS}
     chips = Prizes()
@@ -364,23 +388,26 @@ def compute_spots(players: int = 8, callers: str = "normal") -> dict:
                                                    extra_req={j: shift for j in range(players)})
             sol = solve_shove(v_fold, v_steal, cs, iters=30)
             out["open"][(nb, d)] = (tuple(sol.fold_equity), tuple(sol.eq_called))
-    # all-in over a raise: hero on the button, the cutoff opened
+    # all-in over a raise: the hero is on the button
     if players >= 4:
-        shover, opener = players - 3, players - 4
-        opener_range = villain_open_range(3)
-        for d in DEPTHS:
-            stacks = [max(25.0, d + 5.0)] * players
-            stacks[shover] = d
-            setup = HandSetup(stacks, SB, BB, 0.0, BB_ANTE)
-            bets = {opener: OPEN_RAISE}
-            order = [j for j in range(shover + 1, players)] + [opener]
-            extra = {j: 0.02 + shift for j in range(shover + 1, players)}
-            extra[opener] = shift
-            v_fold, v_steal, cs = build_shove_spot(setup, shover, chips, bets=bets, priors={opener: opener_range},
-                                                   caller_order=order, fold_winner=opener, extra_req=extra,
-                                                   use_types=False)
-            sol = solve_shove(v_fold, v_steal, cs, iters=30)
-            out["raise"][d] = (tuple(sol.fold_equity), tuple(sol.eq_called))
+        shover = players - 3
+        for kind, behind in RAISERS.items():
+            behind = max(3, min(behind, players - 1))
+            opener = players - 1 - behind
+            opener_range = villain_open_range(behind)
+            for d in DEPTHS:
+                stacks = [max(25.0, d + 5.0)] * players
+                stacks[shover] = d
+                setup = HandSetup(stacks, SB, BB, 0.0, BB_ANTE)
+                bets = {opener: OPEN_RAISE}
+                order = [opener] + [j for j in range(shover + 1, players)]
+                extra = {j: 0.02 + shift for j in range(shover + 1, players)}
+                extra[opener] = shift
+                v_fold, v_steal, cs = build_shove_spot(setup, shover, chips, bets=bets,
+                                                       priors={opener: opener_range}, caller_order=order,
+                                                       fold_winner=opener, extra_req=extra, use_types=False)
+                sol = solve_shove(v_fold, v_steal, cs, iters=30)
+                out["raise"][(kind, d)] = (tuple(sol.fold_equity), tuple(sol.eq_called))
     return out
 
 
@@ -394,14 +421,36 @@ def _nearest_depth(b: float) -> float:
 
 @lru_cache(maxsize=8)
 def _folded_to(players: int) -> tuple:
-    """P(nobody has entered the pot when the action reaches the seat with n players behind)."""
+    """P(nobody has entered the pot when the action reaches the seat with n players behind).
+
+    For the big blind that is a walk: everyone folded and the small blind gave up too.
+    """
     opens = [range_pct(villain_open_range(nb)) / 100.0 for nb in range(players)]
     out = []
     for nb in range(players):
         p = 1.0
-        for j in range(nb + 1, players):
+        for j in range(max(nb + 1, 2), players):
             p *= 1.0 - opens[j]
+        if nb == 0:
+            p *= 1.0 - SB_PLAYS
         out.append(p)
+    return tuple(out)
+
+
+@lru_cache(maxsize=8)
+def _early_raiser(players: int) -> tuple:
+    """Given that someone raised before the seat with n players behind: P(it was an early seat)."""
+    opens = [range_pct(villain_open_range(nb)) / 100.0 for nb in range(players)]
+    out = []
+    for nb in range(players):
+        still, early, total = 1.0, 0.0, 0.0
+        for j in range(players - 1, nb, -1):
+            p = still * (SB_PLAYS if (j == 1 and nb == 0) else opens[j])
+            total += p
+            if j >= 5:
+                early += p
+            still *= 1.0 - (SB_PLAYS if (j == 1 and nb == 0) else opens[j])
+        out.append(early / total if total > 0 else 0.0)
     return tuple(out)
 
 
@@ -442,8 +491,12 @@ class Plan:
         """P(cash) before hand number ``hand`` with a stack given in current big blinds."""
         return self._value(self.values, hand, seat, stack_bb_now * self.blinds.mult(hand))
 
-    def shove_range(self, hand: int, seat: int, stack_bb_now: float, facing_raise: bool = False) -> list[float]:
-        """Hands the plan moves all-in with (weights 0 or 1 per hand class)."""
+    def shove_range(self, hand: int, seat: int, stack_bb_now: float, facing_raise: bool = False,
+                    raiser: str = "late") -> list[float]:
+        """Hands the plan moves all-in with (weights 0 or 1 per hand class).
+
+        ``raiser``: with ``facing_raise``, whether the raise came from a late seat or an early one.
+        """
         if seat == 0 and not facing_raise:
             return [0.0] * 169
         m = self.blinds.mult(hand)
@@ -453,7 +506,7 @@ class Plan:
         va, vb, vc = nxt(a), nxt(b), nxt(c)
         d = _nearest_depth(stack_bb_now)
         tab = spots(self.players, self.callers)
-        fe, eq = tab["raise"][d] if facing_raise else tab["open"][(seat, d)]
+        fe, eq = tab["raise"][(raiser, d)] if facing_raise else tab["open"][(seat, d)]
         return [1.0 if fe[h] * va + (1.0 - fe[h]) * eq[h] * vb > vc + 1e-9 else 0.0 for h in range(169)]
 
 
@@ -492,23 +545,28 @@ def _branch_stacks(seat: int, s: float, m: float, facing_raise: bool, players: i
     is assumed to cover the hero.
     """
     fold = s - min(s, posted(seat, players, ante) * m)
+    own_dead = 0.0                                  # chips of the hero's that cannot be matched
     if ante == "player":
         others = (players - 1) * PLAYER_ANTE        # antes of everyone else
         left = (players - 2) * PLAYER_ANTE          # ... except the caller's, which is matched
+    elif seat == 0:
+        others = left = 0.0
+        own_dead = min(s, BB_ANTE * m)              # the big-blind ante is dead money
     else:
-        others = left = 0.0 if seat == 0 else BB_ANTE
+        others = left = BB_ANTE
     blind_in = BB if seat == 0 else SB if seat == 1 else 0.0   # the hero's own blind
     blinds_others = SB + BB - blind_in
     raise_in = OPEN_RAISE if facing_raise else 0.0
+    live = s - own_dead
     if seat == 0 or facing_raise:
         # the raiser's chips are in the pot: they fold and leave them, or call and they are matched
         steal = s + (blinds_others + others + raise_in) * m
-        win = 2.0 * s + (blinds_others + left) * m
+        win = 2.0 * live + own_dead + (blinds_others + left) * m
     else:
         steal = s + (blinds_others + others) * m
         # the caller is usually one of the blinds, so part of the blinds is matched, not dead
         dead_blinds = blinds_others - (0.75 if seat >= 2 else BB)
-        win = 2.0 * s + (dead_blinds + left) * m
+        win = 2.0 * live + own_dead + (dead_blinds + left) * m
     return steal, win, fold
 
 
@@ -533,19 +591,56 @@ def _groups(fe, eq, n_groups: int = 26) -> list[tuple[float, float, float]]:
 def _group_tables(players: int, callers: str) -> dict:
     tab = spots(players, callers)
     return {"open": {key: _groups(*val) for key, val in tab["open"].items()},
-            "raise": {d: _groups(*val) for d, val in tab["raise"].items()}}
+            "raise": {key: _groups(*val) for key, val in tab["raise"].items()}}
+
+
+# --------------------------------------------------------------------------
+# The printed sheet as a fixed strategy
+# --------------------------------------------------------------------------
+
+SHORT_BB = 6.0          # under this stack the wide zone uses its short-stack chart
+DEEP_BB = 20.0          # above this the charts stop: all-in with premiums only
+
+
+@dataclass
+class Sheet:
+    """The rules of the printed sheet: one range per chart, seat and situation.
+
+    ``charts[name]`` is ``{"open": {players behind: weights}, "late": weights, "early": weights}``
+    for the names ``wide``, ``short``, ``tight``, ``aces`` and ``premium``.
+    """
+
+    charts: dict
+    players: int = 8
+
+    def pick(self, share: float, stack_bb: float) -> str | None:
+        """Which chart applies to a stack that is ``share`` of the sit-out line (None = fold)."""
+        if share >= 1.0:
+            return None
+        if share >= ZONES[1][1]:
+            return "aces"
+        if stack_bb > DEEP_BB:
+            return "premium"
+        if share >= ZONES[2][1]:
+            return "tight"
+        return "short" if stack_bb < SHORT_BB else "wide"
+
+    def weights(self, name: str, kind: str, seat: int) -> list[float]:
+        chart_ = self.charts[name]
+        return chart_["open"][seat] if kind == "open" else chart_[kind]
 
 
 def solve(stack_bb: float, fc: Forecast, blinds: Blinds, players: int = 8, callers: str = "normal",
           reward=None, policy: str = "itm", grid: int = 220, top: float | None = None,
-          ante: str = "player") -> Plan:
+          ante: str = "player", sheet: Sheet | None = None) -> Plan:
     """Best shove-or-fold plan for the chance of cashing.
 
     ``reward(stack_bb0)`` is the prize expectation (in buy-ins) of holding that
     stack when the bubble bursts; with it the plan also reports the expected
     prize.  ``policy``: ``itm`` maximises the chance of cashing, ``ev``
     maximises the expected prize, ``fold`` never plays a hand, ``nash`` shoves
-    the chip-EV ranges whatever the situation.
+    the chip-EV ranges whatever the situation, ``sheet`` follows the printed
+    rules (``sheet``) exactly, so its result is what the sheet delivers.
     """
     blinds = fc.blinds or blinds
     horizon = min(len(fc.alive) - 1, 1500)
@@ -556,8 +651,30 @@ def solve(stack_bb: float, fc: Forecast, blinds: Blinds, players: int = 8, calle
     if reward is not None:
         reward_row = [0.0] + [reward(i * step) for i in range(1, grid + 1)]
     gt = _group_tables(players, callers)
+    tab = spots(players, callers)
     ft = _folded_to(players)
+    early = _early_raiser(players)
     walk = ft[0]
+    if policy == "sheet" and (sheet is None or not fc.left):
+        raise ValueError("the sheet policy needs a sheet and a field forecast")
+    coef_cache: dict = {}
+
+    def coef(name: str, kind: str, seat: int, d: float) -> tuple[float, float, float]:
+        """(share of hands played, P(played and all fold), P(played, called and win)) for a fixed range."""
+        key = (name, kind, seat if kind == "open" else -1, d)
+        got = coef_cache.get(key)
+        if got is None:
+            w = sheet.weights(name, kind, seat)
+            fe, eq = tab["open"][(seat, d)] if kind == "open" else tab["raise"][(kind, d)]
+            a = b = c = 0.0
+            for h in range(169):
+                if w[h] >= 0.5:
+                    a += _WEIGHT[h]
+                    b += _WEIGHT[h] * fe[h]
+                    c += _WEIGHT[h] * (1.0 - fe[h]) * eq[h]
+            got = coef_cache[key] = (a, b, c)
+        return got
+
     plan = Plan(players=players, blinds=blinds, fc=fc, step=step, values=[], dollars=None, callers=callers,
                 itm=0.0, fold_only=0.0, prize=None, stack_bb=stack_bb, reward=reward_row, ante=ante)
     values = [None] * (horizon + 1)
@@ -567,6 +684,10 @@ def solve(stack_bb: float, fc: Forecast, blinds: Blinds, players: int = 8, calle
         m = blinds.mult(k)
         lam = fc.hazard(k)
         last = k == horizon or lam >= 1.0
+        line_k = 0.0
+        if policy == "sheet":
+            r_k, avg_k = fc.field_at(k)
+            line_k = sit_out_line(avg_k, r_k, fc.paid)
         vrow_all, drow_all = [], []
         for seat in range(players):
             nseat = (seat + 1) % players
@@ -585,48 +706,58 @@ def solve(stack_bb: float, fc: Forecast, blinds: Blinds, players: int = 8, calle
                 dd = lam * burst_d + (1.0 - lam) * _interp(nd, x) if nd is not None else 0.0
                 return v, dd
 
+            p_raise = 1.0 - (walk if seat == 0 else ft[seat])
+            p_open = 1.0 - p_raise
+            kinds = [(kind, wk) for kind, wk in (("early", early[seat]), ("late", 1.0 - early[seat])) if wk > 1e-9]
             vrow, drow = [0.0] * (grid + 1), [0.0] * (grid + 1)
             for i in range(1, grid + 1):
                 s = i * step
                 b = s / m
                 d = _nearest_depth(b)
                 vc, dc = after(_branch_stacks(seat, s, m, False, players, ante)[2])
-                # facing an open raise (or, in the big blind, any raise)
-                p_raise = 1.0 - (walk if seat == 0 else ft[seat])
-                acc_v = acc_d = 0.0
-                if policy in ("fold",) or b <= 0:
-                    acc_v, acc_d = vc, dc
+                chart_name = None
+                if policy == "sheet":
+                    chart_name = sheet.pick(s / line_k if line_k > 0 else 99.0, b)
+                # --- someone raised before the hero (for the big blind: anything but a walk)
+                if policy in ("fold", "nash") or (policy == "sheet" and chart_name is None):
+                    acc_v, acc_d = vc, dc       # the chip-EV chart only covers first-in all-ins
                 else:
                     steal, win, _ = _branch_stacks(seat, s, m, True, players, ante)
                     (va, da), (vb, db) = after(steal), after(win)
-                    if policy == "nash":
-                        acc_v, acc_d = vc, dc   # the chip-EV chart only covers open shoves
-                    else:
-                        for w, u, v in gt["raise"][d]:
+                    acc_v = acc_d = 0.0
+                    for kind, wk in kinds:
+                        if policy == "sheet":
+                            wp, u, v = coef(chart_name, kind, seat, d)
+                            acc_v += wk * (u * va + v * vb + (1.0 - wp) * vc)
+                            acc_d += wk * (u * da + v * db + (1.0 - wp) * dc)
+                            continue
+                        for w, u, v in gt["raise"][(kind, d)]:
                             sv, sd = u * va + v * vb, u * da + v * db
-                            take = (sd > dc) if objective_is_dollars else (sv > vc)
-                            if take:
-                                acc_v += w * sv
-                                acc_d += w * sd
+                            if (sd > dc) if objective_is_dollars else (sv > vc):
+                                acc_v += wk * w * sv
+                                acc_d += wk * w * sd
                             else:
-                                acc_v += w * vc
-                                acc_d += w * dc
+                                acc_v += wk * w * vc
+                                acc_d += wk * w * dc
                 tot_v, tot_d = p_raise * acc_v, p_raise * acc_d
-                p_open = 1.0 - p_raise
+                # --- nobody has entered the pot
                 if seat == 0:
-                    # a walk: the big blind collects the small blind and the antes
-                    wv, wd = after(s + walk_gain * m)
+                    wv, wd = after(s + walk_gain * m)       # a walk: the blind and the antes come back
                     tot_v += p_open * wv
                     tot_d += p_open * wd
-                elif policy == "fold":
+                elif policy == "fold" or (policy == "sheet" and chart_name is None):
                     tot_v += p_open * vc
                     tot_d += p_open * dc
                 else:
                     steal, win, _ = _branch_stacks(seat, s, m, False, players, ante)
                     (va, da), (vb, db) = after(steal), after(win)
                     acc_v = acc_d = 0.0
-                    if policy == "nash":
-                        fe, eq = spots(players, callers)["open"][(seat, d)]
+                    if policy == "sheet":
+                        wp, u, v = coef(chart_name, "open", seat, d)
+                        acc_v = u * va + v * vb + (1.0 - wp) * vc
+                        acc_d = u * da + v * db + (1.0 - wp) * dc
+                    elif policy == "nash":
+                        fe, eq = tab["open"][(seat, d)]
                         rng = _nash_range(seat, b)
                         for h in range(169):
                             w = _WEIGHT[h]
@@ -639,8 +770,7 @@ def solve(stack_bb: float, fc: Forecast, blinds: Blinds, players: int = 8, calle
                     else:
                         for w, u, v in gt["open"][(seat, d)]:
                             sv, sd = u * va + v * vb, u * da + v * db
-                            take = (sd > dc) if objective_is_dollars else (sv > vc)
-                            if take:
+                            if (sd > dc) if objective_is_dollars else (sv > vc):
                                 acc_v += w * sv
                                 acc_d += w * sd
                             else:
@@ -709,18 +839,29 @@ LINE_FACTOR = ORBIT_COST / BUST_CONSTANT    # expected blinds paid, per chip the
 
 # The sit-out line: the stack, in average stacks, from which a player who folds
 # every hand still reaches the money about 95 times in 100.  Rows are players
-# left / places paid.  Taken from the forecast (the highest value over hyper,
-# turbo, regular and slow structures and average stacks of 15 to 40 big
-# blinds), so it errs on the safe side.
+# left / places paid, for fields that pay 150 places or more.  Taken from the
+# forecast (the highest value over hyper, turbo, regular and slow structures
+# and average stacks of 15 to 40 big blinds), so it errs on the safe side.
 SIT_OUT_TABLE = ((1.00, 0.0), (1.02, 0.50), (1.05, 0.65), (1.10, 0.85), (1.20, 1.00), (1.30, 1.15),
                  (1.50, 1.55), (2.00, 2.45), (3.00, 4.40), (4.00, 6.30))
+
+
+def small_field_extra(paid: float) -> float:
+    """Average stacks to add to the line when fewer than about 150 places are paid.
+
+    With few players to bust, the bubble is a handful of eliminations whose
+    timing is a lottery, so a folding player needs more.  No small-field
+    bubble was measured; this is the forecast's own extrapolation.
+    """
+    return max(0.0, 40.0 / max(paid, 1.0) - 0.25)
+
 
 ZONES = (
     # name, lowest share of the sit-out line, what to do
     ("safe", 1.0, "SIT OUT: the stack lasts until the money"),
-    ("close", 0.5, "nearly there: fold everything except aces and kings"),
+    ("close", 0.5, "nearly there: fold everything; only aces, when nobody has raised"),
     ("short", 0.2, "one pot short: all-in with the tight chart"),
-    ("far", 0.0, "a double-up or two short: all-in with the wide chart"),
+    ("far", 0.0, "a double-up or two short: all-in with the wide chart (short chart under 6 big blinds)"),
 )
 CHART_COVER = {"far": 0.12, "short": 0.32}     # share of the line at which each reference chart is solved
 
@@ -743,19 +884,22 @@ def expected_cost(avg: float, remaining: int, paid: int) -> float:
     return LINE_FACTOR * avg * growth
 
 
-def sit_out_line(avg: float, remaining: int, paid: int) -> float:
+def sit_out_line(avg: float, remaining: float, paid: float) -> float:
     """Stack (chips) from which sitting out reaches the money about 95 times in 100."""
     if paid <= 0 or remaining <= paid:
         return 0.0
     rho = remaining / paid
     table = SIT_OUT_TABLE
+    base = None
     if rho >= table[-1][0]:
         (x0, y0), (x1, y1) = table[-2], table[-1]
-        return avg * (y1 + (rho - x1) * (y1 - y0) / (x1 - x0))
-    for (x0, y0), (x1, y1) in zip(table, table[1:]):
-        if rho <= x1:
-            return avg * (y0 + (rho - x0) * (y1 - y0) / (x1 - x0))
-    return avg * table[-1][1]
+        base = y1 + (rho - x1) * (y1 - y0) / (x1 - x0)
+    else:
+        for (x0, y0), (x1, y1) in zip(table, table[1:]):
+            if rho <= x1:
+                base = y0 + (rho - x0) * (y1 - y0) / (x1 - x0)
+                break
+    return avg * (base + small_field_extra(paid))
 
 
 def zone(stack: float, avg: float, remaining: int, paid: int) -> tuple[str, float, str]:
@@ -768,9 +912,10 @@ def zone(stack: float, avg: float, remaining: int, paid: int) -> tuple[str, floa
     return ZONES[-1][0], cover, ZONES[-1][2]
 
 
-# rough chance of cashing with the plan, by share of the sit-out line held
-_CASH_BY_COVER = ((0.0, 0.08), (0.08, 0.22), (0.15, 0.36), (0.30, 0.64), (0.40, 0.82), (0.60, 0.95),
-                  (1.00, 0.99))
+# rough chance of cashing when following the sheet, by share of the sit-out line held
+# (regular speed, the slower and so the lower of the two measured speeds)
+_CASH_BY_COVER = ((0.0, 0.04), (0.08, 0.11), (0.15, 0.20), (0.25, 0.31), (0.35, 0.44), (0.45, 0.56),
+                  (0.60, 0.70), (0.80, 0.91), (1.00, 0.98))
 
 
 def cash_chance(cover: float) -> float:
@@ -825,7 +970,9 @@ class Scout:
     breakeven: float | None             # P(cash) needed if every cash were a min-cash
     verdict: str
     reasons: list[str]
-    plan: Plan | None = None
+    plan: Plan | None = None            # the solver's best plan (for charts at entry)
+    best_itm: float | None = None       # its chance of cashing; ``itm`` is what the printed sheet delivers
+    assumed_min_cash: bool = False
 
 
 def payouts_with_min_cash(entrants: int, paid: int, pool: float, min_cash: float | None = None) -> list[float]:
@@ -843,7 +990,7 @@ def payouts_with_min_cash(entrants: int, paid: int, pool: float, min_cash: float
 def bubble_reward(entrants: int, paid: int, payouts: list[float] | None, buyin_total: float,
                   chips_bb0: float):
     """Expected prize (in buy-ins) of holding ``stack`` bb0 when the bubble bursts."""
-    pays = payouts or default_payouts(entrants, paid, None, 1.0)
+    pays = payouts or default_payouts(entrants, paid, entrants * buyin_total, buyin_total)
     pays = [p / buyin_total for p in pays][:paid]
     cache: dict[int, float] = {}
 
@@ -895,13 +1042,23 @@ def scout(stack_bb: float, remaining: int, paid: int | None = None, entrants: in
     safe = safe_stack(fc, blinds, players, 0.95, ante)
     total = buyin + fee
     pool_share = 1.0 - bounty_share
+    assumed = False
     if payouts:
         pays = list(payouts)
     else:
+        if min_cash is None:
+            # GGPoker pays about twice the full price to the last paid place of a non-bounty event,
+            # and about 1.15 to 1.5 times when half the pool is bounties
+            min_cash = total * (MIN_CASH_MULTIPLE * pool_share + 0.3 * bounty_share)
+            assumed = True
         pays = payouts_with_min_cash(entrants, paid, entrants * buyin * pool_share, min_cash)
     mc = pays[-1] / total
     reward = bubble_reward(entrants, paid, pays, total, remaining * avg_bb)
-    plan = solve(stack_bb, fc, blinds, players, callers, reward=reward, ante=ante) if with_plan else None
+    plan = best = None
+    if with_plan:
+        best = solve(stack_bb, fc, blinds, players, callers, reward=reward, ante=ante)
+        # the verdict uses what the printed sheet delivers; the solver's optimum is kept for reference
+        plan = sheet_plan(stack_bb, fc, blinds, players, callers, reward, ante) if fc.left else best
     itm = plan.itm if plan else fold_only_chance(stack_bb, fc, blinds, players, ante)
     prize = plan.prize if plan else None
     roi = prize - 1.0 if prize is not None else None
@@ -929,12 +1086,14 @@ def scout(stack_bb: float, remaining: int, paid: int | None = None, entrants: in
     return Scout(stack_bb=stack_bb, remaining=remaining, paid=paid, entrants=entrants, ratio=ratio,
                  avg_bb=avg_bb, hands=hands, orbits=hands / players, cost_bb=cost, safe_bb=safe, cover=cover,
                  fold_only=plan.fold_only if plan else itm, itm=itm, prize=prize, roi=roi, min_cash=mc,
-                 breakeven=1.0 / mc if mc else None, verdict=verdict, reasons=reasons, plan=plan)
+                 breakeven=1.0 / mc if mc else None, verdict=verdict, reasons=reasons, plan=best,
+                 best_itm=best.itm if best else None, assumed_min_cash=assumed)
 
 
 def describe(sc: Scout) -> str:
     lines = [f">>> {sc.verdict}   cash {sc.itm:.0%} of the time"
-             + (f", return {sc.roi:+.0%} per entry" if sc.roi is not None else "")]
+             + (f", return {sc.roi:+.0%} per entry" if sc.roi is not None else "")
+             + (f"   (a perfect solver: {sc.best_itm:.0%})" if sc.best_itm is not None else "")]
     lines.append(f"  field: {sc.remaining} left, {sc.paid} paid ({sc.ratio:.2f} players per paid place), "
                  f"average stack {sc.avg_bb:.0f}bb")
     lines.append(f"  bubble: about {sc.hands:.0f} hands away ({sc.orbits:.1f} orbits); sitting out until then "
@@ -945,8 +1104,9 @@ def describe(sc: Scout) -> str:
                  f"{line / sc.avg_bb:.2f} average stacks); folding every hand cashes {sc.fold_only:.0%}")
     lines.append(f"  zone:  {name.upper()} - {text}")
     if sc.min_cash:
-        lines.append(f"  money: min-cash {sc.min_cash:.2f} buy-ins, so min-cashes alone break even at "
-                     f"{sc.breakeven:.0%}" + (f"; expected prize {sc.prize:.2f} buy-ins" if sc.prize else ""))
+        lines.append(f"  money: min-cash {sc.min_cash:.2f} buy-ins" + (" (assumed)" if sc.assumed_min_cash else "")
+                     + f", so min-cashes alone break even at {sc.breakeven:.0%}"
+                     + (f"; expected prize {sc.prize:.2f} buy-ins" if sc.prize else ""))
     for r in sc.reasons:
         lines.append(f"  why:   {r}")
     return "\n".join(lines)
@@ -974,39 +1134,62 @@ def plan_for_cover(cover: float, stack_bb: float = 10.0, players: int = 8, calle
     return solve(stack_bb, fc, blinds, players, callers, grid=grid)
 
 
-def zone_chart(cover: float, stack_bb: float = 10.0, players: int = 8, callers: str = "normal") -> dict:
-    """All-in ranges by seat for one distance from the sit-out line.
+@lru_cache(maxsize=8)
+def build_sheet(players: int = 8, callers: str = "normal", speed: str = "turbo") -> Sheet:
+    """The printed sheet: wide, short-stack and tight charts plus the two fixed ranges.
 
-    Returns ``{"open": {seat name: weights}, "raise": weights, "itm": chance of cashing}``.
+    ``wide`` and ``tight`` are the solved plan at 10 big blinds, far from the
+    sit-out line and one pot short of it; ``short`` is the same far plan a
+    dozen hands later with 4 big blinds left.  The tight chart is kept inside
+    the wide one.
     """
-    plan = plan_for_cover(cover, stack_bb, players, callers)
-    out = {"open": {}, "itm": plan.itm, "fold_only": plan.fold_only}
-    for seat in range(players - 1, 0, -1):
-        out["open"][seat_name(seat, players)] = plan.shove_range(0, seat, stack_bb)
-    out["raise"] = plan.shove_range(0, 2, stack_bb, facing_raise=True)
-    return out
+    from .cards import parse_range
+    far = plan_for_cover(CHART_COVER["far"], 10.0, players, callers, speed)
+    near = plan_for_cover(CHART_COVER["short"], 10.0, players, callers, speed)
+
+    def read(plan: Plan, hand: int, stack: float) -> dict:
+        return {"open": {seat: plan.shove_range(hand, seat, stack) for seat in range(1, players)},
+                "late": plan.shove_range(hand, 2, stack, True, "late"),
+                "early": plan.shove_range(hand, 2, stack, True, "early")}
+
+    wide, tight = read(far, 0, 10.0), read(near, 0, 10.0)
+    later = min(12, len(far.values) - 2)
+    short = read(far, later, 4.0)
+    for seat in wide["open"]:
+        wide["open"][seat] = [max(a, b) for a, b in zip(wide["open"][seat], tight["open"][seat])]
+    for kind in ("late", "early"):
+        wide[kind] = [max(a, b) for a, b in zip(wide[kind], tight[kind])]
+    none = [0.0] * 169
+    aces, premium, kings = parse_range("AA"), parse_range("QQ+, AKs, AKo"), parse_range("KK+")
+    charts = {"wide": wide, "short": short, "tight": tight,
+              "aces": {"open": {seat: aces for seat in range(1, players)}, "late": none, "early": none},
+              "premium": {"open": {seat: premium for seat in range(1, players)}, "late": premium, "early": kings}}
+    sheet = Sheet(charts, players)
+    sheet.itm = {"wide": far.itm, "tight": near.itm}
+    return sheet
 
 
 def reference_charts(players: int = 8, stack_bb: float = 10.0, callers: str = "normal",
                      speed: str = "turbo") -> dict:
-    """The two printed charts: ``far`` (wide) and ``short`` (tight), keyed by zone name.
+    """The printed charts keyed by name (``wide``, ``short``, ``tight``), seats by name.
 
-    Each is ``{"open": {seat: weights}, "raise": weights, "itm": chance of cashing}``.  The
-    tight chart is kept inside the wide one, so a hand never appears only when closer to safety.
+    Each is ``{"open": {seat name: weights}, "late": weights, "early": weights}``: all-in
+    first in by seat, and over a raise from a late or an early seat.
     """
+    sheet = build_sheet(players, callers, speed)
     out = {}
-    for name in ("far", "short"):
-        plan = plan_for_cover(CHART_COVER[name], stack_bb, players, callers, speed)
-        chart_ = {"open": {}, "itm": plan.itm, "fold_only": plan.fold_only}
-        for seat in range(players - 1, 0, -1):
-            chart_["open"][seat_name(seat, players)] = plan.shove_range(0, seat, stack_bb)
-        chart_["raise"] = plan.shove_range(0, 2, stack_bb, facing_raise=True)
-        out[name] = chart_
-    wide, tight = out["far"], out["short"]
-    for seat, w in tight["open"].items():
-        wide["open"][seat] = [max(a, b) for a, b in zip(wide["open"][seat], w)]
-    wide["raise"] = [max(a, b) for a, b in zip(wide["raise"], tight["raise"])]
+    for name in ("wide", "short", "tight"):
+        ch = sheet.charts[name]
+        out[name] = {"open": {seat_name(seat, players): ch["open"][seat] for seat in range(players - 1, 0, -1)},
+                     "late": ch["late"], "early": ch["early"]}
     return out
+
+
+def sheet_plan(stack_bb: float, fc: Forecast, blinds: Blinds, players: int = 8, callers: str = "normal",
+               reward=None, ante: str = "player", grid: int = 220) -> Plan:
+    """What the printed sheet delivers from this entry (the sheet played exactly, hand after hand)."""
+    return solve(stack_bb, fc, blinds, players, callers, reward=reward, policy="sheet", grid=grid, ante=ante,
+                 sheet=build_sheet(players, callers))
 
 
 def seat_name(behind: int, players: int = 8) -> str:

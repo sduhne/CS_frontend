@@ -22,13 +22,13 @@ from poker_coach import latereg as L  # noqa: E402
 
 
 def main() -> int:
-    data = {"version": 1, "depths": list(L.DEPTHS), "spots": {}}
+    data = {"version": L.DATA_VERSION, "depths": list(L.DEPTHS), "spots": {}}
     for players in (8,):
         for callers in L.CALLERS:
             tab = L.compute_spots(players, callers)
             data["spots"][f"{players}:{callers}"] = {
                 "open": {f"{nb}:{d:g}": [L._pack(fe), L._pack(eq)] for (nb, d), (fe, eq) in tab["open"].items()},
-                "raise": {f"{d:g}": [L._pack(fe), L._pack(eq)] for d, (fe, eq) in tab["raise"].items()},
+                "raise": {f"{kind}:{d:g}": [L._pack(fe), L._pack(eq)] for (kind, d), (fe, eq) in tab["raise"].items()},
             }
             print(f"{players} players, {callers} callers: {len(tab['open'])} open spots", flush=True)
     with open(L._DATA, "w") as fh:

@@ -797,18 +797,21 @@ def cmd_latereg_safe(a) -> int:
 
 
 def cmd_latereg_chart(a) -> int:
-    """The two reference charts of the plan: wide (far from the line) and tight (one pot short)."""
-    charts = L.reference_charts(a.players, a.stack_bb, a.callers, a.speed)
-    titles = {"far": "WIDE chart: stack under 20% of the sit-out line",
-              "short": "TIGHT chart: stack 20% to 50% of the sit-out line"}
-    for name in ("far", "short"):
+    """The charts of the plan: wide, short-stack and tight, by seat."""
+    charts = L.reference_charts(a.players, 10.0, a.callers, a.speed)
+    titles = {"wide": "WIDE chart: under 20% of the sit-out line, stack of 6 big blinds or more",
+              "short": "SHORT-STACK chart: under 20% of the line, stack under 6 big blinds",
+              "tight": "TIGHT chart: 20% to 50% of the sit-out line"}
+    for name in ("wide", "short", "tight"):
         ch = charts[name]
-        _out(f"{titles[name]}  (cashes about {ch['itm']:.0%} from there)")
+        _out(titles[name])
         for seat, w in ch["open"].items():
             _out(f"  {seat:<6} {range_pct(w):4.1f}%  {format_range(w) or 'nothing'}")
-        _out(f"  over a raise: {format_range(ch['raise']) or 'nothing'}")
+        _out(f"  over a raise from the cutoff or later: {format_range(ch['late']) or 'nothing'}")
+        _out(f"  over an earlier raise, or an all-in:   {format_range(ch['early']) or 'nothing'}")
         _out()
-    _out("50% to 100% of the line: fold everything except AA and KK.  100% or more: sit out.")
+    _out("50% to 100% of the line: fold everything; only aces, when nobody has raised.")
+    _out("100% or more: sit out.  Stack over 20 big blinds: all-in with QQ+, AK only.")
     return 0
 
 
@@ -1011,7 +1014,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("latereg-chart", help="late-registration plan: the all-in charts by seat")
     p.add_argument("--players", type=int, default=8)
-    p.add_argument("--stack-bb", type=float, default=10.0, help="stack depth the charts are solved for")
     p.add_argument("--speed", choices=list(L.SPEEDS), default="turbo")
     p.add_argument("--callers", choices=list(L.CALLERS), default="normal")
     p.set_defaults(fn=cmd_latereg_chart)
