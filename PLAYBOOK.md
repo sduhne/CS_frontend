@@ -298,3 +298,116 @@ changes back: stop sitting out, play the standard shove chart and climb.
   registration can close before the time in the lobby.
 - Where the plan does not clear 50%, ordinary play with the coach's default
   goal (cash first, then climb) is the better use of a buy-in.
+
+## All-in or fold for a whole tournament
+
+One decision per hand: move all-in, or fold. `python3 -m poker_coach binary`
+answers a spot from the tables below, and `binary-chart` prints the full
+hand-by-hand grid for a seat.
+
+### Does it work?
+
+- **As a way to play: yes, while the stack is short.** Under about 15 big
+  blinds all-in or fold is how strong players play as well, and an entry at
+  the close of late registration starts with 10 to 13. Before that a player
+  restricted to all-in or fold would be folding everything except aces and
+  kings, so entering late costs this plan nothing.
+- **As a way to win: not by the chart alone.** In the tournament model a late
+  entry played this way cashes about 16% of the time and returns -24% per
+  entry in a turbo, -11% in a hyper-turbo (not measured) and -39% at regular
+  speed. The model counts no edge after the bubble and is on the low side;
+  published ICM work puts a late entry at about break-even after the fee.
+  Either way the profit has to come from fields that play badly, not from
+  the table.
+- **Standard push/fold charts are too wide for it.** In the same model a
+  chip-EV chart cashed 6% to 8%. The weak half of such a chart earns almost
+  nothing per all-in, so the few points of survival value a stack has before
+  the money, and tables that call as usual, turn it into a loss. The plan
+  below is about half as wide.
+- **Where to use it.** Late entry, turbo levels or faster, no bounty, small
+  buy-ins with big fields. Slow structures bleed it.
+
+### Nobody has raised
+
+Share of hands that move all-in, by seat and stack (8-handed). The stack is
+the smaller of yours and the biggest stack still to act.
+
+| Seat | 6bb | 8bb | 10bb | 12bb | 15bb | 20bb | 25bb | 30bb | 40bb |
+|---|---|---|---|---|---|---|---|---|---|
+| UTG | 14% | 10% | 8% | 7% | 6% | 4% | 3% | 3% | 1% |
+| UTG+1 | 15% | 12% | 10% | 8% | 6% | 5% | 4% | 3% | 3% |
+| LJ | 17% | 13% | 11% | 10% | 8% | 6% | 5% | 3% | 3% |
+| HJ | 20% | 17% | 14% | 12% | 10% | 7% | 6% | 4% | 3% |
+| CO | 26% | 24% | 21% | 15% | 12% | 10% | 7% | 6% | 3% |
+| BTN | 32% | 30% | 27% | 25% | 20% | 15% | 10% | 8% | 5% |
+| SB | 53% | 49% | 44% | 39% | 34% | 28% | 24% | 17% | 10% |
+
+At 10 big blinds that is:
+
+- **UTG:** 66+, ATs+, KQs, AJo+
+- **CO:** 22+, A2s+, KTs+, QJs, A5o+, KJo+
+- **BTN:** 22+, A2s+, K8s+, QTs+, JTs, A2o+, K9o+, QJo
+- **SB:** 22+, A2s+, K2s+, Q4s+, J8s+, T8s+, 98s, A2o+, K2o+, Q7o+, J9o+
+
+Over 40 big blinds only AA and KK move all-in.
+
+### Stage by stage
+
+| Stage | Players left per paid place | What changes |
+|---|---|---|
+| Far from the money | more than 2 (1.5 at regular speed) | The table above as it is |
+| Close to the money | down to 1.3 (1.2) | All-in only with hands good for twice your stack |
+| Bubble | under 1.3 (1.2) | The late-registration plan takes over: its sit-out line and tight chart |
+| In the money | | The table again, counting your stack 2bb smaller (4bb in the small blind) |
+| Final table | | The same; call from the bubble table when the all-in player covers you |
+
+### A raise before you: all-in or fold
+
+| The raise came from | up to 7bb | 8 to 11bb | 12 to 16bb | 17 to 24bb | 25 to 40bb |
+|---|---|---|---|---|---|
+| UTG, UTG+1 or LJ | 88+, AJs+, AQo+ | 88+, AQs+, AQo+ | 99+, AQs+, AQo+ | TT+, AQs+, AKo | JJ+, AKs, AKo |
+| HJ or CO | 55+, A7s+, KTs+, A9o+, KQo | 66+, A9s+, KJs+, ATo+, KQo | 66+, ATs+, AJo+ | 77+, AJs+, AJo+ | 99+, AQs+, AKo |
+| BTN or SB (you are in the blinds) | 22+, A2s+, K4s+, Q8s+, J9s+, A2o+, K8o+, QTo+, JTo | 33+, A2s+, K9s+, QTs+, A5o+, KTo+ | 22+, A2s+, KTs+, QTs+, JTs, T9s, A4o+, KJo+ | 22+, A2s+, KTs+, QTs+, J9s+, T9s, A7o+, KJo+ | 22+, A4s+, KTs+, Q9s+, J9s+, T9s, ATo+, KQo |
+
+In the money add KQs, and over a raise from HJ or CO also KJs and QJs. Never
+just call. If the raiser has put in a third of their stack they will not
+fold: use the all-in table.
+
+### An all-in before you: call or fold
+
+Away from the bubble, by the size of the all-in (or your stack, if smaller):
+
+| The all-in came from | up to 7bb | 8 to 11bb | 12 to 16bb | 17 to 24bb | 25 to 40bb |
+|---|---|---|---|---|---|
+| UTG, UTG+1 or LJ | 55+, A8s+, A9o+ | 88+, AJs+, AQo+ | 99+, AQs+, AKo | TT+, AKs, AKo | QQ+, AKs, AKo |
+| HJ or CO | 44+, A3s+, KTs+, A7o+, KJo+ | 66+, A9s+, ATo+ | 77+, ATs+, ATo+ | 88+, AJs+, AJo+ | TT+, AQs+, AKo |
+| BTN | 22+, A2s+, K6s+, QTs+, JTs, A2o+, K8o+, QJo | 44+, A5s+, KTs+, A7o+, KJo+ | 66+, A8s+, A9o+ | 77+, ATs+, ATo+ | 88+, AJs+, AJo+ |
+| SB (you are the big blind) | 22+, A2s+, K2s+, Q2s+, J3s+, T6s+, 97s+, 87s, A2o+, K2o+, Q2o+, J7o+, T8o+ | 22+, A2s+, K3s+, Q8s+, J9s+, A2o+, K6o+, Q9o+, JTo | 44+, A2s+, K8s+, QTs+, A4o+, K9o+ | 55+, A4s+, K9s+, A7o+, KTo+ | 66+, A8s+, KQs, A9o+ |
+
+On the bubble, and at a final table when the all-in player covers you:
+
+| The all-in came from | up to 7bb | 8 to 11bb | 12 to 16bb | 17 to 24bb | 25 to 40bb |
+|---|---|---|---|---|---|
+| UTG, UTG+1 or LJ | 99+, AJs+, AQo+ | JJ+ | QQ+ | QQ+ | KK+ |
+| HJ or CO | 88+, ATs+, AJo+ | TT+, AQs+, AKo | JJ+, AKs | JJ+ | QQ+ |
+| BTN | 77+, A8s+, KQs, A9o+ | 99+, AJs+, AQo+ | TT+, AQs+, AKo | TT+, AKs | JJ+ |
+| SB (you are the big blind) | 44+, A2s+, K6s+, Q9s+, JTs, A3o+, K8o+, QTo+ | 77+, A8s+, KTs+, ATo+, KQo | 88+, ATs+, AJo+ | 99+, AJs+, AQo+ | TT+, AKs, AKo |
+
+In the big blind the price is better: read both tables one column to the
+left (the small-blind row already counts it). Against a raise and an all-in,
+or two all-ins: AA and KK, plus QQ and AK when the stacks are 12 big blinds
+or less.
+
+### Small print
+
+- **A limper before you:** use the range of the seat before yours.
+- **Big blind, no raise:** check. After the flop move all-in with top pair or
+  better, or a draw with 12 outs, when the stack is 4 pots or less;
+  otherwise check, and fold to a bet.
+- **How the numbers were made.** Before the money: the play that earns the
+  most prize money in the late-registration model (blinds to pay until the
+  bubble, opponents who call as they usually do). In the money and for
+  calls: the ICM solver on a standard pay ladder, with a safety margin of
+  0.02 big blinds per big blind of stack over 10. Stacks are taken as equal.
+  Read every range as plus or minus one notch, and price real stacks with
+  `advise` when there is time.

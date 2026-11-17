@@ -123,6 +123,26 @@ registration closes) the plan cashes about 18% in a turbo and 13% at regular
 speed, and it needs 50%. It gets there only where about 30% of the entries
 are paid. The details are in [PLAYBOOK.md](PLAYBOOK.md).
 
+## All-in or fold for a whole tournament
+
+For a player who wants one decision per hand. Three tables cover it: the
+deepest stack at which each hand moves all-in when nobody has raised, the
+hands that move all-in over a raise, and the hands that call an all-in.
+
+```bash
+python3 -m poker_coach binary --hand A8o --pos BTN --stack 12
+python3 -m poker_coach binary --hand 99 --pos BTN --stack 15 --facing "CO raise"
+python3 -m poker_coach binary --hand AJo --pos BB --stack 20 --facing "HJ allin 9"
+python3 -m poker_coach binary-chart --pos BTN
+```
+
+Before the money the ranges are the play that earns the most prize money in
+the late-registration model; in the money they come from the ICM solver.
+Both are about half as wide as a chip-EV push/fold chart. It is a sound way
+to play a short stack, which is what an entry at the close of late
+registration has, and not a proven winner: the model has a late entry
+returning -24% in a turbo. The details are in [PLAYBOOK.md](PLAYBOOK.md).
+
 ## Limits
 
 - Opponent ranges are estimates from position, stack and the type you (or the
@@ -159,4 +179,5 @@ python3 tools/build_aof.py          # All-In or Fold tables, about 35 minutes
 python3 tools/build_aof_exploit.py  # ranges against loose tables, about 10 minutes
 python3 tools/build_aof_page.py     # aof_trainer.html from those tables
 python3 tools/build_latereg.py      # late-registration shove spots, about a minute
+python3 tools/build_binary.py       # all-in or fold tournament tables, half a minute
 ```

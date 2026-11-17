@@ -5,6 +5,7 @@
 Table tracking:  new, sync, set, seat, stack, bust, away, back, type, note,
                  button, next, payouts, show, undo, log
 Decisions:       advise (uses the tracked table), quick (no table needed)
+All-in or fold:  binary, binary-chart, binary-sheet (a whole tournament on two moves)
 Tools:           equity, range, chart, icm
 """
 
@@ -15,6 +16,7 @@ import json
 import sys
 
 from . import aof as A
+from . import binary as BN
 from . import latereg as L
 from . import state as S
 from .cards import (HANDS, cards_str, format_range, parse_cards, parse_hand, range_combos,
@@ -815,6 +817,60 @@ def cmd_latereg_chart(a) -> int:
     return 0
 
 
+def _binary_seat(name: str) -> int:
+    """Players still to act behind a named seat at an 8-handed table (0 = big blind)."""
+    i = pos_to_index(name, BN.PLAYERS)
+    if i is None:
+        raise ValueError(f"unknown position {name!r}")
+    return BN.PLAYERS - 1 - i
+
+
+def cmd_binary(a) -> int:
+    """One all-in or fold decision, from the tables of the sheet."""
+    hand, _cards = parse_hand(a.hand)
+    n_behind = _binary_seat(a.pos)
+    facing, seat, size = "", None, None
+    if a.facing:
+        words = a.facing.replace(",", " ").split()
+        if len(words) < 2:
+            raise ValueError("--facing is '<seat> raise' or '<seat> allin [big blinds]'")
+        seat = _binary_seat(words[0])
+        verb = words[1].lower().replace("-", "")
+        if verb in ("raise", "raises", "open", "opens", "minraise"):
+            facing = "raise"
+        elif verb in ("allin", "shove", "shoves", "jam", "jams", "push"):
+            facing = "allin"
+            if len(words) > 2:
+                size = float(words[2].lower().replace("bb", ""))
+        else:
+            raise ValueError(f"--facing: {words[1]!r} is neither a raise nor an all-in")
+    action, why = BN.decide(hand, n_behind, a.stack, a.stage, facing, seat, size, a.bubble)
+    _out(f">>> {action}   {HANDS[hand]} in {a.pos.upper()} with {a.stack:g}bb, {BN.STAGE_NAMES[BN._stage(a.stage)]}")
+    _out(f"  why: {why}")
+    if not facing and n_behind:
+        other = "money" if BN._stage(a.stage) == "before" else "before"
+        _out(f"  num: {BN.SEATS[BN._seat(n_behind)]} moves all-in with {BN.width(a.stage, n_behind, a.stack):.0f}% of hands at "
+             f"this stack; {BN.STAGE_NAMES[other]} this hand goes to {BN.limit(other, n_behind, hand) or 'no'}"
+             f"{'bb' if BN.limit(other, n_behind, hand) else ' stack'}")
+    return 0
+
+
+def cmd_binary_chart(a) -> int:
+    seats = [_binary_seat(a.pos)] if a.pos else sorted(BN.SEATS, reverse=True)
+    for k, nb in enumerate(seats):
+        if nb == 0:
+            raise ValueError("the big blind has no first-in chart: with no raise it checks")
+        if k:
+            _out()
+        _out(BN.grid_text(a.stage, nb))
+    return 0
+
+
+def cmd_binary_sheet(_a) -> int:
+    _out(BN.sheet_text())
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="poker_coach", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1024,6 +1080,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--left", type=int, help="players still in")
     p.add_argument("--paid", type=int, help="places paid")
     p.set_defaults(fn=cmd_latereg_safe)
+
+    p = sub.add_parser("binary", help="all-in or fold for a whole tournament: one decision from the tables")
+    p.add_argument("--hand", required=True)
+    p.add_argument("--pos", required=True, help="your seat: UTG, UTG+1, LJ, HJ, CO, BTN, SB or BB (8-handed)")
+    p.add_argument("--stack", type=float, required=True, help="your stack in big blinds (the smaller of yours and "
+                                                               "the biggest stack still to act)")
+    p.add_argument("--stage", default="before", help="before (the money) or money")
+    p.add_argument("--facing", help="'CO raise' or 'HJ allin 9' (the all-in in big blinds)")
+    p.add_argument("--bubble", action="store_true", help="on the bubble, or a final table against a stack that covers you")
+    p.set_defaults(fn=cmd_binary)
+
+    p = sub.add_parser("binary-chart", help="all-in or fold: the deepest stack that moves all-in, hand by hand")
+    p.add_argument("--pos", help="one seat (default: every seat)")
+    p.add_argument("--stage", default="before", help="before (the money) or money")
+    p.set_defaults(fn=cmd_binary_chart)
+
+    p = sub.add_parser("binary-sheet", help="all-in or fold: every table as text")
+    p.set_defaults(fn=cmd_binary_sheet)
     return ap
 
 

@@ -298,6 +298,52 @@ When the user reports how a late-registration entry went (players left over
 time, when the bubble burst), keep the numbers: they are the best check on
 the forecast's speed constant (`BUST_CONSTANT` in `latereg.py`).
 
+## All-in or fold tournament plan
+
+The user prefers one decision per hand: all-in or fold. `poker_coach/binary.py`
+holds the tables for a whole tournament played that way; the evidence is in
+@PLAYBOOK.md under "All-in or fold for a whole tournament".
+
+```bash
+python3 -m poker_coach binary --hand A8o --pos BTN --stack 12                      # nobody has raised
+python3 -m poker_coach binary --hand KTs --pos CO --stack 14 --stage money         # after the bubble
+python3 -m poker_coach binary --hand 99 --pos BTN --stack 15 --facing "CO raise"   # all-in over a raise, or fold
+python3 -m poker_coach binary --hand AJo --pos BB --stack 20 --facing "HJ allin 9" # call an all-in, or fold
+python3 -m poker_coach binary-chart --pos BTN       # deepest stack that moves all-in, hand by hand
+python3 -m poker_coach binary-sheet                 # every table as text
+```
+
+- **Answer in two words.** In this mode a decision is ALL-IN or FOLD (CALL or
+  FOLD against an all-in, CHECK in an unraised big blind), then the reason in
+  one line. `--stack` is the smaller of the user's stack and the biggest stack
+  still to act, in big blinds; seats are for an 8-handed table, so at a short
+  table name the seat by the players behind.
+- **Stage.** Far from the money is the default. Close to it (under 2 players
+  left per paid place in a turbo, 1.5 at regular speed) a hand must be good
+  for twice the stack: run it with `--stack` doubled. On the bubble (under
+  1.3, or 1.2 at regular speed) the late-registration plan takes over: use
+  `latereg-safe`. In the money use `--stage money`. Add `--bubble` to a call
+  on the bubble, or at a final table when the all-in player covers the user.
+- **Exact spots.** The tables assume equal stacks. With the table tracked,
+  `advise` prices the real stacks and prizes. If it says RAISE, the answer in
+  this mode is ALL-IN only when `binary` agrees, otherwise FOLD; if the two
+  disagree on a shove, say which you followed and why in one clause.
+- **Do not oversell it.** As a way to play it is sound under about 15 big
+  blinds, which is where an entry at the close of late registration starts.
+  It is not a proven winner: in the model a late entry returns -24% in a
+  turbo, -11% in a hyper (not measured) and -39% at regular speed, and
+  published ICM work puts a late entry at about break-even after the fee. The
+  profit has to come from weak fields. Say so when asked whether it makes
+  money.
+- **Which tournaments.** Late entry, turbo or faster, no bounty, small
+  buy-ins. In slow structures and deep stacks the plan folds everything but
+  aces and kings.
+- **Why it is tighter than a push/fold chart.** The weak half of a chip-EV
+  chart earns almost nothing per all-in; a few points of survival value and
+  tables that call as usual make it a loss. Expect the user to notice that
+  the numbers are about half as wide as the charts they have seen.
+- The sheet is a study aid, like everything else here.
+
 ## Housekeeping
 
 - State lives in `tournament/current.json` (git-ignored). `new` archives the
@@ -310,4 +356,5 @@ the forecast's speed constant (`BUST_CONSTANT` in `latereg.py`).
   `python3 tools/build_aof_exploit.py` (loose-table ranges, about 10 minutes)
   and `python3 tools/build_aof_page.py` (trainer page);
   `python3 tools/build_latereg.py` (late-registration shove spots, about a
-  minute).
+  minute), then `python3 tools/build_binary.py` (all-in or fold tournament
+  tables, half a minute; it reads the late-registration data).

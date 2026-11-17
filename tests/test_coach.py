@@ -908,3 +908,114 @@ class LateRegistration(unittest.TestCase):
                 got = main(args)
             self.assertEqual(got, code, (args, err.getvalue()))
 
+
+class AllInOrFoldTournament(unittest.TestCase):
+    """The whole-tournament all-in or fold tables (poker_coach/binary.py)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from poker_coach import binary
+        cls.B = binary
+
+    def test_data(self):
+        B = self.B
+        d = B.data()
+        self.assertEqual(d["version"], B.DATA_VERSION)
+        allowed = set(B.STACKS) | {0}
+        for stage in B.STAGES:
+            for nb in B.SEATS:
+                lim = B.limits(stage, nb)
+                self.assertEqual(len(lim), 169)
+                self.assertTrue(set(lim) <= allowed)
+                self.assertEqual(lim[HAND_INDEX["AA"]], B.TOP)        # aces at any depth
+                self.assertEqual(lim[HAND_INDEX["KK"]], B.TOP)
+                self.assertLessEqual(lim[HAND_INDEX["72o"]], 4)        # trash only when nearly out of chips
+        # the late entry the plan is solved for: cashes about one time in six, and is no winner by itself
+        self.assertTrue(0.12 < d["entry_result"]["cash"] < 0.22)
+        self.assertLess(d["entry_result"]["return"], 0.0)
+
+    def test_ranges_make_sense(self):
+        B = self.B
+        for stage in B.STAGES:
+            for s in (6, 10, 15, 25):
+                widths = [B.width(stage, nb, s) for nb in sorted(B.SEATS, reverse=True)]
+                self.assertTrue(all(a <= b + 2.0 for a, b in zip(widths, widths[1:])), (stage, s, widths))
+            for nb in B.SEATS:
+                by_stack = [B.width(stage, nb, s) for s in (6, 8, 10, 12, 15, 20, 25, 30, 40)]
+                self.assertTrue(all(a >= b for a, b in zip(by_stack, by_stack[1:])), (stage, nb, by_stack))
+                # far tighter than a chip-EV push/fold chart, at the stacks a late entry has
+                for s in (8, 10, 12, 15):
+                    self.assertLess(B.width(stage, nb, s), range_pct(nash_push_range(nb, s)))
+        # before the money is the tighter of the two stages for a short stack
+        self.assertLess(B.width("before", 1, 10), B.width("money", 1, 10))
+        self.assertEqual(format_range(B.first_in_range("before", 2, 60)), "KK+")
+
+    def test_tables(self):
+        B = self.B
+        d = B.data()
+        for stage in B.STAGES:
+            for key, _label, _nb in B.RAISERS:
+                row = d["reshove"][stage][key]
+                self.assertEqual(len(row), len(B.BANDS))
+                for rng in row:
+                    self.assertGreaterEqual(parse_range(rng)[HAND_INDEX["AA"]], 0.5)
+            # over an early raise the range is tighter than over a late one, and that tighter than a steal
+            for i in range(len(B.BANDS)):
+                e, l, s = (range_pct(parse_range(d["reshove"][stage][k][i])) for k in ("early", "late", "steal"))
+                self.assertLessEqual(e, l)
+                self.assertLessEqual(l, s)
+        for key, _label, _nb in B.SHOVERS:
+            for i in range(len(B.BANDS)):
+                normal = parse_range(d["call"]["normal"][key][i])
+                bubble = parse_range(d["call"]["bubble"][key][i])
+                self.assertTrue(all(a >= b for a, b in zip(normal, bubble)), (key, i))   # the bubble only removes hands
+                self.assertGreaterEqual(bubble[HAND_INDEX["AA"]], 0.5)
+            sizes = [range_pct(parse_range(r)) for r in d["call"]["normal"][key]]
+            self.assertTrue(all(a >= b for a, b in zip(sizes, sizes[1:])), (key, sizes))  # bigger all-in, fewer calls
+        self.assertEqual([B.band(s) for s in (3, 7, 8, 11, 12, 16, 17, 24, 25, 40)], [0, 0, 1, 1, 2, 2, 3, 3, 4, 4])
+
+    def test_decisions(self):
+        B = self.B
+        h = HAND_INDEX
+        self.assertEqual(B.decide(h["A8o"], 2, 12)[0], "ALL-IN")
+        self.assertEqual(B.decide(h["A8o"], 7, 12)[0], "FOLD")
+        self.assertEqual(B.decide(h["AA"], 7, 35)[0], "ALL-IN")
+        self.assertEqual(B.decide(h["QQ"], 4, 60)[0], "FOLD")                 # deep: aces and kings only
+        self.assertEqual(B.decide(h["72o"], 0, 10)[0], "CHECK")               # unraised big blind
+        self.assertEqual(B.decide(h["99"], 2, 15, facing="raise", facing_seat=3)[0], "ALL-IN")
+        self.assertEqual(B.decide(h["KJo"], 2, 15, facing="raise", facing_seat=7)[0], "FOLD")
+        self.assertEqual(B.decide(h["QQ"], 2, 20, facing="allin", facing_seat=6, allin_bb=20)[0], "CALL")
+        self.assertEqual(B.decide(h["A9o"], 2, 20, facing="allin", facing_seat=6, allin_bb=20)[0], "FOLD")
+        # the big blind gets a better price: one stack band wider
+        self.assertEqual(B.decide(h["ATo"], 2, 30, facing="allin", facing_seat=3, allin_bb=14)[0], "CALL")
+        self.assertEqual(B.decide(h["A9s"], 2, 30, facing="allin", facing_seat=3, allin_bb=14)[0], "FOLD")
+        self.assertEqual(B.decide(h["A9s"], 0, 30, facing="allin", facing_seat=3, allin_bb=14)[0], "CALL")
+        # and the bubble takes hands away
+        self.assertEqual(B.decide(h["ATo"], 2, 30, facing="allin", facing_seat=3, allin_bb=14, bubble=True)[0], "FOLD")
+        with self.assertRaises(ValueError):
+            B.decide(h["AA"], 2, 10, stage="early")
+
+    def test_cli_and_playbook(self):
+        B = self.B
+        for args, word in ((["binary", "--hand", "A8o", "--pos", "BTN", "--stack", "12"], "ALL-IN"),
+                           (["binary", "--hand", "T9s", "--pos", "UTG", "--stack", "12", "--stage", "money"], "FOLD"),
+                           (["binary", "--hand", "99", "--pos", "BTN", "--stack", "15", "--facing", "CO raise"], "ALL-IN"),
+                           (["binary", "--hand", "AJo", "--pos", "SB", "--stack", "20", "--facing", "BTN allin 9",
+                             "--bubble"], "FOLD"),
+                           (["binary-chart", "--pos", "SB"], "SB, before the money"),
+                           (["binary-sheet"], "One all-in before you")):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(main(args), 0, args)
+            self.assertIn(word, out.getvalue(), args)
+        # the tables printed in PLAYBOOK.md are the ones the command answers from
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "PLAYBOOK.md")) as fh:
+            text = fh.read()
+        section = text[text.index("## All-in or fold for a whole tournament"):]
+        d = B.data()
+        for rows in (d["reshove"]["before"], d["call"]["normal"], d["call"]["bubble"]):
+            for cells in rows.values():
+                self.assertIn("| " + " | ".join(cells) + " |", section)
+        for nb in B.SEATS:
+            row = " | ".join(f"{B.width('before', nb, s):.0f}%" for s in (6, 8, 10, 12, 15, 20, 25, 30, 40))
+            self.assertIn(f"| {B.SEATS[nb]} | {row} |", section)
