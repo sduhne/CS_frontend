@@ -183,6 +183,47 @@ whole games the tables won 33.1% against players who call correctly and
 report 38% to 39%, and get there with small raises and play after the flop,
 which all-in or fold leaves out. The details are in [PLAYBOOK.md](PLAYBOOK.md).
 
+## Live table reader (play money and research)
+
+A small program that watches a poker table on your screen and shows, in a
+window that stays on top, what the coach would do. It never clicks: you
+decide. It only gives advice at tables that show a play-money marker
+("Play Money", "Play chips", "Practice"...); at any other table it says why
+it is not reading. Real-money sites, and GGPoker and PokerStars even at
+play-money tables, forbid real-time help.
+
+How it works: when your action buttons appear it takes a screenshot of the
+table, sends it to Claude's vision (an API call, so it needs an Anthropic
+API key) and gets back the cards, stacks, bets, pot and button as JSON. The
+same engine as `advise` (or the all-in or fold tables) turns that into an
+action.
+
+```bash
+pip install -r requirements-live.txt
+export ANTHROPIC_API_KEY=...                       # or: ant auth login
+
+# 1. check the reading on one saved screenshot of your client (do this first)
+python3 -m poker_coach live-test --image table.png
+# 2. mark the table and your action buttons once (it must not be your turn)
+python3 -m poker_coach live-setup
+# 3. run it
+python3 -m poker_coach live                        # --mode binary or spin; --model claude-haiku-5-5
+```
+
+- **Cost and speed.** One reading per decision. With the default model
+  (`claude-opus-5-5`) a reading costs about 2 to 3 cents and takes a few
+  seconds; `--model claude-haiku-5-5` costs about 40 times less and is
+  faster, so check its reading with `live-test` first. The window shows the
+  cost of each reading and of the session.
+- **Session log.** Every reading, suggestion, time and cost goes to
+  `tournament/live-log/<time>/reads.jsonl`, with the screenshots
+  (`--no-save` keeps only the text), for review afterwards.
+- **Your client marks play money differently?** Add its words:
+  `--marker "Fun Table"` (on `live-setup` it is saved for next time).
+- **What it cannot see.** Hands before the ones it read. After the flop it
+  knows who raised before the flop only if it read your preflop decision in
+  the same hand; otherwise it treats opponents as callers and says so.
+
 ## Limits
 
 - Opponent ranges are estimates from position, stack and the type you (or the

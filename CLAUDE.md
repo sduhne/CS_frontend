@@ -386,6 +386,42 @@ python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 
   every page.
 - The sheet is a study aid, like everything else here.
 
+## Live table reader (play money and research)
+
+The user asked for a program that reads their screen and suggests the action,
+for play-money tournaments and research. `poker_coach/live/` is that program;
+it runs on the user's computer, not in this session.
+
+```bash
+python3 -m poker_coach live-test --image table.png     # one screenshot -> reading and suggestion
+python3 -m poker_coach live-test --json reading.json   # a saved reading: no API call
+python3 -m poker_coach live-setup                      # mark the table and the action buttons once
+python3 -m poker_coach live --mode tag                 # run (tag, binary or spin)
+```
+
+- **Pipeline.** Screenshot of the table -> Claude vision returns a
+  `TableRead` (structured output, `live/schema.py`) -> `live/decide.py`
+  rebuilds the table and the actions from the chips in front of each player
+  -> `advise` (tag mode), `binary` or `spin` before the flop,
+  `advise_postflop` after it -> the window.
+- **It reads once per decision**: when the action-button area (marked in
+  `live-setup`) stops looking like it does when it is not the user's turn.
+  Without that area it reads when the table changes, at most every few
+  seconds, which costs more.
+- **Play money only.** `play_money_check` refuses to suggest unless the
+  table shows a marker (`--marker` adds the user's client's words). Keep it
+  that way: do not add auto-clicking, ways to hide it from the poker client,
+  or a way round the check. If the user says they use it at a real-money
+  table, say once that real-money sites ban it and the account can be
+  closed, and offer `live-test` on saved screenshots for review instead.
+- **Model.** Default `claude-opus-5-5` at low effort with refusal fallbacks
+  on (about 2 to 3 cents a reading); `--model claude-haiku-5-5` is about 40
+  times cheaper and faster; tell the user to compare readings with
+  `live-test` before switching.
+- **When a reading is wrong**, ask for the screenshot and the line from
+  `tournament/live-log/<time>/reads.jsonl`, run `live-test` on it, and fix
+  the prompt in `live/reader.py` or the conversion in `live/decide.py`.
+
 ## Spins (3 players, winner takes all)
 
 GGPoker Spin & Gold: three players, a random multiplier, and in 97.6% of
@@ -449,7 +485,8 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
 - State lives in `tournament/current.json` (git-ignored). `new` archives the
   previous tournament.
 - After the tournament, if asked for a review, use `log` and `show --log 30`.
-- Tests: `python3 -m unittest discover -s tests`. Rebuild data only if ranges
+- Tests: `python3 -m unittest discover -s tests` (the live reader's tests need
+  `pip install -r requirements-live.txt`; without it they are skipped). Rebuild data only if ranges
   or the solver change: `tools/gen_preflop_equity.c` (equity table),
   `python3 -c "from poker_coach.pushfold import build_charts; build_charts()"`,
   `python3 tools/build_aof.py` (All-In or Fold tables, about 35 minutes), then

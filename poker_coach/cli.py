@@ -8,6 +8,7 @@ Decisions:       advise (uses the tracked table), quick (no table needed)
 All-in or fold:  binary, binary-chart, binary-sheet (a whole tournament on two moves)
 Spins:           spin, spin-sheet, spin-odds (3-player winner-take-all games)
 Sheet:           tag-sheet (every preflop situation as text, for 6, 7 or 8 players)
+Live reader:     live-setup, live, live-test (play-money tables only: reads the screen, suggests)
 Tools:           equity, range, chart, icm
 """
 
@@ -975,6 +976,93 @@ def cmd_tag_sheet(a) -> int:
     return 0
 
 
+def _live_config(a):
+    """The saved live settings, with this command's options on top."""
+    from .live.app import LiveConfig
+
+    cfg = LiveConfig.load()
+    for key in ("mode", "model", "effort", "max_px", "min_gap", "goal", "entrants", "paid", "buyin", "monitor"):
+        val = getattr(a, key, None)
+        if val is not None:
+            setattr(cfg, key, val)
+    if getattr(a, "marker", None):
+        cfg.markers = list(dict.fromkeys(cfg.markers + a.marker))
+    if getattr(a, "no_save", False):
+        cfg.save_images = False
+    if cfg.mode not in ("tag", "binary", "spin"):
+        raise ValueError("--mode is tag, binary or spin")
+    return cfg
+
+
+def cmd_live_setup(a) -> int:
+    """Mark the table (and the action buttons) on the screen once; saved for `live`."""
+    from .live.app import CONFIG_PATH, setup_from_rects, setup_window
+    from .live.capture import Rect
+
+    cfg = _live_config(a)
+    if a.region:
+        cfg = setup_from_rects(cfg, Rect.parse(a.region), Rect.parse(a.buttons) if a.buttons else None)
+    else:
+        try:
+            done = setup_window(cfg)
+        except ImportError as exc:
+            return _fail(f"the setup window needs tkinter ({exc}); give the table as --region left,top,width,height")
+        if done is None:
+            return _fail("setup cancelled")
+        cfg = done
+    cfg.save()
+    _out(f"saved to {CONFIG_PATH}: table at {cfg.region}"
+         + (f", action buttons at {cfg.buttons} (reads only on your turn)" if cfg.buttons
+            else " (no button area: reads when the table changes)"))
+    _out("play-money markers it looks for: " + ", ".join(cfg.markers))
+    return 0
+
+
+def cmd_live(a) -> int:
+    """Watch the table and show what the coach would do, on play-money tables only."""
+    from .live.app import run
+
+    cfg = _live_config(a)
+    if a.region:
+        from .live.capture import Rect
+
+        cfg.region = Rect.parse(a.region).as_list()
+    if not cfg.region:
+        _out("no table marked yet: reading the whole screen (run live-setup to mark the table)")
+    return run(cfg, window=not a.no_window)
+
+
+def cmd_live_test(a) -> int:
+    """Read one saved screenshot (or a saved reading) and print the reading and the suggestion."""
+    from .live.app import test_once
+    from .live.reader import ReadError
+
+    if not (a.image or a.json):
+        return _fail("give --image <screenshot> or --json <saved reading>")
+    try:
+        _out(test_once(_live_config(a), a.image, a.json, force=not a.turn_only, save_json=a.save_json))
+    except ReadError as exc:
+        return _fail(str(exc))
+    return 0
+
+
+def _live_options(p, setup: bool = False) -> None:
+    p.add_argument("--mode", choices=("tag", "binary", "spin"), help="tag (default): tight-aggressive engine; "
+                   "binary: all-in or fold tables; spin: 3-player winner-take-all")
+    p.add_argument("--marker", action="append", help="text your play-money tables show (repeatable); "
+                   "default: Play Money, Play chips, Practice, Free chips, Fun chips, Play for fun")
+    p.add_argument("--monitor", type=int, help="screen number (default 1, the main screen)")
+    if setup:
+        return
+    p.add_argument("--model", help="vision model (default claude-opus-5-5; claude-haiku-5-5 is ~40x cheaper and faster)")
+    p.add_argument("--effort", choices=("low", "medium", "high"), help="reading effort (default low)")
+    p.add_argument("--max-px", type=int, dest="max_px", help="long edge of the image sent (default 1600)")
+    p.add_argument("--goal", choices=("itm", "balanced", "chips"), help="tournament goal (default itm)")
+    p.add_argument("--entrants", type=int, help="entrants, when the table does not show them")
+    p.add_argument("--paid", type=int, help="places paid, when the table does not show them")
+    p.add_argument("--buyin", type=float, help="buy-in")
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="poker_coach", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1229,6 +1317,29 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("tag-sheet", help="tight-aggressive tournament sheet: every preflop situation as text")
     p.add_argument("--players", type=int, default=8, help="players at the table: 6, 7 or 8 (default 8)")
     p.set_defaults(fn=cmd_tag_sheet)
+
+    p = sub.add_parser("live-setup", help="live reader: mark the poker table and its action buttons on the screen")
+    p.add_argument("--region", help="the table as left,top,width,height (instead of the setup window)")
+    p.add_argument("--buttons", help="the action-button area as left,top,width,height inside the table "
+                                     "(taken now: it must not be your turn)")
+    _live_options(p, setup=True)
+    p.set_defaults(fn=cmd_live_setup)
+
+    p = sub.add_parser("live", help="live reader for play-money tables: reads the screen and suggests (never clicks)")
+    p.add_argument("--region", help="the table as left,top,width,height (default: from live-setup)")
+    p.add_argument("--min-gap", type=float, dest="min_gap", help="without a button area: seconds between reads (default 4)")
+    p.add_argument("--no-window", action="store_true", help="print suggestions in the terminal (Enter = read now)")
+    p.add_argument("--no-save", action="store_true", help="do not keep the screenshots in the session log")
+    _live_options(p)
+    p.set_defaults(fn=cmd_live)
+
+    p = sub.add_parser("live-test", help="live reader: read one saved screenshot (or reading) and print the suggestion")
+    p.add_argument("--image", help="a screenshot of a table")
+    p.add_argument("--json", help="a saved reading (JSON) instead of a screenshot: no API call")
+    p.add_argument("--save-json", help="also write the reading to this file")
+    p.add_argument("--turn-only", action="store_true", help="suggest only if the screenshot shows your action buttons")
+    _live_options(p)
+    p.set_defaults(fn=cmd_live_test)
     return ap
 
 

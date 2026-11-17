@@ -1,6 +1,7 @@
 """Tests for the poker coach engine.  Run: python -m unittest discover -s tests"""
 
 import io
+import json
 import os
 import random
 import tempfile
@@ -1458,3 +1459,320 @@ class TagSheet(unittest.TestCase):
         for group, row in T.table(8)["cold"].items():
             for text in row:
                 self.assertIn(text, book, group)
+
+
+def _has(module: str) -> bool:
+    import importlib.util
+    return importlib.util.find_spec(module) is not None
+
+
+@unittest.skipUnless(_has("pydantic"), "the live reader needs pydantic (pip install -r requirements-live.txt)")
+class LiveReader(unittest.TestCase):
+    """The live table reader (poker_coach/live): readings -> suggestions, the play-money check, the loop."""
+
+    BASE = {"money_text": "Play Money", "table_text": "PM Turbo 100/200 Ante 25", "small_blind": 100,
+            "big_blind": 200, "ante": 25, "ante_kind": "per_player", "hero_to_act": True}
+
+    @staticmethod
+    def seats(spec):
+        out = []
+        for name, stack, bet, flags in spec:
+            d = {"name": name, "stack": stack, "bet": bet}
+            for f in flags.split():
+                d[f] = True
+            out.append(d)
+        return out
+
+    def read(self, cards, spec, **extra):
+        from poker_coach.live.schema import table_from_dict
+        return table_from_dict({**self.BASE, "hero_cards": cards, "seats": self.seats(spec), **extra})
+
+    def btn_first_in(self, cards):
+        return self.read(cards, [("Hero", 5000, 0, "is_hero has_button"), ("Ann", 4900, 100, ""),
+                                 ("Bob", 6000, 200, ""), ("Cat", 4000, 0, "folded"),
+                                 ("Dan", 7000, 0, "folded"), ("Eve", 3000, 0, "folded")])
+
+    def test_play_money_check(self):
+        from poker_coach.live.decide import LiveSettings, play_money_check, suggest
+        r = self.btn_first_in(["Ah", "Jd"])
+        self.assertTrue(play_money_check(r)[0])
+        real = r.model_copy(update={"money_text": "$5.40", "table_text": "Bounty Hunters $5.40"})
+        ok, why = play_money_check(real)
+        self.assertFalse(ok)
+        self.assertIn("$5.40", why)
+        sug = suggest(real, LiveSettings())
+        self.assertEqual(sug.kind, "blocked")
+        self.assertEqual(sug.action, "")
+        # a client that marks play money differently: the user adds its words
+        pm = real.model_copy(update={"money_text": "", "table_text": "Fun Table 7"})
+        self.assertFalse(play_money_check(pm)[0])
+        self.assertTrue(play_money_check(pm, ("fun table",))[0])
+        self.assertEqual(suggest(r.model_copy(update={"is_poker_table": False}), LiveSettings()).kind, "wait")
+
+    def test_preflop(self):
+        from poker_coach.live.decide import LiveSettings, suggest
+        tag = LiveSettings()
+        s = suggest(self.btn_first_in(["Ah", "Jd"]), tag)
+        self.assertEqual(s.kind, "act")
+        self.assertTrue(s.action.startswith("RAISE to 2.2bb"), s.action)
+        self.assertIn("(440)", s.action)                     # the chip amount next to the big blinds
+        self.assertIn("BTN", s.info)
+        self.assertTrue(suggest(self.btn_first_in(["7c", "2d"]), tag).action.startswith("FOLD"))
+        # not hero's turn: no suggestion unless asked
+        wait = self.btn_first_in(["Ah", "Jd"]).model_copy(update={"hero_to_act": False})
+        self.assertEqual(suggest(wait, tag).kind, "wait")
+        self.assertEqual(suggest(wait, tag, force=True).kind, "act")
+        # big blind, a raise from the first seat, 20bb effective: queens move in
+        bb_vs = self.read(["Qs", "Qc"], [("Hero", 4800, 200, "is_hero"), ("Cat", 3560, 440, ""),
+                                         ("Dan", 7000, 0, "folded"), ("Eve", 3000, 0, "folded has_button"),
+                                         ("Ann", 4900, 100, "folded")])
+        self.assertEqual(suggest(bb_vs, tag).action, "ALL-IN")
+        self.assertEqual(suggest(bb_vs, LiveSettings(mode="binary")).action, "ALL-IN")
+        trash = bb_vs.model_copy(update={"hero_cards": ["9c", "4d"]})
+        self.assertEqual(suggest(trash, LiveSettings(mode="binary")).action, "FOLD")
+        # big blind, one limper: check, never fold
+        limp = self.read(["7c", "2d"], [("Hero", 4800, 200, "is_hero"), ("Cat", 4000, 0, "folded"),
+                                        ("Dan", 6800, 200, ""), ("Eve", 3000, 0, "folded has_button"),
+                                        ("Ann", 4900, 100, "folded")])
+        self.assertEqual(suggest(limp, tag).action, "CHECK")
+
+    def test_spin_mode(self):
+        from poker_coach.live.decide import LiveSettings, suggest
+        from poker_coach.live.schema import table_from_dict
+        spin = LiveSettings(mode="spin")
+
+        def r(cards, spec):
+            return table_from_dict({"money_text": "Play Money", "small_blind": 10, "big_blind": 20, "hero_to_act": True,
+                                    "hero_cards": cards, "seats": self.seats(spec)})
+        # small blind against a 10bb all-in from the button: the effective stack is the all-in
+        allin = [("Hero", 290, 10, "is_hero"), ("Bob", 280, 20, ""), ("Cat", 0, 200, "has_button all_in")]
+        s = suggest(r(["As", "5d"], allin), spin)
+        self.assertEqual(s.action, "FOLD")
+        self.assertIn("10bb effective", s.reason)
+        self.assertEqual(suggest(r(["Ks", "Kd"], allin), spin).action, "CALL")
+        # big blind, nobody raised: check
+        walk = [("Hero", 280, 20, "is_hero"), ("Cat", 300, 0, "folded has_button"), ("Bob", 290, 20, "")]
+        self.assertEqual(suggest(r(["7c", "2d"], walk), spin).action, "CHECK")
+        self.assertEqual(suggest(self.btn_first_in(["Ah", "Jd"]), spin).kind, "error")   # 6 players
+
+    def test_actions_from_bets(self):
+        from poker_coach import state as S
+        from poker_coach.live.decide import LiveSettings, preflop_acts, to_table
+        r = self.read(["Ah", "Kd"], [("Hero", 4400, 600, "is_hero has_button"), ("Ann", 4900, 100, "folded"),
+                                     ("Bob", 3200, 1800, ""), ("Cat", 3800, 200, ""), ("Dan", 0, 3000, "all_in"),
+                                     ("Eve", 3000, 0, "folded")])
+        t = to_table(r, LiveSettings())
+        order = S.action_order(t.state)
+        acts = preflop_acts(t, order)
+        got = [(order[a.idx], a.kind, a.amount) for a in acts]
+        # Cat limped (200), hero raised to 600, Bob re-raised to 1800, Dan all-in for 3000
+        self.assertEqual(got, [(4, "limp", 200.0), (1, "raise", 600.0), (3, "raise", 1800.0), (5, "allin", 3000.0)])
+        # start-of-hand stacks put the chips in front and the ante back
+        self.assertEqual(S.seats(t.state)["1"]["stack"], 4400 + 600 + 25)
+
+    def test_button_units_and_warnings(self):
+        from poker_coach.live.decide import LiveSettings, to_table
+        r = self.read(["Ah", "Jd"], [("Hero", 5000, 0, "is_hero"), ("Ann", 4900, 100, ""), ("Bob", None, 200, ""),
+                                     ("Cat", 4000, 0, "folded")])
+        t = to_table(r, LiveSettings())
+        self.assertEqual(t.button, 1)                          # placed from the blinds in front
+        self.assertTrue(any("button" in w for w in t.warnings))
+        self.assertTrue(any("Bob" in w for w in t.warnings))   # the unreadable stack is named
+        inbb = self.read(["Ah", "Jd"], [("Hero", 25, 0, "is_hero has_button"), ("Ann", 24.5, 0.5, ""),
+                                        ("Bob", 30, 1, "")], amounts_in_bb=True, ante=None, ante_kind="none")
+        t = to_table(inbb, LiveSettings())
+        self.assertEqual((t.sb, t.bb, t.unit), (0.5, 1.0, "bb"))
+        with self.assertRaises(ValueError):
+            to_table(self.read(["Ah", "Jd"], [("Hero", 5000, 0, "is_hero"), ("Ann", 4900, 0, "")]), LiveSettings())
+
+    def test_postflop(self):
+        from poker_coach.live.decide import HandMemory, LiveSettings, suggest
+        tag = LiveSettings()
+        mem = HandMemory()
+        first = self.btn_first_in(["Ah", "Jd"])
+        mem.update(first, suggest(first, tag))
+        self.assertTrue(mem.hero_raised)
+        flop = self.read(["Ah", "Jd"], [("Hero", 4540, 0, "is_hero has_button"), ("Ann", 4900, 0, "folded"),
+                                        ("Bob", 5140, 400, ""), ("Cat", 4000, 0, "folded"),
+                                        ("Dan", 7000, 0, "folded"), ("Eve", 3000, 0, "folded")],
+                         board=["Kd", "7c", "2s"], middle_pot=1100)
+        s = suggest(flop, tag, mem)
+        self.assertEqual(s.kind, "act")
+        self.assertIn("pot 7.5bb", s.info)                      # 1,100 in the middle and the 400 bet
+        self.assertIn("to call 2.0bb", s.info)
+        self.assertFalse(any("preflop action not seen" in w for w in s.warnings))
+        alone = suggest(flop, tag)                              # no memory: opponents read as callers
+        self.assertTrue(any("preflop action not seen" in w for w in alone.warnings))
+        checked = flop.model_copy(update={"seats": [x.model_copy(update={"bet": 0.0}) for x in flop.seats],
+                                          "middle_pot": 1100})
+        c = suggest(checked, tag, mem)
+        self.assertIn("checked to you", c.info)
+        self.assertTrue(c.action.split()[0] in ("BET", "CHECK"), c.action)
+
+    @unittest.skipUnless(_has("PIL"), "needs Pillow")
+    def test_watchers(self):
+        from PIL import Image, ImageDraw
+        from poker_coach.live.capture import ButtonWatch, ChangeWatch, Rect, difference, thumb
+
+        def frame(turn, shade=90):
+            img = Image.new("RGB", (800, 560), (20, shade, 40))
+            if turn:
+                ImageDraw.Draw(img).rectangle((520, 480, 790, 550), fill=(220, 60, 60))
+            return img
+        area = Rect(500, 470, 300, 90)
+        bw = ButtonWatch(area, thumb(frame(False).crop(area.box())))
+        fired = [bw.update(f) for f in [frame(False)] * 2 + [frame(True)] * 3 + [frame(False), frame(True)]]
+        self.assertEqual(fired, [False, False, True, False, False, False, True])
+        cw = ChangeWatch(min_gap=2.0)
+        t = 1000.0
+        self.assertFalse(cw.update(frame(False), t))            # first frame: not settled yet
+        self.assertTrue(cw.update(frame(False), t + 0.3))       # settled and new
+        self.assertFalse(cw.update(frame(False), t + 3.0))      # nothing changed
+        self.assertFalse(cw.update(frame(False, 160), t + 3.3)) # moving
+        self.assertTrue(cw.update(frame(False, 160), t + 3.6))  # settled again, changed
+        self.assertFalse(cw.update(frame(False, 30), t + 3.7) or cw.update(frame(False, 30), t + 3.8))  # too soon
+        self.assertEqual(difference(None, [1]), 255.0)
+        self.assertEqual(Rect.parse("1,2,3,4").box(), (1, 2, 4, 6))
+        with self.assertRaises(ValueError):
+            Rect.parse("1,2,3")
+
+    @unittest.skipUnless(_has("PIL"), "needs Pillow")
+    def test_worker_reads_once_per_turn(self):
+        import queue
+        import tempfile
+        import time as _t
+        from PIL import Image, ImageDraw
+        from poker_coach.live import app
+        from poker_coach.live.capture import Rect, thumb
+        from poker_coach.live.reader import ReadResult
+
+        def frame(turn):
+            img = Image.new("RGB", (800, 560), (20, 90, 40))
+            if turn:
+                ImageDraw.Draw(img).rectangle((520, 480, 790, 550), fill=(220, 60, 60))
+            return img
+        frames = [frame(False)] * 3 + [frame(True)] * 5 + [frame(False)] * 3 + [frame(True)] * 30
+        reading = self.btn_first_in(["Ah", "Jd"])
+
+        class Grab:
+            k = 0
+
+            def grab(self):
+                Grab.k += 1
+                return frames[min(Grab.k - 1, len(frames) - 1)]
+
+        class Reader:
+            calls = 0
+
+            def read(self, _img):
+                Reader.calls += 1
+                return ReadResult(reading, 1.2, 2600, 700, 0.0244, "claude-opus-5-5")
+
+        area = Rect(500, 470, 300, 90)
+        cfg = app.LiveConfig(region=[0, 0, 800, 560], buttons=area.as_list(),
+                             baseline=thumb(frame(False).crop(area.box())), save_images=True)
+        out = queue.Queue()
+        with tempfile.TemporaryDirectory() as tmp:
+            old = app.LOG_ROOT
+            app.LOG_ROOT = tmp
+            try:
+                w = app.Worker(cfg, out, reader=Reader(), grabber=Grab(), poll=0.005)
+                w.start()
+                deadline = _t.time() + 5
+                while Reader.calls < 2 and _t.time() < deadline:
+                    _t.sleep(0.02)
+                _t.sleep(0.2)
+                w.stopped.set()
+                w.join(2)
+            finally:
+                app.LOG_ROOT = old
+            self.assertEqual(Reader.calls, 2)
+            ups = [out.get() for _ in range(out.qsize())]
+            sugs = [u for u in ups if u.suggestion is not None]
+            self.assertEqual(len(sugs), 2)
+            self.assertTrue(sugs[0].suggestion.action.startswith("RAISE"))
+            self.assertAlmostEqual(sugs[1].session_cost, 0.0488)
+            logs = os.listdir(tmp)
+            self.assertEqual(len(logs), 1)
+            files = os.listdir(os.path.join(tmp, logs[0]))
+            self.assertIn("reads.jsonl", files)
+            self.assertIn("0001.png", files)
+            with open(os.path.join(tmp, logs[0], "reads.jsonl")) as fh:
+                first = json.loads(fh.readline())
+            self.assertEqual(first["reading"]["hero_cards"], ["Ah", "Jd"])
+            self.assertTrue(first["suggestion"]["action"].startswith("RAISE"))
+
+    @unittest.skipUnless(_has("anthropic") and _has("PIL"), "needs the anthropic SDK and Pillow")
+    def test_reader_request(self):
+        import anthropic
+        from PIL import Image
+        from poker_coach.live.reader import ClaudeReader, ReadError, encode_image
+        try:
+            import httpx2 as httpx
+        except ImportError:
+            import httpx
+        reply = self.btn_first_in(["Ah", "Jd"]).model_dump()
+        seen = {}
+
+        def ok(request):
+            seen["body"] = json.loads(request.content)
+            seen["beta"] = request.headers.get("anthropic-beta")
+            return httpx.Response(200, json={
+                "id": "m", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
+                "content": [{"type": "text", "text": json.dumps(reply)}], "stop_reason": "end_turn",
+                "stop_sequence": None, "usage": {"input_tokens": 2600, "output_tokens": 700}})
+
+        client = anthropic.Anthropic(api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(ok)))
+        res = ClaudeReader(client=client).read(Image.new("RGB", (3200, 2000)))
+        body = seen["body"]
+        self.assertEqual(body["model"], "claude-opus-5-5")
+        self.assertEqual(body["fallbacks"], "default")
+        self.assertEqual(seen["beta"], "server-side-fallback-2026-07-01")
+        self.assertEqual(body["output_config"]["effort"], "low")
+        self.assertEqual(body["output_config"]["format"]["type"], "json_schema")
+        self.assertIn("seats", body["output_config"]["format"]["schema"]["required"])
+        self.assertEqual(body["messages"][0]["content"][0]["source"]["media_type"], "image/png")
+        self.assertEqual(res.table.hero_cards, ["Ah", "Jd"])
+        self.assertAlmostEqual(res.cost, (2600 * 4 + 700 * 20) / 1e6)
+        ClaudeReader(model="claude-haiku-5-5", client=client).read(Image.new("RGB", (200, 100)))
+        self.assertNotIn("fallbacks", seen["body"])            # Haiku takes no server-side fallback
+        # the image sent is cut down to the long edge
+        import base64
+        import io
+        img = Image.open(io.BytesIO(base64.b64decode(encode_image(Image.new("RGB", (3200, 2000)), 1600))))
+        self.assertEqual(img.size, (1600, 1000))
+
+        def refuse(request):
+            return httpx.Response(200, json={"id": "m", "type": "message", "role": "assistant",
+                                             "model": "claude-opus-5-5", "content": [], "stop_reason": "refusal",
+                                             "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 0}})
+        c2 = anthropic.Anthropic(api_key="t", http_client=httpx.Client(transport=httpx.MockTransport(refuse)))
+        with self.assertRaises(ReadError):
+            ClaudeReader(client=c2).read(Image.new("RGB", (100, 100)))
+
+    def test_cli(self):
+        import tempfile
+        from poker_coach.live.decide import DEFAULT_MARKERS
+        reading = {**self.BASE, "hero_cards": ["Ah", "Jd"],
+                   "seats": self.seats([("Hero", 5000, 0, "is_hero has_button"), ("Ann", 4900, 100, ""),
+                                        ("Bob", 6000, 200, "")])}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "r.json")
+            with open(path, "w") as fh:
+                json.dump(reading, fh)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(main(["live-test", "--json", path]), 0)
+            self.assertIn(">>> RAISE", out.getvalue())
+            self.assertIn("seats (clockwise from you)", out.getvalue())
+            reading["money_text"], reading["table_text"] = "$11", "Sunday $11"
+            with open(path, "w") as fh:
+                json.dump(reading, fh)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(main(["live-test", "--json", path]), 0)
+            self.assertIn("[blocked]", out.getvalue())
+            self.assertNotIn(">>>", out.getvalue())
+        with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+            self.assertNotEqual(main(["live-test"]), 0)
+        self.assertIn("play money", DEFAULT_MARKERS)
