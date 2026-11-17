@@ -1019,3 +1019,11 @@ class AllInOrFoldTournament(unittest.TestCase):
         for nb in B.SEATS:
             row = " | ".join(f"{B.width('before', nb, s):.0f}%" for s in (6, 8, 10, 12, 15, 20, 25, 30, 40))
             self.assertIn(f"| {B.SEATS[nb]} | {row} |", section)
+        for nb, cells in B.first_in_rows("before").items():
+            self.assertEqual(len(cells), len(B.BANDS))
+            self.assertIn(f"| {B.SEATS[nb]} | " + " | ".join(cells) + " |", section)
+        # a cell splits into pairs, suited and offsuit hands, and nothing is lost in the split
+        rng = B.first_in_range("before", 2, 10)
+        pairs, suited, offsuit = B.range_groups(rng)
+        self.assertEqual((pairs, suited, offsuit), ("22+", "A2s+, K8s+, QTs+, JTs", "A2o+, K9o+, QJo"))
+        self.assertEqual(format_range(rng), ", ".join((pairs, suited, offsuit)))

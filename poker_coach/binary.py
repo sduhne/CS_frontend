@@ -86,6 +86,20 @@ def first_in_range(stage: str, n_behind: int, stack_bb: float) -> list[float]:
     return [1.0 if lim >= need else 0.0 for lim in limits(stage, n_behind)]
 
 
+def range_groups(rng: list[float]) -> tuple[str, str, str]:
+    """A range as three strings: its pairs, its suited hands and its offsuit hands."""
+    pairs = [w if h // 13 == h % 13 else 0.0 for h, w in enumerate(rng)]
+    suited = [w if h // 13 < h % 13 else 0.0 for h, w in enumerate(rng)]
+    offsuit = [w if h // 13 > h % 13 else 0.0 for h, w in enumerate(rng)]
+    return format_range(pairs), format_range(suited), format_range(offsuit)
+
+
+def first_in_rows(stage: str = "before") -> dict[int, list[str]]:
+    """The first-in all-in range of every seat for each stack band, as text (the printed table)."""
+    return {nb: [format_range(first_in_range(stage, nb, s)) for _label, s in BANDS]
+            for nb in sorted(SEATS, reverse=True)}
+
+
 def band(stack_bb: float) -> int:
     """Index of the stack band of the reshove / call tables (clamped to the deepest)."""
     tops = (7.5, 11.5, 16.5, 24.5)
@@ -212,7 +226,12 @@ def sheet_text() -> str:
         out.append("  seat    " + " ".join(f"{s:>4}bb" for s in (6, 8, 10, 12, 15, 20, 25, 30, 40)))
         for nb in sorted(SEATS, reverse=True):
             out.append(f"  {SEATS[nb]:<6}  " + " ".join(f"{width(stage, nb, s):>5.0f}%" for s in (6, 8, 10, 12, 15, 20, 25, 30, 40)))
-        out.append(f"  example, {STAGE_NAMES[stage]}, 10bb: BTN {format_range(first_in_range(stage, 2, 10))}")
+        out.append("")
+        out.append(f"Nobody has raised, {STAGE_NAMES[stage]}: all-in with (s = suited, o = offsuit)")
+        for nb, row in first_in_rows(stage).items():
+            out.append(f"  {SEATS[nb]}")
+            for (b, _s), rng in zip(BANDS, row):
+                out.append(f"    {b:<11} {rng}")
         out.append("")
     for stage in STAGES:
         out.append(f"One raise before you, {STAGE_NAMES[stage]}: all-in with")

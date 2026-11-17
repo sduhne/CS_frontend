@@ -342,21 +342,28 @@ the smaller of yours and the biggest stack still to act.
 | BTN | 32% | 30% | 27% | 25% | 20% | 15% | 10% | 8% | 5% |
 | SB | 53% | 49% | 44% | 39% | 34% | 28% | 24% | 17% | 10% |
 
-At 10 big blinds that is:
+The hands themselves, by stack (s = suited, o = offsuit; A9s+ is A9s and
+better, 66+ is 66 and every higher pair):
 
-- **UTG:** 66+, ATs+, KQs, AJo+
-- **CO:** 22+, A2s+, KTs+, QJs, A5o+, KJo+
-- **BTN:** 22+, A2s+, K8s+, QTs+, JTs, A2o+, K9o+, QJo
-- **SB:** 22+, A2s+, K2s+, Q4s+, J8s+, T8s+, 98s, A2o+, K2o+, Q7o+, J9o+
+| Seat | up to 7bb | 8 to 11bb | 12 to 16bb | 17 to 24bb | 25 to 40bb |
+|---|---|---|---|---|---|
+| UTG | 33+, A7s+, KJs+, A8o+ | 66+, ATs+, KQs, AJo+ | 88+, AJs+, AQo+ | TT+, AQs+, AKo | QQ+, AKs, AKo |
+| UTG+1 | 33+, A5s+, KJs+, A8o+, KQo | 55+, A9s+, KQs, ATo+ | 88+, AJs+, AQo+ | 99+, AQs+, AQo+ | JJ+, AKs, AKo |
+| LJ | 33+, A3s+, KTs+, A7o+, KQo | 55+, A8s+, KQs, A9o+ | 77+, ATs+, AJo+ | 88+, AJs+, AQo+ | TT+, AKs, AKo |
+| HJ | 33+, A2s+, KTs+, QJs, A5o+, KJo+ | 33+, A7s+, A5s, KJs+, A8o+ | 55+, A9s+, KQs, ATo+ | 77+, AJs+, AJo+ | TT+, AQs+, AKo |
+| CO | 22+, A2s+, K8s+, QTs+, A2o+, K9o+ | 22+, A2s+, KTs+, QJs, A5o+, KJo+ | 44+, A7s+, KQs, A9o+ | 66+, A9s+, KQs, ATo+ | 88+, AQs+, AQo+ |
+| BTN | 22+, A2s+, K4s+, Q8s+, JTs, A2o+, K7o+, QTo+ | 22+, A2s+, K8s+, QTs+, JTs, A2o+, K9o+, QJo | 22+, A2s+, KTs+, A5o+, KJo+ | 44+, A5s+, KJs+, A8o+, KQo | 77+, ATs+, AJo+ |
+| SB | 22+, A2s+, K2s+, Q2s+, J4s+, T7s+, 98s, A2o+, K2o+, Q4o+, J7o+, T8o+ | 22+, A2s+, K2s+, Q4s+, J8s+, T8s+, 98s, A2o+, K2o+, Q7o+, J9o+ | 22+, A2s+, K2s+, Q8s+, J9s+, A2o+, K6o+, QTo+ | 22+, A2s+, K7s+, QTs+, JTs, A2o+, K9o+, QJo | 33+, A3s+, KJs+, A7o+, KQo |
 
-Over 40 big blinds only AA and KK move all-in.
+Close to the money use the column for twice your stack. Over 40 big blinds
+only AA and KK move all-in.
 
 ### Stage by stage
 
 | Stage | Players left per paid place | What changes |
 |---|---|---|
 | Far from the money | more than 2 (1.5 at regular speed) | The table above as it is |
-| Close to the money | down to 1.3 (1.2) | All-in only with hands good for twice your stack |
+| Close to the money | down to 1.3 (1.2) | The column for twice your stack |
 | Bubble | under 1.3 (1.2) | The late-registration plan takes over: its sit-out line and tight chart |
 | In the money | | The table again, counting your stack 2bb smaller (4bb in the small blind) |
 | Final table | | The same; call from the bubble table when the all-in player covers you |
