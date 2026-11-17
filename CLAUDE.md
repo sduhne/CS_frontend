@@ -309,6 +309,7 @@ python3 -m poker_coach binary --hand A8o --pos BTN --stack 12                   
 python3 -m poker_coach binary --hand KTs --pos CO --stack 14 --stage money         # after the bubble
 python3 -m poker_coach binary --hand 99 --pos BTN --stack 15 --facing "CO raise"   # all-in over a raise, or fold
 python3 -m poker_coach binary --hand AJo --pos BB --stack 20 --facing "HJ allin 9" # call an all-in, or fold
+python3 -m poker_coach binary --hand TT --pos BTN --stack 10 --facing "HJ allin, CO allin"  # two all-ins (or a raise and one)
 python3 -m poker_coach binary --hand A9o --pos LJ --stack 10 --players 6            # a 6- or 7-handed table
 python3 -m poker_coach binary-chart --pos BTN       # deepest stack that moves all-in, hand by hand
 python3 -m poker_coach binary-sheet                 # every table as text (--players 6 or 7 for a short table)

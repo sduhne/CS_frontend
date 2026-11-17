@@ -833,19 +833,31 @@ def cmd_binary(a) -> int:
     n_behind = _binary_seat(a.pos, a.players)
     facing, seat, size = "", None, None
     if a.facing:
-        words = a.facing.replace(",", " ").split()
-        if len(words) < 2:
-            raise ValueError("--facing is '<seat> raise' or '<seat> allin [big blinds]'")
-        seat = _binary_seat(words[0], a.players)
-        verb = words[1].lower().replace("-", "")
-        if verb in ("raise", "raises", "open", "opens", "minraise"):
-            facing = "raise"
-        elif verb in ("allin", "shove", "shoves", "jam", "jams", "push"):
-            facing = "allin"
-            if len(words) > 2:
-                size = float(words[2].lower().replace("bb", ""))
+        acts = []
+        for part in a.facing.split(","):
+            words = part.split()
+            if len(words) < 2:
+                raise ValueError("--facing is '<seat> raise' or '<seat> allin [big blinds]', "
+                                 "with a comma between two players")
+            verb = words[1].lower().replace("-", "")
+            if verb in ("raise", "raises", "open", "opens", "minraise"):
+                kind = "raise"
+            elif verb in ("allin", "shove", "shoves", "jam", "jams", "push"):
+                kind = "allin"
+            else:
+                raise ValueError(f"--facing: {words[1]!r} is neither a raise nor an all-in")
+            amount = float(words[2].lower().replace("bb", "")) if len(words) > 2 else None
+            acts.append((_binary_seat(words[0], a.players), kind, amount))
+        if len(acts) == 1:
+            seat, facing, size = acts[0]
+            size = size if facing == "allin" else None
+        elif any(kind == "allin" for _s, kind, _a in acts):
+            # two all-ins, or a raise and an all-in: one row covers them
+            facing = "allins"
+            sizes = [amount for _s, kind, amount in acts if kind == "allin" and amount]
+            size = max(sizes) if sizes else None
         else:
-            raise ValueError(f"--facing: {words[1]!r} is neither a raise nor an all-in")
+            raise ValueError("--facing: two raises and no all-in is not on the sheet: AA and KK only")
     action, why = BN.decide(hand, n_behind, a.stack, a.stage, facing, seat, size, a.bubble, a.players)
     seat_label = BN.seat_name(n_behind, a.players)
     _out(f">>> {action}   {HANDS[hand]} in {seat_label} with {a.stack:g}bb, {BN.STAGE_NAMES[BN._stage(a.stage)]}"
@@ -1093,7 +1105,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stack", type=float, required=True, help="your stack in big blinds (the smaller of yours and "
                                                                "the biggest stack still to act)")
     p.add_argument("--stage", default="before", help="before (the money) or money")
-    p.add_argument("--facing", help="'CO raise' or 'HJ allin 9' (the all-in in big blinds)")
+    p.add_argument("--facing", help="'CO raise', 'HJ allin 9' (the all-in in big blinds), or two players: "
+                                    "'HJ allin 9, CO allin 12'")
     p.add_argument("--bubble", action="store_true", help="on the bubble, or a final table against a stack that covers you")
     p.set_defaults(fn=cmd_binary)
 

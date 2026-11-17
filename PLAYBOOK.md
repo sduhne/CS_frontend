@@ -390,6 +390,7 @@ Away from the bubble, by the size of the all-in (or your stack, if smaller):
 | HJ or CO | 44+, A3s+, KTs+, A7o+, KJo+ | 66+, A9s+, ATo+ | 77+, ATs+, ATo+ | 88+, AJs+, AJo+ | TT+, AQs+, AKo |
 | BTN | 22+, A2s+, K6s+, QTs+, JTs, A2o+, K8o+, QJo | 44+, A5s+, KTs+, A7o+, KJo+ | 66+, A8s+, A9o+ | 77+, ATs+, ATo+ | 88+, AJs+, AJo+ |
 | SB (you are the big blind) | 22+, A2s+, K2s+, Q2s+, J3s+, T6s+, 97s+, 87s, A2o+, K2o+, Q2o+, J7o+, T8o+ | 22+, A2s+, K3s+, Q8s+, J9s+, A2o+, K6o+, Q9o+, JTo | 44+, A2s+, K8s+, QTs+, A4o+, K9o+ | 55+, A4s+, K9s+, A7o+, KTo+ | 66+, A8s+, KQs, A9o+ |
+| Two all-ins | 77+, AJs+, AQo+ | TT+, AKs, AKo | JJ+ | QQ+ | KK+ |
 
 On the bubble, and at a final table when the all-in player covers you:
 
@@ -399,11 +400,18 @@ On the bubble, and at a final table when the all-in player covers you:
 | HJ or CO | 88+, ATs+, AJo+ | TT+, AQs+, AKo | JJ+, AKs | JJ+ | QQ+ |
 | BTN | 77+, A8s+, KQs, A9o+ | 99+, AJs+, AQo+ | TT+, AQs+, AKo | TT+, AKs | JJ+ |
 | SB (you are the big blind) | 44+, A2s+, K6s+, Q9s+, JTs, A3o+, K8o+, QTo+ | 77+, A8s+, KTs+, ATo+, KQo | 88+, ATs+, AJo+ | 99+, AJs+, AQo+ | TT+, AKs, AKo |
+| Two all-ins | QQ+ | KK+ | KK+ | KK+ | AA |
 
 In the big blind the price is better: read both tables one column to the
-left (the small-blind row already counts it). Against a raise and an all-in,
-or two all-ins: AA and KK, plus QQ and AK when the stacks are 12 big blinds
-or less.
+left (the small-blind row already counts it).
+
+**Two all-ins** is the row for two players all-in before you; a raise and an
+all-in counts the same. Three hands see the board, so you need less than a
+third of the pot, but the second player has shown a hand strong enough to
+call an all-in, and on the bubble a fold often moves you up a place for
+free. With 11 big blinds or less it is a call with far more than aces and
+kings; from 17 it is queens or better. If the two stacks differ, the size is
+the bigger one you would have to match.
 
 ### Six and seven players
 

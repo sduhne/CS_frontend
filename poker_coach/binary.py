@@ -37,7 +37,7 @@ from functools import lru_cache
 from .cards import COMBO_COUNT, HAND_INDEX, HANDS, format_range, parse_range
 
 _PATH = os.path.join(os.path.dirname(__file__), "data", "binary.json")
-DATA_VERSION = 2
+DATA_VERSION = 3
 
 PLAYERS = 8                                          # the default table
 TABLES = (6, 7, 8)                                   # table sizes the tables are solved for
@@ -59,6 +59,8 @@ NORMAL_PREMIUM = 0.06        # extra equity a call needs away from the bubble (3
 BUBBLE_PREMIUM = 0.16        # ... and on the bubble or at a final table against a stack that covers hero
 SAFETY_PER_BB = 0.02         # in the money a first-in all-in must earn this much per big blind of stack over 10:
                              # thin edges are not worth a deep stack (it removes, e.g., a 40bb all-in with A4s)
+TWO_ALLINS = (5, 3)          # two all-ins in front are solved for these seats (players behind), hero on the button
+TWO_LABEL = "Two all-ins, or a raise and an all-in"
 DEEP_FIRST_IN = "AA, KK"     # deeper than TOP, nobody raised
 DEEP_OVER_RAISE = "AA, KK"   # deeper than TOP, over a raise or an all-in
 
@@ -181,7 +183,8 @@ def reshove(stage: str, raiser: str, stack_bb: float, players: int = PLAYERS) ->
 
 
 def call(shover: str, allin_bb: float, bubble: bool = False, big_blind: bool = False, players: int = PLAYERS) -> str:
-    """Hands that call one all-in (``shover``: early, late, button or small).
+    """Hands that call an all-in (``shover``: early, late, button or small; ``two`` when two
+    players are all-in, or one raised and another moved all-in).
 
     ``allin_bb`` is what hero has to put in: the all-in, or hero's stack if
     smaller.  In the big blind the price is better, which is worth one stack
@@ -216,8 +219,9 @@ def decide(hand: int, n_behind: int, stack_bb: float, stage: str = "before", fac
            players: int = PLAYERS) -> tuple[str, str]:
     """(ALL-IN / CALL / FOLD / CHECK, the reason) from the printed tables.
 
-    ``facing``: '' (nobody has raised), 'raise' or 'allin'; ``facing_seat`` is
-    that player's seat as players behind them.
+    ``facing``: '' (nobody has raised), 'raise', 'allin' or 'allins' (two or more
+    players all-in, or a raise and an all-in); ``facing_seat`` is that player's
+    seat as players behind them (not needed for 'allins').
     """
     stage = _stage(stage)
     table(players)
@@ -235,6 +239,12 @@ def decide(hand: int, n_behind: int, stack_bb: float, stage: str = "before", fac
         if lim:
             return "FOLD", f"{name} from {seat} is an all-in only up to {lim}bb {STAGE_NAMES[stage]}"
         return "FOLD", f"{name} from {seat} is never an all-in {STAGE_NAMES[stage]}"
+    if facing == "allins":
+        size = min(stack_bb, allin_bb or stack_bb)
+        rng = call("two", size, bubble, big_blind=(n_behind == 0), players=players)
+        ok = _in(rng, hand)
+        where = "on the bubble" if bubble else "away from the bubble"
+        return ("CALL" if ok else "FOLD"), f"against two all-ins of {size:g}bb {where}: {rng}"
     if facing_seat is None:
         raise ValueError("facing a raise or an all-in needs that player's seat")
     them = seat_name(_seat(facing_seat, players), players)
@@ -306,8 +316,10 @@ def sheet_text(players: int = PLAYERS) -> str:
             out.append(f"  all-in from {label}")
             for (b, _s), rng in zip(BANDS, d["call"][key][skey]):
                 out.append(f"    {b:<11} {rng}")
+        out.append(f"  {TWO_LABEL.lower()}")
+        for (b, _s), rng in zip(BANDS, d["call"][key]["two"]):
+            out.append(f"    {b:<11} {rng}")
         out.append("")
-    out.append("In the big blind, read the all-in table one stack band to the left (the small-blind row already does).")
+    out.append("In the big blind, read the all-in tables one stack band to the left (the small-blind row already does).")
     out.append(f"Over {TOP}bb: {DEEP_FIRST_IN} first in, {DEEP_OVER_RAISE} over a raise or an all-in.")
-    out.append("A raise and an all-in, or two all-ins, in front: AA, KK (QQ and AK when the stacks are 12bb or less).")
     return "\n".join(out)

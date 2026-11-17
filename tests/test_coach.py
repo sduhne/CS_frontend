@@ -992,6 +992,24 @@ class AllInOrFoldTournament(unittest.TestCase):
         self.assertEqual(B.decide(h["A9s"], 0, 30, facing="allin", facing_seat=3, allin_bb=14)[0], "CALL")
         # and the bubble takes hands away
         self.assertEqual(B.decide(h["ATo"], 2, 30, facing="allin", facing_seat=3, allin_bb=14, bubble=True)[0], "FOLD")
+        # two all-ins in front: short stacks call with much more than aces and kings, deep ones do not
+        self.assertEqual(B.decide(h["TT"], 2, 10, facing="allins")[0], "CALL")
+        self.assertEqual(B.decide(h["99"], 2, 10, facing="allins")[0], "FOLD")
+        self.assertEqual(B.decide(h["QQ"], 2, 20, facing="allins", allin_bb=20)[0], "CALL")
+        self.assertEqual(B.decide(h["JJ"], 2, 20, facing="allins", allin_bb=20)[0], "FOLD")
+        self.assertEqual(B.decide(h["JJ"], 0, 20, facing="allins", allin_bb=20)[0], "CALL")     # the big blind's price
+        self.assertEqual(B.decide(h["QQ"], 2, 20, facing="allins", allin_bb=20, bubble=True)[0], "FOLD")
+        self.assertEqual(B.decide(h["AA"], 2, 35, facing="allins", bubble=True)[0], "CALL")
+        for players in B.TABLES:
+            two = B.table(players)["call"]
+            widths = [range_pct(parse_range(r)) for r in two["normal"]["two"]]
+            self.assertTrue(all(a >= b for a, b in zip(widths, widths[1:])), (players, widths))
+            for i in range(len(B.BANDS)):
+                normal, bubble = parse_range(two["normal"]["two"][i]), parse_range(two["bubble"]["two"][i])
+                self.assertTrue(all(a >= b for a, b in zip(normal, bubble)), (players, i))
+                # tighter than calling one all-in from a late seat of the same size
+                one = parse_range(two["normal"]["late"][i])
+                self.assertTrue(all(a >= b for a, b in zip(one, normal)), (players, i))
         with self.assertRaises(ValueError):
             B.decide(h["AA"], 2, 10, stage="early")
 
@@ -1043,6 +1061,10 @@ class AllInOrFoldTournament(unittest.TestCase):
                            (["binary", "--hand", "99", "--pos", "BTN", "--stack", "15", "--facing", "CO raise"], "ALL-IN"),
                            (["binary", "--hand", "AJo", "--pos", "SB", "--stack", "20", "--facing", "BTN allin 9",
                              "--bubble"], "FOLD"),
+                           (["binary", "--hand", "TT", "--pos", "BTN", "--stack", "10", "--facing", "HJ allin, CO allin"],
+                            "CALL"),
+                           (["binary", "--hand", "AKo", "--pos", "BTN", "--stack", "20", "--facing",
+                             "HJ raise, CO allin 20"], "FOLD"),
                            (["binary-chart", "--pos", "SB"], "SB, before the money"),
                            (["binary-sheet"], "One all-in before you")):
             out = io.StringIO()

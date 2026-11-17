@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from poker_coach import binary as B                                   # noqa: E402
 from poker_coach import latereg as L                                  # noqa: E402
-from poker_coach.cards import format_range, range_pct                 # noqa: E402
-from poker_coach.equity import eq_vs_range                            # noqa: E402
+from poker_coach.cards import format_range, parse_range, range_pct    # noqa: E402
+from poker_coach.equity import eq_vs_range, preflop_equity            # noqa: E402
 from poker_coach.icm import Prizes, default_payouts                   # noqa: E402
 from poker_coach.pushfold import HandSetup, solve_open_shove, solve_reshove   # noqa: E402
 from poker_coach.ranges import PLAYER_TYPES, open_size_bb, scale_range, villain_open_range   # noqa: E402
@@ -144,6 +144,37 @@ def call(players: int) -> dict:
     return out
 
 
+def two_allins(players: int) -> dict:
+    """Calling when two players are all-in (or one raised and another moved all-in).
+
+    The first all-in comes from B.TWO_ALLINS[0] and has the range that seat shoves; the second
+    comes from B.TWO_ALLINS[1] and has the range that seat calls the first with; hero is on the
+    button.  Three hands see the board, so hero needs less than a third of the pot, plus the
+    usual premium, which is larger here: with two players all-in a fold often moves hero up.
+    """
+    a_nb, b_nb = B.TWO_ALLINS
+    hero_posted, dead = 0.0, antes(players) + 1.5
+    out = {"normal": [], "bubble": []}
+    for _b, s in B.BANDS:
+        st = setup(s, players)
+        sol = solve_open_shove(st, players - 1 - a_nb, Prizes(), use_types=False)
+        pct = min(100.0, max(1.5, range_pct(sol.shove_range) * PLAYER_TYPES["unknown"]["shove_mult"]))
+        first = scale_range(sol.ev, pct)
+        caller = sol.caller(players - 1 - b_nb)
+        second = caller.call_range if caller and range_pct(caller.call_range) > 0 else parse_range("TT+, AQs+, AKo")
+        need = (s - hero_posted) / (3.0 * s + dead)
+        eqs = {}
+        for name, extra in (("normal", B.NORMAL_PREMIUM + 0.02), ("bubble", B.BUBBLE_PREMIUM * 1.2 + 0.03)):
+            rng = [0.0] * 169
+            for h in range(169):
+                if h not in eqs:
+                    quick = preflop_equity(h, None, [first, second], iters=1500)
+                    eqs[h] = preflop_equity(h, None, [first, second], iters=12000) if quick >= need + B.NORMAL_PREMIUM - 0.03 else quick
+                rng[h] = 1.0 if eqs[h] >= need + extra else 0.0
+            out[name].append(format_range(rng) or "nothing")
+    return out
+
+
 def model_results(players: int) -> dict:
     """What the model says a late entry earns with this plan, by blind speed, and how often a
     chip-EV push/fold chart cashes in the same tournaments."""
@@ -164,6 +195,8 @@ def main() -> None:
             "entry_result": {"cash": round(plan.itm, 4), "return": round(plan.prize - 1.0, 4)},
             "model": model_results(players),
             "first_in": first_in(plan, players), "reshove": reshove(plan, players), "call": call(players)}
+        for name, row in two_allins(players).items():
+            d["tables"][str(players)]["call"][name]["two"] = row
         print(f"{players} players: late entry with this plan in the model: cash {plan.itm:.0%}, "
               f"return {plan.prize - 1:+.0%}   ({time.time() - t0:.0f}s)", flush=True)
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "poker_coach", "data", "binary.json")
