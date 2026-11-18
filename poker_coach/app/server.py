@@ -151,25 +151,27 @@ class TableApp:
             except ModelError as err:
                 return {"error": {"message": err.message, "fix": err.fix}, "view": self.session.view()}
             except OSError as err:
-                # The change is made but the file could not be written (on Windows another
-                # program may hold it for a moment).  The next change saves everything again.
-                return {"error": {"message": f"The change was made but could not be saved ({err}).",
+                # The session file could not be written (on Windows another program may hold it
+                # for a moment).  The page gets the table as it stands; the next change saves again.
+                return {"error": {"message": f"The session could not be saved ({err}).",
                                   "fix": f"Check that {self.session.folder} can be written."},
                         "view": self.session.view()}
 
     def advice(self, rev: int) -> dict:
         """The coach's answer for revision ``rev``, or ``{"status": "stale"}`` when the table has moved on."""
-        known = self._known_answer(rev)
+        with self.lock:
+            known = self._known_answer(rev)
         if known is not None:
             return known
-        # One at a time.  A second request for the same revision waits here and then finds the
-        # answer ready; a request that has gone stale while waiting is sent away at once.
+        # One answer is worked out at a time.  A second request for the same revision waits here
+        # and then finds the answer ready; one that went stale while waiting is sent away at once.
         with self.advice_lock:
             with self.lock:
-                known = self._known_answer_locked(rev)
-                if known is not None:
-                    return known
-                snapshot = snapshot_of(self.session)
+                known = self._known_answer(rev)
+                if known is None:
+                    snapshot = snapshot_of(self.session)
+            if known is not None:
+                return known
             answer = self._ask_the_coach(snapshot)          # the engine runs here: the session is not locked
             answer["rev"] = rev
             with self.lock:
@@ -180,11 +182,10 @@ class TableApp:
             return answer
 
     def _known_answer(self, rev: int):
-        with self.lock:
-            return self._known_answer_locked(rev)
+        """Stale, or the answer already made for this revision, or ``None``: it has to be worked out.
 
-    def _known_answer_locked(self, rev: int):
-        """Stale, or the answer already made for this revision, or ``None``: it has to be worked out."""
+        Call it with the lock held.
+        """
         if rev != self.session.rev:
             return STALE
         if rev == self._advice_rev:
@@ -292,14 +293,14 @@ class Handler(BaseHTTPRequestHandler):
                 route()
         except BadRequest as err:
             self._send_error(err.status, err.message, err.fix)
-        except ConnectionError:
-            pass                            # the browser closed the connection before the answer
+        except (ConnectionError, TimeoutError):
+            pass                            # the browser closed the connection, or stopped half-way
         except Exception as err:
             print_traceback()               # a fault of the program: worth seeing even without --verbose
             try:
                 self._send_error(500, f"The program failed on this request ({type(err).__name__}: {err}).",
                                  "Reload the page. If it happens again, restart the program.")
-            except ConnectionError:
+            except (ConnectionError, TimeoutError):
                 pass
 
     def _get(self) -> None:
@@ -425,7 +426,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.server.verbose or sys.stderr is None:
             return
         took = f" {(time.perf_counter() - self.started) * 1000:.0f} ms" if self.started else ""
-        sys.stderr.write(f"{time.strftime('%H:%M:%S')} {format % args}{took}\n")
+        line = "".join(ch if ch.isprintable() else "?" for ch in format % args)     # what was sent, made safe to print
+        sys.stderr.write(f"{time.strftime('%H:%M:%S')} {line}{took}\n")
 
 
 class TableServer(ThreadingHTTPServer):

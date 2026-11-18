@@ -9,6 +9,7 @@ All-in or fold:  binary, binary-chart, binary-sheet (a whole tournament on two m
 Spins:           spin, spin-sheet, spin-odds (3-player winner-take-all games)
 Sheet:           tag-sheet (every preflop situation as text, for 6, 7 or 8 players)
 Live reader:     live-setup, live-teach, live, live-test, live-app (play-money tables only: reads the screen, suggests)
+Table app:       app (a page in the browser: you enter the table by hand, the coach answers; study and play money)
 Tools:           equity, range, chart, icm
 """
 
@@ -1164,6 +1165,16 @@ def _live_options(p, setup: bool = False) -> None:
     p.add_argument("--buyin", type=float, help="buy-in")
 
 
+def cmd_app(a) -> int:
+    """The table app: a local page where the table is entered by hand and the coach answers."""
+    from .app.server import main as serve
+
+    try:
+        return serve(port=a.port, open_browser=not a.no_browser, verbose=a.verbose)
+    except OSError as exc:              # no free port
+        return _fail(str(exc))
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="poker_coach", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1458,6 +1469,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--turn-only", action="store_true", help="suggest only if the screenshot shows your action buttons")
     _live_options(p)
     p.set_defaults(fn=cmd_live_test)
+
+    p = sub.add_parser("app", help="table app: enter the table by hand in the browser, the coach answers "
+                                   "(this computer only; nothing reads the screen)")
+    p.add_argument("--port", type=int, default=8765, help="port on this computer (default 8765; the next free one if it is taken)")
+    p.add_argument("--no-browser", action="store_true", help="do not open the browser: only print the address")
+    p.add_argument("--verbose", action="store_true", help="print every request")
+    p.set_defaults(fn=cmd_app)
     return ap
 
 
