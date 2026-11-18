@@ -14,6 +14,10 @@
      MenloUI.closeTopPatch(ui)            The ui patch that closes the topmost open thing (for Esc),
                                           or null when nothing is open.
      MenloUI.format                       The number formats used on the page (for your own toasts).
+     MenloUI.pickerStep(view, picker, step)   One step of picking cards: what a click on the picker sends,
+                                          and what the controller sends for a card key.
+     MenloUI.isCurrent, actingSeat, seatOf, seatClick, spinOver, only, AFTER_ACT, freshPicker, NOTICE
+                                          Small rules shared with the controller.
 
    EVENTS
      document.addEventListener("menlo:event", function (e) { ... e.detail ... })
@@ -69,6 +73,8 @@
      seatMenu     null | seat number      the seat whose menu is open
      menu         null | "table"          the table tools menu
      picker       null | {slot, cards: [], rank: null, rank2: null}    the card picker and how far it is
+     pickerOff    true once the user closed the picker himself: the controller then does not reopen it
+                  by itself until the table asks for other cards
      amount       null | {kind: "bet" | "raise", seat, text}           the amount row is open
      selected     null | index of the selected event on the hand line
      edit         null | "level" | "remaining" | "paid" | "avg_stack"  the strip value being typed
@@ -83,6 +89,7 @@
      view.settings.ladders, .ladder  [{name, label}] and the name in use: the ladder choice in the settings
      view.settings.levels            [[sb, bb, ante], ...]: the ladder in use, shown ready to be edited
      view.settings.size_limits       [low, high]: the smallest and biggest table of this mode
+     view.settings.keys              the key map of defaults.py, {table, seat, type}: the list shown by "?"
      view.strip.payouts              prizes from first place down (a list), shown the way they are typed
      view.strip.game.over            Spin: "won" or "lost" once the game is over: the bar offers a new game
      view.strip.level.due            true: the "+" of the blinds turns yellow and blinks
@@ -139,37 +146,24 @@
     type: ["unknown", "nit", "tight", "tag", "lag", "loose", "station", "maniac"],
   };
 
-  // The key map shown by "?". The keys themselves are wired elsewhere; this is only the list.
-  const KEYS = [
-    [["N"], "New hand, next hand"],
-    [["A", "K", "S"], "Your cards as a class (also A K O, 7 7), or exact: A H K D"],
-    [["Space"], "Do what the coach says"],
-    [["F", "C", "X"], "Fold, call, check"],
-    [["B", "R"], "Bet, raise: type the amount, then Enter"],
-    [["A"], "All-in"],
-    [["1", "9"], "A seat: then a verb records that player (4 R, 4 C, 4 A)"],
-    [["Enter"], "Accept. The rest fold. Skip the board"],
-    [["W", "L"], "You won, you lost. 4 W: seat 4 won. Shift+W: split"],
-    [["Backspace"], "Undo (also Z, Ctrl+Z). Ctrl+Y redoes"],
-    [["E", "Del"], "Edit or delete the selected event; Left and Right walk the hand line"],
-    [["Ctrl", "Backspace"], "Discard the hand"],
-    [["[", "]"], "Dealer button back, forward"],
-    [["{", "}"], "One seat fewer, one more"],
-    [["+", "-"], "Blinds up, down. Shift+B types them, Shift+A changes the ante"],
-    [[",", "."], "Players left minus one, plus one (< and > by ten)"],
-    [["Shift", "S"], "Type every stack, clockwise"],
-    [["I"], "Tournament numbers"],
-    [["G"], "Style"],
-    [["V"], "Chips or big blinds"],
-    [["Y"], "Hand history"],
-    [["Esc"], "Cancel, close"],
-    [["?"], "This list"],
+  // The list shown by "?" is drawn from the key map the server sends (view.settings.keys, written
+  // in defaults.py), so it always says what the keys really do. These rows are the keys that are
+  // not in that map: the seat digits and the card keys.
+  const CARD_KEYS = [
+    [["a k s"], "Your two cards as a class: A K S is ace-king suited. Also A K O (offsuit) and 7 7"],
+    [["a h k d"], "Your two cards exactly: rank, suit, rank, suit. Suits: S spades, H hearts, D diamonds, C clubs"],
+    [["k s 7 d 2 c"], "The flop. The turn and the river: one rank and one suit. T is the ten"],
+    [["h"], "Once the flop is out and your hand was typed as a class: only its suits (H for both cards of A K S, H D for A K O)"],
+    [["Backspace"], "Back one step; with nothing typed: undo"],
+    [["Enter"], "Skip the board (when the action is not on you)"],
+    [["Escape"], "Leave the cards"],
   ];
-  // After a seat digit.
-  const SEAT_KEYS = [
-    [["S"], "Stack"], [["E"], "Name"], [["T"], "Type"], [["M"], "Note"],
-    [["O"], "Sit out, sit back"], [["D"], "Dealer button here"], [["K"], "Bust"], [["Del"], "Clear the seat"],
+  const SEAT_DIGIT_KEYS = [
+    [["1", "9"], "A seat, counted clockwise from you (you are 1): its menu opens, and the next key is for that player. " +
+                 "In All-In or Fold, during a hand, the digit alone is that player's all-in (again takes it back)"],
   ];
+  // How a key of the map is written on a keycap.
+  const KEY_WORDS = {ArrowLeft: "Left", ArrowRight: "Right", Escape: "Esc", Delete: "Del"};
 
   const RANKS = "AKQJT98765432";
   const SUITS = "shdc";
@@ -517,8 +511,9 @@
   // What the slab says when there is nothing to advise: what the table is waiting for.
   function waitingFor(view) {
     const hand = view.hand;
+    const result = hand && hand.result && hand.result.text ? hand.result.text + ". " : "";
     if (spinOver(view) && (!hand || hand.needs === "next")) {
-      return {verb: view.strip.game.over === "won" ? "Game won" : "Game over", text: "Press N for a new game."};
+      return {verb: view.strip.game.over === "won" ? "Game won" : "Game over", text: result + "Press N for a new game."};
     }
     if (!hand) return {verb: "New hand", text: "Press N, then type your two cards: A K S."};
     if (hand.needs === "cards") return {verb: "Your cards", text: "Type your two cards: A K S, or A H K D."};
@@ -528,7 +523,7 @@
       return {verb: count === 3 ? "Turn" : "River", text: "Type the card: T H."};
     }
     if (hand.needs === "result") return {verb: "Who won?", text: "W if you won, L if you lost, or click the winner."};
-    if (hand.needs === "next") return {verb: "Hand over", text: (hand.result && hand.result.text) || "Press N for the next hand."};
+    if (hand.needs === "next") return {verb: "Hand over", text: result + "Press N for the next hand."};
     const seat = seatOf(view, hand.target);
     if (seat && !seat.is_hero) return {verb: "Wait", text: `${seatTitle(seat)} has not acted yet.`};
     return {verb: "Wait", text: ""};
@@ -549,7 +544,10 @@
               size: old ? old.size_text : "", spot: old ? advice.spot : "The coach is working on this spot.", live: false};
     }
     const waiting = waitingFor(view);
-    return {tone: "wait", eyebrow: "Coach", verb: waiting.verb, spot: (fresh && advice.spot) || waiting.text, live: false};
+    // Once the hand is settled the slab says who won what; otherwise the coach's own line on what it waits for.
+    const settled = !!(view.hand && view.hand.needs === "next");
+    const spot = settled ? waiting.text : (fresh && advice.spot) || waiting.text;
+    return {tone: "wait", eyebrow: "Coach", verb: waiting.verb, spot: spot, live: false};
   }
 
   // Long verbs get a smaller size so they stay on the slab.
@@ -824,7 +822,7 @@
 
   function heroPodHtml(view, ui, seat, place, state, words) {
     const cards = heroCardsHtml(view);
-    const pick = view.hand ? emit({ui: only({picker: {slot: "hero", cards: [], rank: null, rank2: null}})}) : emit(seatClick(view, seat));
+    const pick = view.hand ? emit({ui: only({picker: freshPicker("hero")})}) : emit(seatClick(view, seat));
     return `<div class="${state.cls}" style="${place}" data-seat="${seat.seat}">
       <button class="hand" data-arrow tabindex="0" data-fk="hero-cards" aria-label="Your cards: ${esc(cards.words)}. Change"${pick}>${cards.html}</button>
       <button class="info" data-arrow tabindex="-1" data-fk="hero-info" aria-label="${esc(words)}"${emit(seatClick(view, seat))}>
@@ -877,7 +875,7 @@
       {slot: "river", name: "River", cards: board.slice(4, 5), size: 1, wanted: waiting && board.length === 4},
     ];
     const html = list(streets, (street) => {
-      const open = emit({ui: only({picker: {slot: street.slot, cards: [], rank: null, rank2: null}})});
+      const open = emit({ui: only({picker: freshPicker(street.slot)})});
       if (street.cards.length === street.size) {
         return `<button class="street" data-arrow tabindex="-1" data-fk="board-${street.slot}"
           aria-label="${street.name}: ${esc(street.cards.map(cardWords).join(", "))}. Change"${open}>${list(street.cards, (code) => cardHtml(code))}</button>`;
@@ -932,7 +930,7 @@
     const net = last.net ? ` ${plus(last.net, chipsOnlyText(view, last.net))}` : "";
     const cards = isCardRun(last.cards) ? cardsInline(last.cards) : esc(last.cards || "");
     return `<div class="events"><button class="evb" aria-label="Hand ${esc(last.no)}. Open the hand history"${emit({ui: only({sheet: "history"})})}>
-      <span class="ev">Hand ${esc(last.no)} <b>${cards}</b> ${esc(last.pos || "")} <b>${esc(last.did || "")}${esc(net)}</b></span></button></div>`;
+      <span class="ev">Hand ${esc(last.no)} <b>${cards}</b> ${esc(last.pos || "")} <b>${esc(last.did ? didWord(last.did) : "")}${esc(net)}</b></span></button></div>`;
   }
 
   // The amount field with its presets. A preset is a bet of that size in one click.
@@ -944,13 +942,15 @@
     const legal = (forTarget && hand.legal && hand.legal[amount.kind]) || {};
     const typed = amount.text != null ? amount.text : plainAmount(view, legal.default);
     const player = seatOf(view, seat);
-    const who = player && !player.is_hero ? `${seatName(player)}: ` : "";
+    // Whose bet it is stands on the action bar ("Recording"); the field only says what the number is.
+    const who = player && !player.is_hero ? `${seatTitle(player)}: ` : "";
     const label = amount.kind === "bet" ? "Bet" : "Raise to";
     const presets = forTarget ? list(hand.presets, (preset) =>
       `<button type="button" class="preset"${emit({op: "act", seat: seat, kind: amount.kind, to: preset.to, ui: AFTER_ACT})}>${esc(preset.label)}</button>`) : "";
     return `<form class="amount"${emit({op: "act", seat: seat, kind: amount.kind, ui: AFTER_ACT})}>
-      <label class="field"><span class="eyebrow">${esc(who + label)}</span>
-        <input name="to" value="${esc(typed)}" inputmode="decimal" autocomplete="off" spellcheck="false" data-fk="amount" data-autofocus></label>
+      <label class="field"><span class="eyebrow">${esc(label)}</span>
+        <input name="to" value="${esc(typed)}" inputmode="decimal" autocomplete="off" spellcheck="false" data-fk="amount" data-autofocus
+          aria-label="${esc(who + label)}"${forTarget ? "" : ' placeholder="usual size"'}></label>
       <div class="presets">${presets}</div>
       <button type="submit" class="btn compact">OK ${keycap("Enter")}</button>
       <button type="button" class="tool" aria-label="Cancel" title="Cancel"${emit({ui: {amount: null}})}>${icon("close")}</button>
@@ -1000,16 +1000,18 @@
 
   function cardsBar() {
     return barButton({label: "Pick your cards", wide: true, fk: "pick",
-                      send: {ui: only({picker: {slot: "hero", cards: [], rank: null, rank2: null}})}}) +
+                      send: {ui: only({picker: freshPicker("hero"), pickerOff: false})}}) +
            barButton({label: "Discard hand", send: {op: "discard_hand"}});
   }
 
   function boardBar(hand) {
     const count = (hand.board || []).length;
     const slot = count < 3 ? "flop" : count === 3 ? "turn" : "river";
+    // Skipping a street gives everybody still to act a check. While the action is on hero that would
+    // be his check too, so the button waits until he has acted (or is all-in, or out of the hand).
     return barButton({label: `Pick the ${slot}`, wide: true, fk: "pick",
-                      send: {ui: only({picker: {slot: slot, cards: [], rank: null, rank2: null}})}}) +
-           barButton({label: "Skip the board", key: "Enter", send: {op: "close_round"}});
+                      send: {ui: only({picker: freshPicker(slot), pickerOff: false})}}) +
+           barButton({label: "Skip the board", key: "Enter", off: !!hand.target_is_hero, send: {op: "close_round"}});
   }
 
   // Who won. Each player still in gets a button; a side pot asks again for the next best hand.
@@ -1101,9 +1103,10 @@
       const street = ["flop", "turn", "river"].indexOf(event.street) >= 0 ? event.street : ["flop", "turn", "river"][before] || "flop";
       const slot = event.kind === "board" ? street : "hero";
       return aboutBlock("Selected", "Cards") +
-             barButton({label: "Change the cards", wide: true, send: {ui: only({picker: {slot: slot, cards: [], rank: null, rank2: null}})}}) + done;
+             barButton({label: "Change the cards", wide: true, send: {ui: only({picker: freshPicker(slot)})}}) + done;
     }
-    const edit = event.to != null
+    const hasAmount = event.to != null && ["bet", "raise", "call", "allin"].indexOf(event.verb) >= 0;
+    const edit = hasAmount
       ? `<form class="amount"${emit({op: "edit_event", index: event.i, ui: {selected: null}})}>
           <label class="field"><span class="eyebrow">Amount</span>
             <input name="to" value="${esc(plainAmount(view, event.to))}" inputmode="decimal" autocomplete="off" data-fk="event-amount" data-autofocus></label>
@@ -1127,7 +1130,7 @@
 
   function popHead(title, small, closePatch) {
     return `<div class="pop-head"><h2>${esc(title)}${small ? `<small>${esc(small)}</small>` : ""}</h2>
-      <button class="tool" aria-label="Close" title="Close"${emit({ui: closePatch})}>${icon("close")}</button></div>`;
+      <button type="button" class="tool" aria-label="Close" title="Close"${emit({ui: closePatch})}>${icon("close")}</button></div>`;
   }
 
   // A labelled field that sends its text on Enter (or when it is left after a change).
@@ -1223,45 +1226,97 @@
     return keep.concat(hero, picker.cards || []);
   }
 
+  // A picker that has just been opened for a slot: hero, flop, turn or river.
+  function freshPicker(slot) { return {slot: slot, cards: [], rank: null, rank2: null}; }
+  function cardsNeeded(slot) { return slot === "flop" ? 3 : slot === "hero" ? 2 : 1; }
+
+  // Hero's hand when it is known as a class only (AKs, AKo, 77): its suits can then be picked without the ranks.
+  function classToSuit(view, picker) {
+    const hand = view.hand;
+    if (picker.slot !== "hero" || !hand || !hand.hero_class || (hand.hero_cards || []).length === 2) return "";
+    return hand.hero_class;
+  }
+
+  /* One step of picking cards. A click on the picker and a key on the keyboard both come here.
+       step: {rank: "A"} | {suit: "h"} | {mark: "s" | "o"} (suited, offsuit) | {back: true}
+     Returns the event to send: a ui patch with the picker as it is after the step, or the set_cards
+     intent when the slot is full. Returns null when the step makes no sense at this point. */
+  function pickerStep(view, picker, step) {
+    const slot = picker.slot;
+    const cards = picker.cards || [];
+    const used = cardsInUse(view, picker);
+    const state = (next) => ({ui: {picker: Object.assign(freshPicker(slot), {cards: cards}, next)}});
+    const done = (text) => ({op: "set_cards", slot: slot, text: text, ui: {picker: null, selected: null}});
+
+    if (step.back) {
+      if (picker.rank2) return state({rank: picker.rank});
+      if (picker.rank) return state({});
+      return cards.length ? state({cards: cards.slice(0, -1)}) : null;
+    }
+    if (step.rank) {
+      const rank = step.rank;
+      if (picker.rank2) return null;                              // two ranks are in: only suited or offsuit is left
+      if (SUITS.split("").every((suit) => used.indexOf(rank + suit) >= 0)) return null;     // all four are on the table
+      // Hero's hand as a class: a second rank straight after the first. A pair is complete, anything else waits for suited or offsuit.
+      if (slot === "hero" && cards.length === 0 && picker.rank) {
+        return rank === picker.rank ? done(rank + rank) : state({rank: picker.rank, rank2: rank});
+      }
+      return state({rank: rank});
+    }
+    if (step.mark) {
+      if (!picker.rank || !picker.rank2) return null;
+      // The higher rank is written first: K then A is still AKs.
+      const pair = [picker.rank, picker.rank2].sort((a, b) => RANKS.indexOf(a) - RANKS.indexOf(b)).join("");
+      return done(pair + step.mark);
+    }
+    if (step.suit) {
+      if (picker.rank2) return null;
+      let rank = picker.rank;
+      const cls = classToSuit(view, picker);
+      if (!rank && cls) {
+        // The ranks are known from the class: a suit alone is enough. A suited hand takes one suit for both cards.
+        if (cls[2] === "s" && cards.length === 0) {
+          const both = [cls[0] + step.suit, cls[1] + step.suit];
+          return both.some((card) => used.indexOf(card) >= 0) ? null : done(both.join(""));
+        }
+        rank = cls[cards.length];
+      }
+      if (!rank) return null;
+      const card = rank + step.suit;
+      if (used.indexOf(card) >= 0) return null;                   // a deck has one of each
+      const picked = cards.concat([card]);
+      return picked.length === cardsNeeded(slot) ? done(picked.join("")) : state({cards: picked});
+    }
+    return null;
+  }
+
   // Rank, then suit, as on the keyboard. For hero's hand two ranks and "suited" or "offsuit" also do (A K S).
   function pickerHtml(view, picker) {
     const slot = picker.slot;
-    const need = slot === "flop" ? 3 : slot === "hero" ? 2 : 1;
+    const need = cardsNeeded(slot);
     const cards = picker.cards || [];
-    const used = cardsInUse(view, picker);
-    const state = (next) => ({ui: {picker: Object.assign({slot: slot, cards: cards, rank: null, rank2: null}, next)}});
-    const done = (text) => ({op: "set_cards", slot: slot, text: text, ui: {picker: null}});
-    const classOpen = slot === "hero" && cards.length === 0;      // a class needs both ranks before any suit
+    const step = (what) => pickerStep(view, picker, what);
 
     const ranks = list(RANKS.split(""), (rank) => {
-      let send = state({rank: rank});
-      if (classOpen && picker.rank && !picker.rank2) {
-        // A second rank straight after the first: a pair is complete, anything else waits for suited or offsuit.
-        send = rank === picker.rank ? done(rank + rank) : state({rank: picker.rank, rank2: rank});
-      }
-      const gone = SUITS.split("").every((suit) => used.indexOf(rank + suit) >= 0);
+      const send = step({rank: rank});
       const on = rank === picker.rank || rank === picker.rank2;
       const next = !picker.rank && rank === "A" ? " data-autofocus" : "";
       return `<button type="button" class="pick${on ? " on" : ""}" data-fk="rank-${rank}" aria-label="${RANK_WORD[rank]}" aria-pressed="${on}"` +
-             `${gone || picker.rank2 ? " disabled" : ""}${next}${emit(send)}>${rankText(rank)}</button>`;
+             `${send ? "" : " disabled"}${next}${emit(send || {})}>${rankText(rank)}</button>`;
     });
 
     const suits = list(SUITS.split(""), (suit) => {
-      const card = (picker.rank || "") + suit;
-      const off = !picker.rank || !!picker.rank2 || used.indexOf(card) >= 0;
-      const picked = cards.concat([card]);
-      const send = picked.length === need ? done(picked.join("")) : state({cards: picked});
+      const send = step({suit: suit});
       const next = picker.rank && !picker.rank2 ? " data-autofocus" : "";
-      return `<button type="button" class="pick" data-fk="suit-${suit}" aria-label="${SUIT_WORD[suit]}"${off ? " disabled" : ""}${next}${emit(off ? {} : send)}>${suitSvg(suit)}</button>`;
+      return `<button type="button" class="pick" data-fk="suit-${suit}" aria-label="${SUIT_WORD[suit]}"${send ? "" : " disabled"}${next}${emit(send || {})}>${suitSvg(suit)}</button>`;
     });
 
     let classButtons = "";
     if (slot === "hero") {
-      const two = picker.rank && picker.rank2;
-      // The higher rank is written first: K then A is still AKs.
-      const pair = two ? [picker.rank, picker.rank2].sort((a, b) => RANKS.indexOf(a) - RANKS.indexOf(b)).join("") : "";
-      classButtons = ["s", "o"].map((mark) =>
-        `<button type="button" class="pick word" data-fk="class-${mark}"${two ? " data-autofocus" : " disabled"}${emit(two ? done(pair + mark) : {})}>${mark === "s" ? "Suited" : "Offsuit"}</button>`).join("");
+      classButtons = ["s", "o"].map((mark) => {
+        const send = step({mark: mark});
+        return `<button type="button" class="pick word" data-fk="class-${mark}"${send ? " data-autofocus" : " disabled"}${emit(send || {})}>${mark === "s" ? "Suited" : "Offsuit"}</button>`;
+      }).join("");
     }
 
     // The slots at the top show how far the pick is.
@@ -1271,13 +1326,21 @@
     if (picker.rank2) { shown += rankCardHtml(picker.rank2, "", false); filled += 1; }
     for (let i = filled; i < need; i++) shown += slotHtml(i === filled, false);
 
+    // A hand typed as a class needs its suits once the flop is out: say which keys do it.
+    const cls = classToSuit(view, picker);
+    let hint = "";
+    if (cls && !picker.rank && view.hand.needs === "cards") {
+      const ask = cls[2] === "s" ? `the suit of your ${cls}` : `the suit of the ${rankText(cls[0])}, then of the ${cards.length ? "other " : ""}${rankText(cls[1])}`;
+      hint = `<p class="hint">After the flop the coach needs your exact cards: pick ${esc(ask)} (or both cards again).</p>`;
+    }
+
     const title = {hero: "Your cards", flop: "Flop", turn: "Turn", river: "River"}[slot];
-    const back = picker.rank2 ? state({rank: picker.rank}) : picker.rank ? state({}) : state({cards: cards.slice(0, -1)});
-    const canBack = picker.rank || cards.length;
+    const back = step({back: true});
     return `<div class="pop picker" role="dialog" aria-label="${title}: pick a rank, then a suit">
       <div class="pop-head"><h2>${title}</h2><div class="slots" aria-hidden="true">${shown}</div>
-        <div class="pop-tools"><button class="tool" aria-label="Back one step" title="Back one step"${canBack ? "" : " disabled"}${emit(back)}>${icon("undo")}</button>
-        <button class="tool" aria-label="Close" title="Close"${emit({ui: {picker: null}})}>${icon("close")}</button></div></div>
+        <div class="pop-tools"><button class="tool" aria-label="Back one step" title="Back one step"${back ? "" : " disabled"}${emit(back || {})}>${icon("undo")}</button>
+        <button class="tool" aria-label="Close" title="Close"${emit({ui: {picker: null, pickerOff: true}})}>${icon("close")}</button></div></div>
+      ${hint}
       <div class="ranks">${ranks}</div>
       <div class="suits${slot === "hero" ? " with-class" : ""}">${suits}${classButtons}</div>
     </div>`;
@@ -1408,11 +1471,31 @@
     return html;
   }
 
-  function keysBody() {
-    const rows = (keys) => list(keys, (row) => `<dt>${list(row[0], keycap)}</dt><dd>${esc(row[1])}</dd>`);
-    return section("At the table", `<dl class="keys">${rows(KEYS)}</dl>`) +
-           section("After a seat number", `<dl class="keys">${rows(SEAT_KEYS)}</dl>`);
+  // One key of the map as keycaps: "Ctrl+Backspace" is two caps, "a k s" three keys typed one after the other.
+  function comboHtml(name) {
+    const caps = name.length > 1 && name.indexOf("+") > 0 ? name.split("+") : name.split(" ");
+    return `<span class="combo">${list(caps, (cap) => keycap(KEY_WORDS[cap] || cap))}</span>`;
   }
+  function keyRows(rows) {
+    return `<dl class="keys">` + list(rows, (row) => {
+      // A row of the server's key map is {keys, do, text}; the fixed rows above are [keys, text].
+      const keys = Array.isArray(row) ? row[0] : row.keys;
+      const text = Array.isArray(row) ? row[1] : row.text;
+      return `<dt>${list(keys, comboHtml)}</dt><dd>${esc(text)}</dd>`;
+    }) + `</dl>`;
+  }
+  // The key map that came with the last view; it is kept so the list also shows on the first-run screen.
+  let keyMap = null;
+  function keysBody() {
+    const map = keyMap || {};
+    return section("At the table", keyRows(map.table || [])) +
+           section("Cards (while the card picker is open)", keyRows(CARD_KEYS)) +
+           section("After a seat number", keyRows(SEAT_DIGIT_KEYS.concat(map.seat || []))) +
+           (map.type ? section("Player types (seat number, T, then)", keyRows(map.type)) : "");
+  }
+
+  // What hero did, as a word: the server writes "allin".
+  function didWord(did) { return did === "allin" ? "all-in" : did || "none"; }
 
   function historyBody(view) {
     const hands = view.history || [];
@@ -1422,7 +1505,7 @@
       const look = hand.net > 0 ? " win" : hand.net < 0 ? " loss" : "";
       const net = hand.net ? plus(hand.net, chipsOnlyText(view, hand.net)) : "0";
       return `<div class="hrow"><span class="num">${esc(hand.no)}</span><b>${cards}</b><span>${esc(hand.pos || "")}</span>
-        <span>${hand.skipped ? "not recorded" : `coach <b>${esc(hand.advice || "none")}</b>, you <b>${esc(hand.did || "none")}</b>`}${hand.deviated ? '<span class="pill near">deviated</span>' : ""}</span>
+        <span>${hand.skipped ? "not recorded" : `coach <b>${esc(hand.advice || "none")}</b>, you <b>${esc(didWord(hand.did))}</b>`}${hand.deviated ? ' <span class="pill near">deviated</span>' : ""}</span>
         <span class="num${look}">${net}</span></div>`;
     });
     const text = hands.map((hand) => hand.text || "").join("\n");
@@ -1436,8 +1519,8 @@
     const fields = list(seats, (seat, at) =>
       `<label class="field"><span class="eyebrow">${esc(seat.seat + " " + seatTitle(seat))}</span>
         <input name="${seat.seat}" value="${esc(plainAmount(view, seat.stack))}" autocomplete="off" data-fk="sweep-${seat.seat}"${at === 0 ? " data-autofocus" : ""}></label>`);
-    return `<form class="stacked"${emit({op: "set_stacks", ui: {sheet: null}})} data-into="stacks">
-      <p class="hint">Type what you see: 12.5k, 25bb, +3k. Blank keeps a stack, a minus sign empties the seat.</p>
+    return `<form class="stacked"${emit({op: "set_stacks", ui: {sheet: null}})} data-into="stacks" data-changed-only>
+      <p class="hint">Type what you see: 12.5k, 25bb, +3k. A stack you leave as it is stays as it is (a ~ stays unsure); a minus sign empties the seat. Enter goes to the next seat and saves after the last.</p>
       <div class="cols">${fields}</div>
       <div class="buttons"><button type="submit" class="btn compact">Save ${keycap("Enter")}</button></div>
     </form>`;
@@ -1559,7 +1642,7 @@
   function closeTopPatch(ui) {
     ui = ui || {};
     if (ui.sheet) return {sheet: null};
-    if (ui.picker) return {picker: null};
+    if (ui.picker) return {picker: null, pickerOff: true};
     if (ui.seatMenu != null) return {seatMenu: null, target: null};
     if (ui.menu) return {menu: null};
     if (ui.amount) return {amount: null};
@@ -1572,6 +1655,7 @@
   function render(view, advice, ui) {
     ui = ui || {};
     const setup = view && view.setup;                         // the server's own defaults for the first form, if any
+    if (view && view.settings && view.settings.keys) keyMap = view.settings.keys;
     const mode = (view && view.mode) || ui.setupMode || "tournament";
     if (view && (!view.table || view.first_run)) view = null; // nothing recorded yet: the first-run form
     const app = document.getElementById("app");
@@ -1685,10 +1769,14 @@
     event.preventDefault();
     const detail = readEmit(form);
     const into = form.dataset.into ? (detail[form.dataset.into] = {}) : detail;
+    const changedOnly = form.dataset.changedOnly != null;      // the stack sweep: a stack left as it was is not sent
     for (let i = 0; i < form.elements.length; i++) {
       const field = form.elements[i];
-      if (field.name) into[field.name] = field.type === "checkbox" ? field.checked : field.value;
+      if (!field.name) continue;
+      if (changedOnly && field.value === field.defaultValue) continue;
+      into[field.name] = field.type === "checkbox" ? field.checked : field.value;
     }
+    if (changedOnly && !Object.keys(into).length) delete detail.op;    // nothing was typed: only close the sheet
     send(detail, form);
   }
 
@@ -1748,5 +1836,16 @@
     format: {chips: fmtChips, short: fmtShort, stack: fmtStack, bb: fmtBb},
     SLOTS: SLOTS,
     CHOICES: CHOICES,
+    // For the controller (controller.js): the same small rules the buttons use, so a key and a click do the same thing.
+    pickerStep: pickerStep,
+    freshPicker: freshPicker,
+    isCurrent: isCurrent,
+    actingSeat: actingSeat,
+    seatOf: seatOf,
+    spinOver: spinOver,
+    seatClick: seatClick,
+    only: only,
+    AFTER_ACT: AFTER_ACT,
+    NOTICE: NOTICE,
   };
 })();

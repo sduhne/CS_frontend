@@ -8,7 +8,8 @@ It serves the page and the three addresses the page talks to:
     GET  /api/view           everything the page draws (``model.Session.view``)
     POST /api/intent         one change as JSON, such as {"op": "deal"}.  The answer is
                              {"view": ...}, or {"error": {"message", "fix"}, "view": ...} when the
-                             change is refused (status 200 both times: the page shows the message)
+                             change is refused (status 200 both times: the page shows the message).
+                             A body that is not JSON is a 400
     GET  /api/advice?rev=N   the coach's answer for revision N of the view, or {"status": "stale"}
                              when the table has changed since.  Without rev: the current revision
 
@@ -23,8 +24,9 @@ The rules it keeps:
   cannot be loaded, or it fails, the answer is {"status": "none"} with the error text, and the
   table goes on working.
 
-The model saves the session after every accepted change, in ``tournament/app/`` (the packaged
-program: ``~/PokerCoach/app/``).  Standard library only.
+One ``model.Session`` holds the three modes, each in its own file (tournament.json, spin.json,
+aof.json) beside app.json.  The model saves after every accepted change, in ``tournament/app/``
+(the packaged program: ``~/PokerCoach/app/``).  Standard library only.
 """
 
 from __future__ import annotations
@@ -60,6 +62,7 @@ CONTENT_TYPES = {
     ".woff2": "font/woff2",
     ".svg": "image/svg+xml",
     ".png": "image/png",
+    ".ico": "image/x-icon",
     ".txt": "text/plain; charset=utf-8",
 }
 JSON_TYPE = "application/json"
@@ -70,10 +73,15 @@ TEXT_TYPE = "text/plain; charset=utf-8"
 PAGE_POLICY = ("default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; "
                "base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
 
-# The adapter's function that answers a session.  The first of these names found in advice.py is used.
-ADAPTER_FUNCTIONS = ("advise", "advice_for", "advise_session")
+# The adapter's function that answers a session: ``f(session) -> dict`` in the shape of the
+# build spec, section 7.  The first of these names found in advice.py is used.
+ADAPTER_FUNCTIONS = ("advise", "advice_for", "advise_session", "get_advice")
 
 STALE = {"status": "stale"}
+
+# A warning with this code says the answer is provisional: charts it needs are still being worked
+# out in the background.  Such an answer is not kept, so asking again gets the real one.
+PROVISIONAL = "charts_loading"
 
 
 # ==========================================================================
@@ -108,15 +116,15 @@ def snapshot_of(session: Session) -> Session:
 def coach_unavailable(err: Exception) -> dict:
     """What the page gets when the adapter cannot answer: nothing to advise, and why."""
     text = f"{type(err).__name__}: {err}"
-    return {"status": "none", "spot": "The coach could not answer: " + text, "error": text}
+    return {"status": "none", "spot": "The coach could not answer (" + text + ").", "error": text}
 
 
 # ==========================================================================
-# 2. The app: one session, its lock, and the answer for the revision on screen
+# 2. The app: the session, its lock, and the answer for the revision on screen
 # ==========================================================================
 
 class TableApp:
-    """What the server serves.  The three methods are the three ``/api`` addresses.
+    """What the server serves.  ``view``, ``intent`` and ``advice`` are the three ``/api`` addresses.
 
     ``folder`` is where the session files are (tests pass a temporary one), ``static`` the
     folder of the page, ``coach`` a function ``f(session) -> dict`` to use instead of the
@@ -124,9 +132,7 @@ class TableApp:
     """
 
     def __init__(self, folder: str | None = None, static: str | None = None, coach=None, verbose: bool = False):
-        # One model.Session holds all three modes: each mode has its own file in the folder,
-        # and the session keeps the table of the mode on screen.
-        self.session = Session(folder)
+        self.session = Session(folder)          # reads the saved files; a missing one is a fresh table
         self.lock = threading.Lock()            # guards the session; held only for quick work, never for the engine
         self.advice_lock = threading.Lock()     # one answer is worked out at a time
         self.static = static or STATIC_FOLDER
@@ -134,6 +140,9 @@ class TableApp:
         self.verbose = verbose
         self._advice_rev = None                 # the revision the kept answer belongs to
         self._advice = None
+        self._warmed = set()                    # table sizes whose all-in charts were already asked for
+
+    # ---- the table ---------------------------------------------------------------------
 
     def view(self) -> dict:
         with self.lock:
@@ -147,15 +156,56 @@ class TableApp:
         """Carry out one change.  A refused change leaves everything as it was and says why."""
         with self.lock:
             try:
-                return {"view": self.session.apply(intent)}
+                view = self.session.apply(intent)
+                self._warm_the_coach(view)
+                return {"view": view}
             except ModelError as err:
-                return {"error": {"message": err.message, "fix": err.fix}, "view": self.session.view()}
+                return self._refused(err.message, err.fix, err.code)
             except OSError as err:
                 # The session file could not be written (on Windows another program may hold it
                 # for a moment).  The page gets the table as it stands; the next change saves again.
-                return {"error": {"message": f"The session could not be saved ({err}).",
-                                  "fix": f"Check that {self.session.folder} can be written."},
-                        "view": self.session.view()}
+                return self._refused(f"The session could not be saved ({err}).",
+                                     f"Check that {self.session.folder} can be written.")
+            except Exception as err:
+                # A fault in the program, not in what was typed.  The session in memory may be
+                # half changed, so it is read again from the files: they hold the table as it
+                # was after the last accepted change.
+                print_traceback()
+                self._read_saved_session()
+                return self._refused(f"The program failed on that change ({type(err).__name__}: {err}).",
+                                     "Nothing was changed. Try it another way.")
+
+    def _warm_the_coach(self, view: dict) -> None:
+        """The all-in or fold plan reads charts that take seconds to work out the first time.
+
+        They are started on (in a thread of the adapter's own) as soon as that plan is chosen,
+        so they are ready long before the first spot that needs them.
+        """
+        if self.coach is not None or view["mode"] != "tournament" or view["strip"]["plan"] != "allin":
+            return
+        players = sum(1 for seat in view["table"]["seats"] if not seat["empty"])
+        try:
+            from . import advice as adapter
+            size = adapter.table_players(players)       # the charts exist for a few table sizes
+            if size not in self._warmed:
+                self._warmed.add(size)
+                adapter.bubble_sheet(size)              # returns at once: the work goes on behind
+        except Exception:                               # no adapter, or an older one: nothing to warm
+            if self.verbose:
+                print_traceback()
+
+    def _refused(self, message: str, fix: str, code: str = "") -> dict:
+        """``code`` names the few refusals the page reacts to (see ``model.ModelError``); most have none."""
+        error = {"message": message, "fix": fix}
+        if code:
+            error["code"] = code
+        return {"error": error, "view": self.session.view()}
+
+    def _read_saved_session(self) -> None:
+        self.session = Session(self.session.folder)
+        self._advice_rev = self._advice = None
+
+    # ---- the coach ---------------------------------------------------------------------
 
     def advice(self, rev: int) -> dict:
         """The coach's answer for revision ``rev``, or ``{"status": "stale"}`` when the table has moved on."""
@@ -177,7 +227,8 @@ class TableApp:
             with self.lock:
                 if rev != self.session.rev:
                     return STALE                            # the table changed while the engine was thinking
-                self._advice_rev, self._advice = rev, answer
+                if not is_provisional(answer):
+                    self._advice_rev, self._advice = rev, answer
                 self._keep_for_history(rev, answer)
             return answer
 
@@ -200,22 +251,33 @@ class TableApp:
             if not isinstance(answer, dict):
                 raise TypeError(f"the adapter returned {type(answer).__name__}, not a dict")
             json.dumps(answer, allow_nan=False)             # it must be something the page can read
-            return answer
+            return dict(answer)
         except Exception as err:                            # whatever went wrong, the table goes on working
             if self.verbose:
                 print_traceback()
             return coach_unavailable(err)
 
     def _keep_for_history(self, rev: int, answer: dict) -> None:
-        """Tell the session what the coach showed, so the hand history can say "deviated"."""
-        headline = answer.get("headline") or {}
-        if answer.get("status") != "ready" or not headline.get("verb") or headline.get("tone") == "wait":
+        """Tell the session what the coach showed, so the hand history can say "deviated".
+
+        Call it with the lock held.
+        """
+        headline = answer.get("headline")
+        if answer.get("status") != "ready" or not isinstance(headline, dict):
+            return
+        if not headline.get("verb") or headline.get("tone") == "wait":
             return                                          # nothing was advised
         try:
             self.session.record_advice(rev, headline["verb"], headline.get("follow"))
         except Exception:                                   # the answer still goes to the page
             if self.verbose:
                 print_traceback()
+
+
+def is_provisional(answer: dict) -> bool:
+    """An answer made while charts it needs were still being worked out (see ``PROVISIONAL``)."""
+    warnings = answer.get("warnings")
+    return isinstance(warnings, list) and any(isinstance(w, dict) and w.get("code") == PROVISIONAL for w in warnings)
 
 
 def print_traceback() -> None:
@@ -231,8 +293,8 @@ def find_static_file(root: str, url_path: str):
     """The file under ``root`` that a URL path names, or ``None``.
 
     Every part of the path must be the exact name of something that really is in the folder.
-    A directory listing never contains "..", so a path cannot climb out of ``root``; a folder
-    is not a file, so nothing is ever listed.
+    A directory listing never contains "..", a drive letter or a name with a slash in it, so a
+    path cannot climb out of ``root``; a folder is not a file, so nothing is ever listed.
     """
     parts = [part for part in url_path.split("/") if part] or ["index.html"]
     folder = root
@@ -263,7 +325,14 @@ class BadRequest(Exception):
         self.status, self.message, self.fix = status, message, fix
 
 
+def refuse_constant(name: str):
+    """NaN and Infinity are not JSON, and no chip count is either of them."""
+    raise ValueError(f"{name} is not a number the table can use")
+
+
 class Handler(BaseHTTPRequestHandler):
+    """One request, one answer, and the connection is closed (HTTP/1.0: on this computer that costs nothing)."""
+
     server_version = "MenloCoach"
     sys_version = ""
     timeout = IDLE_SECONDS
@@ -321,7 +390,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         url = urlsplit(self.path)
         if url.path != "/api/intent":
-            raise BadRequest(404 if url.path not in ("/api/view", "/api/advice") else 405,
+            raise BadRequest(405 if url.path in ("/api/view", "/api/advice") else 404,
                              f"Nothing can be sent to {url.path}.", "Changes go to /api/intent.")
         self._send_json(200, self.app.intent(self._json_body()))
 
@@ -378,9 +447,10 @@ class Handler(BaseHTTPRequestHandler):
             raise BadRequest(400, "The request does not say how long it is.", fix)
         if length > MAX_BODY:
             raise BadRequest(413, "The request is too big.", fix)
+        body = self.rfile.read(length)
         try:
-            return json.loads(self.rfile.read(length).decode("utf-8"))
-        except ValueError:                  # not UTF-8, or not JSON
+            return json.loads(body.decode("utf-8"), parse_constant=refuse_constant)
+        except (ValueError, RecursionError):    # not UTF-8, not JSON, or brackets nested a thousand deep
             raise BadRequest(400, "The request is not JSON.", fix) from None
 
     # ---- answering --------------------------------------------------------------------------
@@ -430,6 +500,10 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write(f"{time.strftime('%H:%M:%S')} {line}{took}\n")
 
 
+# ==========================================================================
+# 5. Starting and stopping
+# ==========================================================================
+
 class TableServer(ThreadingHTTPServer):
     """The HTTP server: a thread per request, this computer only."""
 
@@ -437,6 +511,7 @@ class TableServer(ThreadingHTTPServer):
     # "Reuse address" lets the program restart at once on the same port.  On Windows it would
     # also let two programs listen on one port, so there it stays off.
     allow_reuse_address = os.name != "nt"
+    request_queue_size = 32                 # a page asks for its dozen files at once; none of them should wait at the door
 
     def __init__(self, port: int, app: TableApp, verbose: bool = False):
         self.app = app
@@ -464,13 +539,14 @@ def start_server(port: int = DEFAULT_PORT, folder: str | None = None, verbose: b
     if not 0 <= port <= 65535:
         raise ValueError(f"the port must be between 0 and 65535, not {port}")
     app = TableApp(folder, static, coach, verbose)
+    last = port if port == 0 else min(port + PORT_TRIES - 1, 65535)
     problem = None
-    for candidate in range(port, min(port + PORT_TRIES, 65536)):
+    for candidate in range(port, last + 1):
         try:
             return TableServer(candidate, app, verbose)
         except OSError as err:
             problem = err                   # taken, or not allowed: try the next one
-    raise OSError(f"no free port from {port} to {min(port + PORT_TRIES, 65536) - 1} ({problem})")
+    raise OSError(f"no free port from {port} to {last} ({problem})")
 
 
 def main(port: int = DEFAULT_PORT, open_browser: bool = True, verbose: bool = False,
@@ -478,8 +554,8 @@ def main(port: int = DEFAULT_PORT, open_browser: bool = True, verbose: bool = Fa
     """Start the table app and serve it until Ctrl+C."""
     server = start_server(port, folder, verbose)
     address = f"http://127.0.0.1:{server.server_port}/"
-    moved = f" (port {port} was taken)" if port and server.server_port != port else ""
-    print(f"Menlo Coach is running at {address}{moved}. Ctrl+C stops it.", flush=True)
+    moved = f"port {port} was taken; " if port and server.server_port != port else ""
+    print(f"Menlo Coach is running at {address}  ({moved}Ctrl+C stops it)", flush=True)
     if open_browser:
         # in a thread of its own: some systems take a moment to hand the address to the browser
         threading.Thread(target=webbrowser.open, args=(address,), daemon=True).start()

@@ -310,7 +310,7 @@ button.pod:hover{border-color:var(--grey)}
 
 /* The amount row takes the hand line's place while a bet or raise is typed. */
 .amount{display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:44px}
-.amount .field{width:140px;flex:none}
+.amount .field{width:170px;flex:none}
 .amount .btn kbd{display:none}
 .actions .amount{flex:0 1 auto}
 .presets{display:flex;gap:6px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;padding:3px;margin:-3px}
@@ -342,7 +342,8 @@ button.pod:hover{border-color:var(--grey)}
 .actions .about .who{font:800 16px/1.1 var(--display);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ---------- 11. Menus and sheets ---------- */
-.pop{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;width:min(400px,calc(100% - 12px));
+/* A menu lies over the middle of the table, a little above it, so hero's cards stay in sight below. */
+.pop{position:absolute;left:50%;top:calc(50% - var(--hero-h)/3);transform:translate(-50%,-50%);z-index:6;width:min(400px,calc(100% - 12px));
   background:var(--panel);border:1px solid var(--line-strong);border-radius:14px;box-shadow:0 0 0 4px var(--ink);
   padding:8px 10px 10px;display:flex;flex-direction:column;gap:8px}
 .pop-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:36px}
@@ -360,6 +361,7 @@ button.pod:hover{border-color:var(--grey)}
 .menu-count .num{font-size:20px;color:var(--white)}
 .pop-tools{display:flex;margin:-4px -6px -4px 0}
 .pop-tools .tool{margin:0}
+.pop .hint{font-size:12px;color:var(--soft)}
 /* The card picker: rank, then suit, as on the keyboard. */
 .picker .slots{display:flex;gap:4px;align-items:center}
 .picker .slots .card{--card-w:26px;--card-h:36px}
@@ -388,11 +390,12 @@ button.pod:hover{border-color:var(--grey)}
 .cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .choice{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
 .choice > span{font-size:14px;color:var(--soft)}
-.choice .tabs{flex-wrap:wrap;border-radius:22px}
+.choice .tabs{flex:0 1 auto;min-width:0;flex-wrap:wrap;justify-content:flex-end;border-radius:22px}
 .buttons{display:flex;flex-wrap:wrap;gap:8px}
 
 .keys{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 14px;align-items:center}
-.keys dt{display:flex;gap:4px;flex-wrap:wrap}
+.keys dt{display:flex;gap:4px 10px;flex-wrap:wrap;max-width:190px}
+.keys .combo{display:inline-flex;gap:3px}
 .keys dd{margin:0;font-size:13px;color:var(--soft)}
 .history{display:flex;flex-direction:column}
 .history .hrow{display:grid;grid-template-columns:44px 64px 56px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:40px;border-bottom:1px solid var(--line);font-size:13px;color:var(--soft)}
@@ -494,11 +497,13 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .sheet.side{left:auto;right:16px;transform:none;width:440px;bottom:12px}
 }
 @media (min-width:1280px){
-  /* The table gives up height on a short window (a laptop at 1366 x 768) so the action bar stays in sight. */
-  :root{--gut:24px;--gap:16px;--table-h:clamp(404px,calc(100vh - 206px),460px);--table-h-aof:380px;
+  /* The table takes the height the window has, up to 600: it gives height up on a short window
+     (a laptop at 1366 x 768) so the action bar stays in sight. A small table (2 to 4 seats) stops at 460. */
+  :root{--gut:24px;--gap:16px;--table-h:clamp(404px,calc(100vh - 206px),600px);--table-h-aof:380px;
     --pod-w:152px;--pod-h:80px;--hero-w:280px;--hero-h:104px;--pos:26px;--stack:22px;
     --card-w:56px;--card-h:78px;--hcard-w:64px;--hcard-h:88px;--chip-h:28px;--chip-f:16px;--deal:24px;
     --verb:104px;--size:36px;--pot:32px}
+  .table:not(.aof)[data-size="2"],.table:not(.aof)[data-size="3"],.table:not(.aof)[data-size="4"]{height:min(var(--table-h),460px)}
   .app{grid-template-columns:minmax(0,1fr) 440px;column-gap:24px}
   .header{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"bar strip tools";column-gap:24px}
   .bar{height:64px;gap:20px}

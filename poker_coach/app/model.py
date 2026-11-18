@@ -52,9 +52,9 @@ Intents and their arguments (text is always parsed here, never in the browser):
     undo, redo
 
 The view is the shape in the build spec, with a few additions the screens
-need: ``first_run``, ``settings`` (ladders, the levels, the notice flag),
+need: ``first_run``, ``settings`` (ladders, the levels, the notice flag, the key map),
 ``strip.name``, ``strip.payouts``, ``strip.pace``, ``strip.game`` (Spin),
-``hand.street_bet``, ``hand.shown``, and on a hand-line item ``street``,
+``hand.street_bet``, ``hand.shown``, ``hand.before_target``, and on a hand-line item ``street``,
 ``event``, ``allin``; a seat's ``status`` can also read ``busted`` or ``empty``.
 
 For the advice adapter: ``Session.engine_state()`` (the dict
@@ -103,12 +103,17 @@ PLAN_NAMES = {"full": "full", "allin": "allin", "all-in": "allin", "aof": "allin
 
 
 class ModelError(Exception):
-    """An intent that cannot be carried out.  ``message`` says why, ``fix`` what to do instead."""
+    """An intent that cannot be carried out.  ``message`` says why, ``fix`` what to do instead.
 
-    def __init__(self, message: str, fix: str = ""):
+    ``code`` is a word for the page where it has to react to one refusal in
+    particular ("side_pot": a pot still needs a winner); most have none.
+    """
+
+    def __init__(self, message: str, fix: str = "", code: str = ""):
         super().__init__(message)
         self.message = message
         self.fix = fix
+        self.code = code
 
 
 class _NoTurn(Exception):
@@ -497,7 +502,7 @@ class HandState:
                     who = " and ".join(f"{self.labels[s]} (seat {s})" for s in pot["eligible"])
                     name = "main pot" if number == 0 else "side pot"
                     raise ModelError(f"Who wins the {name} of {fmt(pot['amount'])} between {who}?",
-                                     "Name the best hand among them as well.")
+                                     "Name the best hand among them as well.", code="side_pot")
                 winners = pot["eligible"]               # only one player can win it
             pot["winners"] = winners
         # Split pots: equal shares; odd chips go one each clockwise from the button's left.
@@ -583,7 +588,13 @@ def imply_until(state: HandState, seat: int) -> list[dict]:
 # ==========================================================================
 
 def default_folder() -> str:
-    """Where sessions are saved: ``tournament/app/`` here, ``~/PokerCoach/app/`` for the packaged program."""
+    """Where sessions are saved: ``tournament/app/`` here, ``~/PokerCoach/app/`` for the packaged program.
+
+    ``$POKER_COACH_APP`` names another folder (a second copy of the program, or a trial run
+    that must not touch the real sessions), as ``$POKER_COACH_STATE`` does for the command line.
+    """
+    if os.environ.get("POKER_COACH_APP"):
+        return os.environ["POKER_COACH_APP"]
     if getattr(sys, "frozen", False):
         return os.path.join(S.ROOT, "app")
     return os.path.join(S.ROOT, "tournament", "app")
@@ -837,8 +848,9 @@ class Session:
             undoable = handler(intent) is not False     # a handler returns False when there is nothing to undo
         except (ModelError, AmountError) as err:
             self._put_back(app_before, before, journal_before)
-            raise ModelError(err.message, err.fix) from None
-        except (KeyError, TypeError, ValueError, IndexError, AttributeError) as err:
+            raise ModelError(err.message, err.fix, getattr(err, "code", "")) from None
+        except (KeyError, TypeError, ValueError, IndexError, AttributeError, OverflowError) as err:
+            # OverflowError: a number too big to be a chip count, such as a stack typed as 1e999
             self._put_back(app_before, before, journal_before)
             raise ModelError(f"That request could not be read ({type(err).__name__}: {err}).",
                              "Check its arguments against the list at the top of model.py.") from None
@@ -2263,9 +2275,10 @@ class Session:
         return "\n".join(lines)
 
     def _wins_text(self, seat: int, amount, state: HandState) -> str:
+        won = fmt(amount) + ("bb" if self.mode == "aof" else "")       # All-In or Fold counts in big blinds
         if seat == HERO:
-            return f"You win {fmt(amount)}"
-        return f"{self._who(seat, state.labels)} wins {fmt(amount)}"
+            return f"You win {won}"
+        return f"{self._who(seat, state.labels)} wins {won}"
 
     def _act_text(self, entry: dict, state: HandState, bb) -> str:
         who = self._who(entry["seat"], state.labels)
@@ -2306,7 +2319,8 @@ class Session:
                          "ladders": [{"name": n, "label": D.LADDERS[n]["label"]} for n in D.LADDERS_FOR_MODE[data["mode"]]],
                          "levels": [[lv["sb"], lv["bb"], lv.get("ante", 0)] for lv in data["structure"]["levels"]],
                          "notice_seen": self.app["notice_seen"], "modes": list(D.MODES),
-                         "size_limits": list(D.SIZE_LIMITS[data["mode"]])},
+                         "size_limits": list(D.SIZE_LIMITS[data["mode"]]),
+                         "keys": KEYS_FOR_THE_PAGE},
         }
 
     def _view_strip(self, hand) -> dict:
@@ -2501,6 +2515,10 @@ class Session:
             "result": result,
             "street_bet": state.bet_to if state.phase in BETTING else 0,
             "shown": dict(hand["shown"]),
+            # Players who act before the target and have not acted: they take the passive default
+            # unless an action is typed for them.  (The page uses it to keep hero's own action typed:
+            # an action for a player behind him would be his fold.)
+            "before_target": [e["seat"] for e in at_target.log[len(state.log):]] if target is not None else [],
         }
 
     def _view_history(self) -> list[dict]:
@@ -2511,6 +2529,15 @@ class Session:
 
 
 # ---- small functions used above ------------------------------------------------------------
+
+def keys_for_the_page() -> dict:
+    """The key map of ``defaults.py`` as the page reads it: ``{"table": [{"keys", "do", "text"}], ...}``."""
+    return {group: [{"keys": list(keys), "do": command, "text": text} for keys, command, text in rows]
+            for group, rows in D.KEYS.items()}
+
+
+KEYS_FOR_THE_PAGE = keys_for_the_page()     # the same in every view: built once
+
 
 def _truth(value) -> bool:
     if isinstance(value, str):

@@ -22,7 +22,7 @@ from poker_coach.app.model import (BETTING, HERO, HandState, ModelError, Session
                                    engine_state, icm_level, next_big_blind, preflop_order, replay,
                                    seat_labels, session_level, stage_of)
 from poker_coach.preflop import pos_to_index
-from poker_coach.ranges import SEAT_LABELS, position_name
+from poker_coach.ranges import PLAYER_TYPES, SEAT_LABELS, position_name
 
 LJ, HJ, CO, BTN, SB, BB = 4, 5, 6, 1, 2, 3          # Table A
 
@@ -1682,6 +1682,80 @@ class TheView(unittest.TestCase):
                           last["auto"]), (7, "LJ", "Hal", "raise", 1320, "Hal raise 2.2bb", False))
         self.assertEqual(hand["pots"], [{"amount": hand["pot"], "eligible": [7, 8, 1, 2, 3, 4]}])     # 5 and 6 folded
         self.assertEqual(view["strip"]["stage"]["label"], "21 FROM THE MONEY")
+
+
+# --------------------------------------------------------------------------
+# What the page needs beyond the build spec: who acts before the target, the key map, a word for
+# the refusal the page reacts to, and the folder of a trial run
+# --------------------------------------------------------------------------
+
+class ForThePage(unittest.TestCase):
+    def test_who_acts_before_the_target(self):
+        s = Session(save=False)
+        s.do("new_session", size=8, button=2)                       # hero is the cutoff
+        view = s.do("deal", hero_cards="AKs")
+        self.assertEqual((view["hand"]["target"], view["hand"]["before_target"]), (1, [5, 6, 7, 8]))
+        view = s.do("act", seat=7, kind="raise")                    # typed: he is no longer "still to act"
+        self.assertEqual(view["hand"]["before_target"], [8])
+        view = s.do("act", kind="call")                             # hero has acted: the action is on the button
+        self.assertEqual((view["hand"]["target"], view["hand"]["before_target"]), (2, []))
+        view = s.do("close_round")                                  # the flop: the blinds folded, the raiser acts first
+        self.assertEqual((view["hand"]["phase"], view["hand"]["target"], view["hand"]["before_target"]), ("flop", 1, [7]))
+        view = s.do("skip_hand")
+        self.assertIsNone(view["hand"])
+
+    def test_the_side_pot_refusal_has_a_code(self):
+        s = table_a(stacks={BB: 3000})
+        play(s, "4 raise 500, 1 call, 3 allin, 4 call, 1 call")     # the big blind is all-in for less
+        play(s, "4 bet 1000, 1 call")                               # the other two bet on: a side pot
+        s.do("set_cards", hero="AhKd")
+        s.do("set_cards", board="Ks7d2c9h3c")
+        s.do("close_round")                                         # the river is checked through
+        self.assertEqual(s.view()["hand"]["needs"], "result")
+        err = refused(s, "award", ranking=[[BB]])
+        self.assertEqual(err.code, "side_pot")
+        self.assertIn("side pot", err.message)
+        self.assertEqual(refused(s, "award", ranking=[[2]]).code, "")       # seat 2 folded: another refusal, no code
+        s.do("award", ranking=[[BB], [1]])
+        self.assertEqual(s.view()["hand"]["needs"], "next")
+
+    def test_a_number_too_big_is_refused_like_any_other(self):
+        s = Session(save=False)
+        s.do("new_session", size=6)
+        for intent in ({"op": "set_stack", "seat": 2, "text": "1e999"}, {"op": "set_stack", "seat": 2, "text": float("inf")},
+                       {"op": "remaining", "value": "9" * 400}):
+            err = refused(s, intent.pop("op"), **intent)
+            self.assertTrue(err.message)
+
+    def test_the_key_map(self):
+        keys = Session(save=False).view()["settings"]["keys"]
+        self.assertEqual(set(keys), {"table", "seat", "type"})
+        for group, rows in keys.items():
+            bound = [key for row in rows for key in row["keys"]]
+            self.assertEqual(len(bound), len(set(bound)), f"a key is bound twice in {group}")
+            for row in rows:
+                self.assertEqual(set(row), {"keys", "do", "text"})
+                self.assertTrue(row["keys"] and row["do"] and row["text"], row)
+            # the seat digits and Tab are not for the map: digits name seats, Tab is the browser's
+            self.assertFalse(set(bound) & set("123456789") | set(bound) & {"Tab", "Shift+Tab"}, group)
+        table = {key: row["do"] for row in keys["table"] for key in row["keys"]}
+        self.assertEqual((table["n"], table["Space"], table["Enter"], table["Backspace"], table["?"]),
+                         ("deal", "follow", "accept", "undo", "keys"))
+        self.assertEqual({row["do"] for row in keys["type"]}, set(PLAYER_TYPES))      # every player type has its key
+        json.dumps(keys)
+
+    def test_a_folder_of_its_own(self):
+        from unittest import mock
+        from poker_coach.app import model
+        with tempfile.TemporaryDirectory(prefix="menlo trial ") as folder:
+            with mock.patch.dict(os.environ, {"POKER_COACH_APP": folder}):
+                self.assertEqual(model.default_folder(), folder)
+                s = Session()
+                s.do("new_session", size=6)
+                self.assertEqual(sorted(os.listdir(folder)), ["app.json", "tournament.json"])
+        with mock.patch.dict(os.environ):
+            os.environ.pop("POKER_COACH_APP", None)
+            self.assertTrue(model.default_folder().endswith(os.path.join("tournament", "app")))
 
 
 if __name__ == "__main__":

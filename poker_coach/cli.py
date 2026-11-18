@@ -1474,7 +1474,7 @@ def build_parser() -> argparse.ArgumentParser:
                                    "(this computer only; nothing reads the screen)")
     p.add_argument("--port", type=int, default=8765, help="port on this computer (default 8765; the next free one if it is taken)")
     p.add_argument("--no-browser", action="store_true", help="do not open the browser: only print the address")
-    p.add_argument("--verbose", action="store_true", help="print every request")
+    p.add_argument("--verbose", action="store_true", help="log every request, and the coach's errors in full")
     p.set_defaults(fn=cmd_app)
     return ap
 

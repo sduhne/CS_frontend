@@ -123,6 +123,87 @@ UNITS = ("chips", "bb")                 # how numbers are shown; All-In or Fold 
 DECKS = ("one-ink", "four-colour")
 
 # --------------------------------------------------------------------------
+# Keys
+# --------------------------------------------------------------------------
+# One row per command: the keys that run it, the command, and the line shown
+# by "?".  Change a key here and both the page and that list follow.  The
+# commands themselves are in static/controller.js (COMMANDS, SEAT_COMMANDS).
+#
+# A key is named as the browser names it: a letter in lower case ("n"), a
+# sign as it is typed ("?", "{", "+"), or Space, Enter, Backspace, Delete,
+# Escape, ArrowLeft, ArrowRight.  Held keys go in front: "Shift+S",
+# "Ctrl+z", "Ctrl+Backspace", "Alt+1".  The seat digits 1 to 9 and the card
+# keys (2 to 9, t j q k a; s h d c; s or o for suited, offsuit) are fixed.
+
+KEYS_TABLE = [                          # between hands and while a hand is played
+    (("n",), "deal", "New hand, next hand. Spin & Gold: a new game of 300 chips once one is over"),
+    (("Shift+N",), "new_game_500", "Spin & Gold: a new game of 500 chips"),
+    (("Space",), "follow", "Do what the coach says"),
+    (("f",), "fold", "Fold"),
+    (("c",), "call", "Call"),
+    (("x",), "check", "Check"),
+    (("b",), "bet", "Bet: type the amount, then Enter"),
+    (("r",), "raise", "Raise: type the amount, then Enter"),
+    (("a",), "allin", "All-in"),
+    (("Enter",), "accept", "The rest fold (or check). While a street's cards are wanted: skip the board"),
+    (("w",), "won", "You won the pot"),
+    (("l",), "lost", "You lost a heads-up pot"),
+    (("Shift+W",), "split", "Split pot"),
+    (("Backspace", "z", "Ctrl+z"), "undo", "Undo"),
+    (("Ctrl+y", "Ctrl+Shift+Z"), "redo", "Redo"),
+    (("Ctrl+Backspace",), "discard", "Discard the hand"),
+    (("ArrowLeft",), "line_back", "Walk the hand line back"),
+    (("ArrowRight",), "line_on", "Walk the hand line forward"),
+    (("e",), "edit", "Change the amount of the selected bet (or of the last one)"),
+    (("Delete",), "delete", "Delete the selected action"),
+    (("[",), "button_back", "Dealer button one seat back"),
+    (("]",), "button_on", "Dealer button one seat on"),
+    (("{",), "seat_fewer", "One seat fewer"),
+    (("}",), "seat_more", "One seat more"),
+    (("+", "="), "blinds_up", "Blinds up"),
+    (("-",), "blinds_down", "Blinds down"),
+    (("Shift+B",), "blinds", "Type the blinds: 300/600/75, or 600 alone"),
+    (("Shift+A",), "ante", "Ante: none, every player, big blind"),
+    ((",",), "left_minus", "Players left minus one"),
+    ((".",), "left_plus", "Players left plus one"),
+    (("<",), "left_minus_ten", "Players left minus ten"),
+    ((">",), "left_plus_ten", "Players left plus ten"),
+    (("Shift+S",), "stacks", "Type every stack, clockwise"),
+    (("s",), "my_stack", "Your own stack"),
+    (("o",), "my_seat_out", "Sit out, sit back in"),
+    (("i",), "tournament", "Tournament numbers"),
+    (("g",), "style", "Style (Spin & Gold and All-In or Fold: the opponents)"),
+    (("v",), "unit", "Chips or big blinds"),
+    (("y",), "history", "Hand history"),
+    (("?",), "keys", "This list"),
+    (("Alt+1",), "mode_tournament", "Tournament"),
+    (("Alt+2",), "mode_spin", "Spin & Gold"),
+    (("Alt+3",), "mode_aof", "All-In or Fold"),
+    (("Escape",), "cancel", "Cancel, close"),
+]
+
+KEYS_SEAT = [                           # after a seat digit (the seat's menu is open)
+    (("f", "c", "x", "b", "r", "a"), "act", "That player folds, calls, checks, bets, raises, moves all-in"),
+    (("w",), "won", "That player won the pot"),
+    (("s",), "stack", "Stack"),
+    (("e",), "name", "Name"),
+    (("t",), "type", "Type: then one of the type keys below"),
+    (("m",), "note", "Note"),
+    (("o",), "sit_out", "Sit out, sit back in"),
+    (("d",), "button", "Dealer button here"),
+    (("k",), "bust", "Bust: the seat is cleared and one player fewer is left"),
+    (("Delete",), "clear", "Clear the seat: the player left the table"),
+]
+
+KEYS_TYPE = [                           # after a seat digit and the type key
+    (("n",), "nit", "Nit"), (("t",), "tight", "Tight"), (("g",), "tag", "Tight-aggressive"),
+    (("l",), "lag", "Loose-aggressive"), (("o",), "loose", "Loose"), (("s",), "station", "Calling station"),
+    (("m",), "maniac", "Maniac"), (("u",), "unknown", "Unknown"),
+]
+
+KEYS = {"table": KEYS_TABLE, "seat": KEYS_SEAT, "type": KEYS_TYPE}
+
+# --------------------------------------------------------------------------
 # Housekeeping
 # --------------------------------------------------------------------------
 
