@@ -1,9 +1,10 @@
 """Tight-aggressive preflop charts and opponent range models.
 
 Positions are identified by ``n_behind``: how many players are still to act
-after you preflop.  0 = BB, 1 = SB, 2 = BTN, 3 = CO, 4 = HJ, 5 = LJ,
-6 = UTG+2, 7 = UTG+1, 8 = UTG (9-max).  That works for any table size:
-first to act 6-handed simply has 5 players behind.
+after you preflop.  0 = BB, 1 = SB, 2 = BTN, 3 = CO, 4 = HJ, 5 = LJ; the seats
+before those are UTG, UTG+1, UTG+2 counted from the first to act.  That works
+for any table size: first to act 6-handed simply has 5 players behind.
+``SEAT_LABELS`` is the one table of seat names for the whole program.
 
 The charts are deliberately tight from early position and aggressive in late
 position, and they are the baseline that stack depth, ICM and player reads
@@ -17,8 +18,19 @@ from functools import lru_cache
 from .cards import COMBO_COUNT, parse_range, range_pct, top_percent
 from .equity import allin_order
 
-POSITION_NAMES = {0: "BB", 1: "SB", 2: "BTN", 3: "CO", 4: "HJ", 5: "LJ",
-                  6: "UTG+2", 7: "UTG+1", 8: "UTG", 9: "UTG"}
+# Seat names by table size, in the order the seats act before the flop.
+# Every module that prints or reads a seat name goes through this table
+# (``position_name`` below, ``preflop.pos_to_index`` the other way round).
+SEAT_LABELS = {
+    2: ["BTN/SB", "BB"],                 # heads-up the button posts the small blind and acts first
+    3: ["BTN", "SB", "BB"],
+    4: ["CO", "BTN", "SB", "BB"],
+    5: ["HJ", "CO", "BTN", "SB", "BB"],
+    6: ["LJ", "HJ", "CO", "BTN", "SB", "BB"],
+    7: ["UTG", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+    8: ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+    9: ["UTG", "UTG+1", "UTG+2", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+}
 
 
 _POSITION_ALIASES = {"bb": 0, "sb": 1, "btn": 2, "bu": 2, "button": 2, "d": 2, "dealer": 2,
@@ -27,11 +39,16 @@ _POSITION_ALIASES = {"bb": 0, "sb": 1, "btn": 2, "bu": 2, "button": 2, "d": 2, "
 
 
 def position_name(n_behind: int, n_players: int) -> str:
-    if n_players == 2:
-        return "SB/BTN" if n_behind == 1 else "BB"
-    if n_behind >= 3 and n_behind == n_players - 1:
-        return "UTG" if n_players >= 7 else f"UTG({POSITION_NAMES[n_behind]})"
-    return POSITION_NAMES.get(n_behind, "UTG")
+    """Name of the seat with ``n_behind`` players still to act behind it (0 = big blind)."""
+    labels = SEAT_LABELS.get(n_players)
+    index = n_players - 1 - n_behind              # 0 = first to act before the flop
+    if labels and 0 <= index < n_players:
+        return labels[index]
+    # outside the table (one player, or more than nine): the same rule, spelled out
+    late = {0: "BB", 1: "SB", 2: "BTN", 3: "CO", 4: "HJ", 5: "LJ"}
+    if n_behind in late:
+        return late[n_behind]
+    return "UTG" if index <= 0 else f"UTG+{index}"
 
 
 # Raise-first-in ladder, tightest first.  Index = "tightness level"; a seat

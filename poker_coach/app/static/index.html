@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Menlo Coach</title>
+<!-- The mark as the tab icon, inline: the page asks nobody for anything. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='9' fill='%23FFD60A'/%3E%3Cpath d='M8 30V11l12 11 12-11v19h-5V22l-7 6.5L13 22v8z' fill='%230A0A0B'/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/barlow-semi-condensed-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/barlow-semi-condensed-latin-800-italic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- Suits and icons, drawn once and reused. Suits: spades and clubs are filled, hearts and diamonds outlined. -->
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="suit-s" viewBox="0 0 24 24"><path d="M12 2.5C8.2 6.8 3 10 3 14.2a4.4 4.4 0 0 0 7.9 2.7L9.6 21.5h4.8l-1.3-4.6A4.4 4.4 0 0 0 21 14.2C21 10 15.8 6.8 12 2.5z"/></symbol>
+    <symbol id="suit-h" viewBox="0 0 24 24"><path d="M12 21C7.5 16.6 3 13.2 3 8.6A4.6 4.6 0 0 1 12 7a4.6 4.6 0 0 1 9 1.6c0 4.6-4.5 8-9 12.4z"/></symbol>
+    <symbol id="suit-d" viewBox="0 0 24 24"><path d="M12 2.5 19.5 12 12 21.5 4.5 12z"/></symbol>
+    <symbol id="suit-c" viewBox="0 0 24 24"><path d="M12 2.5a4.2 4.2 0 0 1 3.3 6.8 4.2 4.2 0 1 1-2.2 7.3l1.3 4.9H9.6l1.3-4.9a4.2 4.2 0 1 1-2.2-7.3A4.2 4.2 0 0 1 12 2.5z"/></symbol>
+    <symbol id="icon-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+    <symbol id="icon-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></symbol>
+    <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="icon-sliders" viewBox="0 0 24 24"><path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/></symbol>
+  </defs>
+</svg>
+
+<a class="skip" href="#region-actions">Skip to the action bar</a>
+
+<!-- One order at every width: header, advice, table, hand line, action bar. render.js fills each part. -->
+<div id="app" class="app">
+  <header id="region-header" class="header"></header>
+  <section id="region-advice" class="advice" aria-live="polite" aria-label="Coach"></section>
+  <section id="region-table" class="table" aria-label="Table" data-arrows></section>
+  <div id="region-line" class="line"></div>
+  <div id="region-actions" class="actions" tabindex="-1" role="group" aria-label="Actions"></div>
+  <main id="region-first" class="first-run" hidden></main>
+  <!-- A toast lies at the foot of the advice (first run: under the form), so it never covers the answer, the table or the action bar. -->
+  <div id="region-toast" class="toasts" role="status" aria-live="polite"></div>
+</div>
+<div id="region-overlay"></div>
+
+<noscript>Menlo Coach needs JavaScript. Nothing leaves this computer.</noscript>
+
+<script src="render.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

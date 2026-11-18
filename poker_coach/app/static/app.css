@@ -1,0 +1,556 @@
+/* Menlo coach: the table app.
+   Contents: 1 fonts, 2 tokens and sizes by width, 3 base, 4 page grid, 5 header and strip,
+   6 advice, 7 table, 8 cards, 9 hand line, 10 action bar, 11 menus and sheets, 12 forms,
+   13 toast, 14 first run, 15 wider screens, 16 motion.
+   Colour rules: yellow = do this now; a white ring = your next key lands here;
+   green and red only on chips or big blinds won or lost; state is shown by brightness. */
+
+/* ---------- 1. Fonts (latin subsets, SIL Open Font License, see fonts/OFL-*.txt) ---------- */
+@font-face{font-family:"Barlow Semi Condensed";font-weight:700;font-style:normal;font-display:swap;src:url(fonts/barlow-semi-condensed-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:"Barlow Semi Condensed";font-weight:800;font-style:normal;font-display:swap;src:url(fonts/barlow-semi-condensed-latin-800-normal.woff2) format("woff2")}
+@font-face{font-family:"Barlow Semi Condensed";font-weight:800;font-style:italic;font-display:swap;src:url(fonts/barlow-semi-condensed-latin-800-italic.woff2) format("woff2")}
+@font-face{font-family:Inter;font-weight:400;font-style:normal;font-display:swap;src:url(fonts/inter-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:Inter;font-weight:500;font-style:normal;font-display:swap;src:url(fonts/inter-latin-500-normal.woff2) format("woff2")}
+@font-face{font-family:Inter;font-weight:600;font-style:normal;font-display:swap;src:url(fonts/inter-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:Inter;font-weight:700;font-style:normal;font-display:swap;src:url(fonts/inter-latin-700-normal.woff2) format("woff2")}
+/* Fallbacks sized to the real faces, so nothing moves when they arrive. */
+@font-face{font-family:"MB Display Fallback";font-weight:700 800;
+  src:local("Arial Bold"),local("Arial-BoldMT"),local("Liberation Sans Bold");
+  size-adjust:83%;ascent-override:120.5%;descent-override:24.1%;line-gap-override:0%}
+@font-face{font-family:"MB Display Fallback";font-weight:800;font-style:italic;
+  src:local("Arial Bold Italic"),local("Arial-BoldItalicMT"),local("Liberation Sans Bold Italic");
+  size-adjust:77%;ascent-override:130%;descent-override:26%;line-gap-override:0%}
+@font-face{font-family:"MB Body Fallback";
+  src:local("Arial"),local("ArialMT"),local("Liberation Sans");
+  size-adjust:107.5%;ascent-override:90.1%;descent-override:22.4%;line-gap-override:0%}
+
+/* ---------- 2. Tokens ---------- */
+:root{
+  --ink:#0A0A0B;--panel:#151518;--line:#26262B;--line-strong:#3A3A42;
+  --yellow:#FFD60A;--yellow-hover:#E6B800;
+  --yellow-wash:#1E1A0B;                 /* hero's turn: 8% yellow on Ink, made solid */
+  --yellow-tint:rgba(255,214,10,.18);    /* a close cell on the range chart */
+  --white:#FFFFFF;--soft:#C9C9D1;--grey:#9A9AA3;
+  --win:#3DDC84;--loss:#FF5C5C;
+  --win-tint:rgba(61,220,132,.18);--loss-tint:rgba(255,92,92,.18);
+  --display:"Barlow Semi Condensed","MB Display Fallback",Arial,sans-serif;
+  --body:Inter,"MB Body Fallback",system-ui,"Segoe UI",Arial,sans-serif;
+  --r-card:16px;--r-tile:14px;--r-btn:14px;--r-ctl:12px;--r-in:10px;--r-pill:999px;
+
+  /* Sizes that change with the width: under 1024 here, then two steps in section 15. */
+  --gut:16px;--gap:8px;
+  --table-h:304px;--table-h-aof:240px;
+  --pod-w:100px;--pod-h:56px;--hero-w:184px;--hero-h:68px;
+  --pos:18px;--stack:17px;
+  --card-w:36px;--card-h:50px;--hcard-w:40px;--hcard-h:56px;
+  --chip-h:22px;--chip-f:13px;--deal:18px;
+  --verb:64px;--size:28px;--pot:24px;
+}
+
+/* ---------- 3. Base ---------- */
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--ink);color:var(--white);font:400 14px/1.45 var(--body);min-width:544px;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+button,input,select,textarea{font:inherit;color:inherit;margin:0}
+button{cursor:pointer;background:none;border:0;padding:0;text-align:inherit}
+button:disabled{cursor:default}
+h1,h2,h3,p{margin:0}
+[hidden]{display:none!important}
+:focus{outline:0}
+:focus-visible{outline:2px solid var(--white);outline-offset:2px;box-shadow:0 0 0 2px var(--ink)}
+.num{font-family:var(--display);font-weight:800;line-height:1;font-variant-numeric:tabular-nums lining-nums}
+.eyebrow{font:700 11px/1.2 var(--body);letter-spacing:.12em;text-transform:uppercase;color:var(--grey);white-space:nowrap}
+.win{color:var(--win)}.loss{color:var(--loss)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.skip{position:absolute;left:8px;top:-60px;z-index:50;padding:10px 14px;background:var(--white);color:var(--ink);
+  border-radius:var(--r-in);font-weight:700;text-decoration:none}
+.skip:focus{top:8px}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+kbd{font:700 11px/1 var(--body);min-width:18px;height:18px;padding:0 4px;display:inline-grid;place-items:center;
+  border:1px solid var(--line-strong);border-radius:5px;color:var(--grey);letter-spacing:0;text-transform:uppercase;white-space:nowrap}
+.icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* ---------- 4. Page grid: header, advice, table, hand line, action bar ---------- */
+.app{display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:var(--gap);
+  min-height:100%;padding:0 var(--gut) 8px;max-width:640px;margin:0 auto}
+/* Every part has its row. The toast shares the cell of the advice and lies over its last line. */
+.header,.advice,.table,.line,.toasts,.actions,.first-run{grid-column:1}
+.header{grid-row:1}
+.advice,.toasts{grid-row:2}
+.table{grid-row:3}
+.line{grid-row:4}
+.actions{grid-row:5}
+.first-run{grid-row:2}
+.app.first .toasts{grid-row:3}
+
+/* ---------- 5. Header and strip ---------- */
+.header{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"bar tools" "strip strip";
+  align-items:center;column-gap:12px;margin:0 calc(-1*var(--gut));padding:0 var(--gut);border-bottom:1px solid var(--line)}
+.bar{grid-area:bar;display:flex;align-items:center;gap:12px;height:48px;min-width:0}
+.brand{display:flex;align-items:center;gap:10px;flex:none}
+.brand .mark{width:28px;height:28px;flex:none;display:block}
+.word{display:none;font:italic 800 24px/1 var(--display);text-transform:uppercase;letter-spacing:-.01em}
+.word b{color:var(--yellow);font-weight:800}
+
+/* A track of choices: the mode tabs, and the small either-or controls. */
+.tabs{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-pill);flex:none}
+/* A tab is 44 high to the finger; its fill is drawn 2px inside, so it looks 40 high in the track. */
+.tab{height:44px;min-width:44px;padding:0 12px;border-radius:var(--r-pill);font-weight:600;font-size:13px;color:var(--grey);
+  white-space:nowrap;text-align:center;transition:background-color .12s,color .12s}
+.tab:hover{color:var(--white)}
+.tab[aria-selected=true],.tab[aria-checked=true]{background:var(--line);color:var(--white);box-shadow:inset 0 0 0 2px var(--panel)}
+.tab:focus-visible{box-shadow:0 0 0 2px var(--ink)}
+
+.tools{grid-area:tools;display:flex;gap:4px}
+.tool{width:44px;height:44px;flex:none;border-radius:var(--r-ctl);color:var(--grey);display:grid;place-items:center;
+  transition:background-color .12s,color .12s}
+.tool:hover{color:var(--white)}
+.tool:active{background:var(--line)}
+.tool:disabled{color:var(--line-strong)}
+
+.strip{grid-area:strip;display:flex;align-items:center;gap:6px;height:52px;min-width:0;
+  border-top:1px solid var(--line);margin:0 calc(-1*var(--gut));padding:0 var(--gut)}
+.stat{display:flex;align-items:center;gap:4px;flex:none}
+.stat .v{font-size:20px;white-space:nowrap}
+.stat small{font:600 12px/1.2 var(--body);color:var(--soft);white-space:nowrap}
+.stat .text{font:600 13px/1.2 var(--body);color:var(--white);white-space:nowrap}
+/* A strip value is a button: a click turns it into an input. */
+.value{min-height:44px;min-width:44px;padding:0 4px;border-radius:var(--r-in);display:flex;flex-direction:column;
+  justify-content:center;gap:1px;transition:background-color .12s}
+button.value:hover{background:var(--line)}
+.value .row{display:flex;flex-direction:column;align-items:flex-start}      /* under 1024 the small print goes below the number */
+.value .row small{font-size:11px;line-height:1.15}
+.value .unset{display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px dashed var(--grey);border-radius:var(--r-pill);
+  font:700 12px/1 var(--body);letter-spacing:.02em;text-transform:uppercase;color:var(--white)}
+.step{width:44px;height:44px;flex:none;border:1px solid var(--line-strong);background:var(--ink);border-radius:var(--r-ctl);
+  font:800 24px/1 var(--display);color:var(--white);text-align:center;transition:border-color .12s,background-color .12s}
+.step:hover{border-color:var(--white)}
+.step:active{background:var(--line)}
+.step.due{border-color:var(--yellow);color:var(--yellow);animation:due 1s steps(2,jump-none) infinite}
+.pill{display:inline-flex;align-items:center;height:22px;padding:0 10px;border-radius:var(--r-pill);
+  font:700 12px/1 var(--body);letter-spacing:.02em;text-transform:uppercase;background:var(--line);color:var(--soft);white-space:nowrap}
+.pill.near{background:none;box-shadow:inset 0 0 0 1px var(--white);color:var(--white)}
+.pill.bubble{background:var(--yellow);color:var(--ink)}
+.pill.money{background:var(--win-tint);color:var(--win)}
+.pill.you{background:var(--white);color:var(--ink)}
+.strip .stage{min-width:0;flex-shrink:1;overflow:hidden;text-overflow:ellipsis;display:block;line-height:22px;padding:0 8px;font-size:11px}
+.strip .in{width:132px}
+.strip .in.short{width:84px}
+.strip .from-avg,.strip .from-style{display:none}
+
+/* ---------- 6. Advice ---------- */
+.advice{display:flex;flex-direction:column;gap:var(--gap);min-width:0}
+.slab{border-radius:var(--r-card);padding:12px 16px;background:var(--panel);border:1px solid var(--line-strong);
+  display:flex;flex-direction:column;gap:4px;min-width:0}
+.slab.attack{background:var(--yellow);border-color:var(--yellow);color:var(--ink)}
+.slab.attack .eyebrow,.slab.attack .spot{color:var(--ink)}
+.slab.passive{border:2px solid var(--white);padding:11px 15px}
+.slab.fold{border:1px solid var(--line-strong)}
+.slab.wait{background:var(--ink);border:1px dashed var(--grey);color:var(--grey)}
+.slab .head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.sure{display:flex;align-items:center;gap:6px}
+.pips{display:flex;gap:3px}
+.pips i{width:6px;height:12px;border-radius:2px;border:1.5px solid currentColor}
+.pips i.on{background:currentColor}
+.act{display:flex;align-items:baseline;column-gap:12px;row-gap:2px;flex-wrap:wrap;min-width:0}
+.verb{font:italic 800 var(--verb)/.9 var(--display);text-transform:uppercase;letter-spacing:-.01em;padding-right:.06em}
+.verb.long{font-size:calc(var(--verb)*.75)}
+.verb.xlong{font-size:calc(var(--verb)*.48)}
+.slab.wait .verb{font-size:48px}
+.slab.wait .verb.xlong{font-size:36px}
+.size{font:800 var(--size)/1 var(--display);text-transform:uppercase;font-variant-numeric:tabular-nums lining-nums}
+.slab .pill{align-self:center}
+.slab.attack .pill{background:var(--ink);color:var(--white)}
+.spot{font-size:13px;font-weight:500;color:var(--soft);min-width:0}
+.slab.wait .spot{color:var(--grey)}
+
+/* Under 1024 the reasons are one line that opens the full panel as a sheet. */
+.whyline{display:flex;align-items:center;gap:12px;min-height:44px;width:100%;padding:0 4px;border-radius:var(--r-in);font-size:13px;color:var(--soft)}
+.whyline .text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.whyline .more{flex:none;display:inline-flex;align-items:center;gap:2px;font-weight:600;color:var(--white)}
+button.whyline:hover{background:var(--panel)}
+.advice-tabs{display:none;align-self:flex-start}
+.advice-tabs .tab{min-width:84px}
+
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:12px 14px;
+  display:flex;flex-direction:column;gap:10px;min-width:0}
+.advice > .panel{display:none}
+.where{padding-top:10px;padding-bottom:10px}
+.why .reason{font-size:15px;color:var(--soft)}
+.why p{font-size:13px;color:var(--soft)}
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.tile{background:var(--ink);border:1px solid var(--line);border-radius:var(--r-tile);padding:12px 14px;min-width:0}
+.tile .eyebrow{white-space:normal}
+.tile .num{font-size:36px;margin-top:4px;white-space:nowrap}
+.tile .num.long{font-size:26px;margin-top:9px;margin-bottom:5px}
+.tile .num.xlong{font-size:19px;margin-top:13px;margin-bottom:8px}
+.tile .sub{font-size:12px;color:var(--grey);margin-top:2px}
+.group{display:flex;flex-direction:column;gap:4px}
+.group ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
+.group li{font-size:13px;color:var(--soft)}
+.group li b{color:var(--white);font-weight:600}
+.source{font-size:12px;color:var(--grey);border-top:1px solid var(--line);padding-top:8px}
+.context{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:12px;row-gap:6px;align-items:baseline}
+.context dt,.context dd{margin:0}
+.context dd{font-size:13px;color:var(--soft)}
+
+.chart .head{display:flex;justify-content:space-between;gap:12px}
+.chart .head .eyebrow:first-child{white-space:normal}
+.grid13{display:grid;grid-template-columns:repeat(13,minmax(0,1fr));gap:1px}
+.cell{height:24px;display:grid;place-items:center;font:700 12px/1 var(--display);background:var(--ink);color:var(--grey);border-radius:3px}
+.cell.r{background:var(--yellow);color:var(--ink)}
+.cell.c{background:var(--white);color:var(--ink)}
+.cell.x{background:#3F3815;color:var(--yellow)}          /* the yellow tint on Panel, made solid */
+.cell.me{box-shadow:0 0 0 2px var(--ink),0 0 0 4px var(--white);position:relative;z-index:1}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--soft);align-items:center}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:12px;height:12px;border-radius:3px;background:var(--ink);box-shadow:inset 0 0 0 1px var(--line-strong)}
+.legend i.r{background:var(--yellow);box-shadow:none}
+.legend i.c{background:var(--white);box-shadow:none}
+.legend i.x{background:#3F3815;box-shadow:none}
+.legend i.me{background:var(--ink);box-shadow:inset 0 0 0 2px var(--white)}
+
+/* ---------- 7. Table ---------- */
+.table{position:relative;height:var(--table-h);min-width:0}
+.table.aof{height:var(--table-h-aof)}
+.felt{position:absolute;left:calc(var(--pod-w)/2);right:calc(var(--pod-w)/2);top:calc(var(--pod-h)/2);bottom:calc(var(--hero-h)/2);
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-pill)}
+.pod{position:absolute;width:var(--pod-w);height:var(--pod-h);background:var(--ink);border:1px solid var(--line-strong);
+  border-radius:var(--r-tile);padding:7px 9px;display:flex;flex-direction:column;justify-content:space-between;
+  text-align:left;color:var(--white);transition:border-color .12s}
+button.pod:hover{border-color:var(--grey)}
+.pod .top{display:flex;justify-content:space-between;align-items:center;gap:4px;min-width:0}
+.pos{font:800 var(--pos)/1 var(--display);text-transform:uppercase;letter-spacing:.01em;white-space:nowrap}
+.key{min-width:18px;height:18px;padding:0 4px;display:grid;place-items:center;flex:none;border:1px solid var(--line-strong);
+  border-radius:5px;font:700 11px/1 var(--body);color:var(--grey)}
+/* One line; what does not fit (the second unit) wraps out of sight instead of being cut in half. */
+.stack{display:flex;align-items:baseline;flex-wrap:wrap;column-gap:3px;height:var(--stack);overflow:hidden;min-width:0}
+.stack .num{font-size:var(--stack);line-height:var(--stack);white-space:nowrap}
+.stack u{text-decoration:none;font:700 11px/1 var(--body);color:var(--grey)}
+.stack .other{display:none;margin-left:auto;padding-left:4px;font:500 12px/var(--stack) var(--body);color:var(--grey);white-space:nowrap}
+.stack .tag{display:block;margin-left:auto;padding-left:4px;font:700 10px/var(--stack) var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--grey)}
+.pod .name{display:none;font:500 12px/1.2 var(--body);color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pod.away .stack .tag,.pod.busted .stack .tag{order:-1;margin-left:0;padding-left:0;margin-right:auto}
+.pod.out,.pod.out .num,.pod.out .name{color:var(--grey)}
+.pod.out{border-color:var(--line)}
+.pod.away{border-style:dashed;border-color:var(--line-strong)}
+.pod.stale .stack .num{color:var(--grey)}
+.pod.allin .stack .num{font-style:italic}
+.pod.target{border:2px solid var(--white);padding:6px 8px}
+.pod.turn{border:2px solid var(--yellow);padding:6px 8px;background:var(--yellow-wash)}
+.pod.turn .pos{color:var(--yellow)}
+.pod.empty{border:1px dashed var(--grey);background:none;align-items:center;justify-content:center;color:var(--grey);font:600 13px/1 var(--body)}
+.pod.empty:hover{color:var(--white);border-color:var(--white)}
+.pod.empty.target{border-width:2px;border-style:solid;color:var(--white)}
+
+/* Hero's pod: his two cards (one button), then position, YOU and stack (another). */
+.pod.hero{width:var(--hero-w);height:var(--hero-h);flex-direction:row;gap:8px;align-items:stretch;justify-content:flex-start;padding:5px 7px}
+.pod.hero.turn,.pod.hero.target{padding:4px 6px}
+.pod.hero .hand{display:flex;gap:4px;align-items:center;flex:none;border-radius:6px}
+.pod.hero .info{display:flex;flex-direction:column;justify-content:space-between;flex:1;min-width:0;padding:2px 0;border-radius:6px;color:inherit}
+.pod.hero .top{flex-wrap:wrap;height:max(var(--pos),20px);overflow:hidden;align-items:center}
+.pod.hero .pill.you{height:20px;padding:0 8px;font-size:11px}
+
+.chip{position:absolute;height:var(--chip-h);min-width:36px;padding:0 6px;display:grid;place-items:center;border-radius:var(--r-pill);
+  background:var(--line);color:var(--white);font:800 var(--chip-f)/1 var(--display);font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.chip.allin{background:var(--white);color:var(--ink)}
+.chip .exact{display:none}
+.chip.won{background:#1C392B;color:var(--win)}       /* the win and loss tints on Panel, made solid */
+.chip.lost{background:#3F2224;color:var(--loss)}
+.deal{position:absolute;width:var(--deal);height:var(--deal);border-radius:50%;background:var(--white);color:var(--ink);
+  display:grid;place-items:center;font:800 calc(var(--deal)*.62)/1 var(--display);box-shadow:0 0 0 2px var(--ink);z-index:2}
+.centre{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:6px}
+.pot{display:flex;align-items:baseline;gap:8px;height:26px;white-space:nowrap}
+.pot .num{font-size:var(--pot);line-height:26px}
+.pot small{font-size:12px;color:var(--grey)}
+.pots{font-size:12px;line-height:14px;color:var(--soft);white-space:nowrap;margin-top:-4px}
+.board{display:flex;gap:8px}
+.street{display:flex;gap:4px;padding:0 4px;margin:0 -4px;border-radius:6px}
+.table-tools{position:absolute;right:0;top:0}
+
+/* ---------- 8. Cards ---------- */
+.card{width:var(--card-w);height:var(--card-h);background:var(--white);color:var(--ink);border-radius:calc(var(--card-w)*.13);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;flex:none}
+.card b{font:800 calc(var(--card-h)*.5)/.9 var(--display);letter-spacing:-.02em}
+.card .suit{width:calc(var(--card-h)*.3);height:calc(var(--card-h)*.3)}
+.card .so{font:700 calc(var(--card-h)*.24)/1 var(--body);height:calc(var(--card-h)*.3);color:#5A5A63;text-transform:lowercase}
+.card.big{width:var(--hcard-w);height:var(--hcard-h);border-radius:calc(var(--hcard-w)*.13)}
+.card.big b{font-size:calc(var(--hcard-h)*.5)}
+.card.big .suit{width:calc(var(--hcard-h)*.3);height:calc(var(--hcard-h)*.3)}
+.card.big .so{font-size:calc(var(--hcard-h)*.24);height:calc(var(--hcard-h)*.3)}
+.card.slot{background:none;border:1.5px dashed var(--line-strong)}
+.card.slot.now{border:2px solid var(--white)}
+/* Suits: spades and clubs solid, hearts and diamonds drawn as outlines (the one-ink deck). */
+.suit{fill:currentColor;stroke:currentColor;stroke-width:0;stroke-linejoin:round;flex:none}
+.suit.open{fill:none;stroke-width:2.4}
+.txt{white-space:nowrap}
+.txt .suit{width:.8em;height:.8em;vertical-align:-.06em;margin-left:1px}
+/* The four-colour deck: these inks appear only inside a white card. */
+.deck-four .card.h{color:#B3121A}
+.deck-four .card.d{color:#1D4ED8}
+.deck-four .card.c{color:#0B6B32}
+.deck-four .card .suit.open{fill:currentColor;stroke-width:0}
+
+/* ---------- 9. Hand line ---------- */
+.line{display:flex;align-items:center;height:44px;margin:-4px 0;min-width:0}
+.events{display:flex;align-items:center;gap:6px;height:44px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;padding:0 3px;margin:0 -3px}
+.events::-webkit-scrollbar{display:none}
+.evb{flex:none;height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-pill)}
+.evb:focus-visible{outline:0;box-shadow:none}
+.evb:focus-visible .ev{outline:2px solid var(--white);outline-offset:1px}
+.ev{height:28px;padding:0 10px;display:inline-flex;align-items:center;gap:4px;border-radius:var(--r-pill);background:var(--panel);
+  border:1px solid var(--line);font-size:13px;font-weight:600;color:var(--soft);white-space:nowrap;transition:border-color .12s}
+.ev b{font:800 15px/1 var(--display);color:var(--white);font-variant-numeric:tabular-nums lining-nums}
+.evb:hover .ev{border-color:var(--grey)}
+.ev.auto{background:none;color:var(--grey)}
+.ev.auto b{color:var(--grey)}
+.ev.sel{border-color:var(--white);color:var(--white)}
+.line .hint{font-size:13px;color:var(--grey);padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* The amount row takes the hand line's place while a bet or raise is typed. */
+.amount{display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:44px}
+.amount .field{width:140px;flex:none}
+.amount .btn kbd{display:none}
+.actions .amount{flex:0 1 auto}
+.presets{display:flex;gap:6px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;padding:3px;margin:-3px}
+.presets::-webkit-scrollbar{display:none}
+.preset{flex:none;height:44px;min-width:44px;padding:0 10px;border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--ink);
+  font:800 15px/1 var(--display);color:var(--white);text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums lining-nums;transition:border-color .12s}
+.preset:hover{border-color:var(--white)}
+.preset:active{background:var(--line)}
+
+/* ---------- 10. Action bar ---------- */
+.actions{display:flex;gap:6px;align-items:stretch;min-width:0}
+.btn{min-height:48px;min-width:44px;padding:0 8px;border-radius:var(--r-btn);border:1px solid var(--line-strong);background:var(--ink);color:var(--white);
+  font:800 16px/1 var(--display);text-transform:uppercase;letter-spacing:.02em;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:3px;white-space:nowrap;flex:1 1 0;transition:border-color .12s,background-color .12s}
+.btn .label{display:inline-flex;align-items:center;gap:6px}
+.btn .sub{font:600 12px/1 var(--body);letter-spacing:0;text-transform:none;color:var(--soft);font-variant-numeric:tabular-nums;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.btn:hover{border-color:var(--white)}
+.btn:active{background:var(--line)}
+.btn.primary{background:var(--yellow);border-color:var(--yellow);color:var(--ink)}
+.btn.primary:hover{background:var(--yellow-hover);border-color:var(--yellow-hover)}
+.btn.primary kbd{border-color:var(--ink);color:var(--ink)}
+.btn.primary .sub{color:var(--ink)}
+.btn.wide{flex:1.8 1 0}
+.btn:disabled,.btn.primary:disabled{background:var(--line);border-color:var(--line);color:var(--grey)}
+.btn:disabled kbd,.btn:disabled .sub{border-color:var(--line-strong);color:var(--grey)}
+.btn.compact{min-height:44px;flex:none;padding:0 14px;font-size:15px;flex-direction:row;gap:6px}
+.actions .about{flex:1.8 1 0;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 4px}
+.actions .about .who{font:800 16px/1.1 var(--display);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- 11. Menus and sheets ---------- */
+.pop{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;width:min(400px,calc(100% - 12px));
+  background:var(--panel);border:1px solid var(--line-strong);border-radius:14px;box-shadow:0 0 0 4px var(--ink);
+  padding:8px 10px 10px;display:flex;flex-direction:column;gap:8px}
+.pop-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:36px}
+.pop-head h2{font:800 18px/1 var(--display);text-transform:uppercase;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pop-head h2 small{font:500 12px/1 var(--body);color:var(--grey);text-transform:none;letter-spacing:0;margin-left:6px}
+.pop-head .tool{margin:-4px -6px -4px 0}
+.pop .two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.pop .row{display:flex;gap:6px}
+.menu-btn{flex:1 1 0;min-width:44px;height:44px;padding:0 6px;border:1px solid var(--line-strong);border-radius:var(--r-in);background:var(--ink);
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;font:600 13px/1 var(--body);color:var(--white);white-space:nowrap;transition:border-color .12s}
+.menu-btn:hover{border-color:var(--white)}
+.menu-btn:active{background:var(--line)}
+.menu-btn:disabled{color:var(--grey);border-color:var(--line)}
+.menu-count{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:6px;font:600 13px/1 var(--body);color:var(--soft);white-space:nowrap}
+.menu-count .num{font-size:20px;color:var(--white)}
+.pop-tools{display:flex;margin:-4px -6px -4px 0}
+.pop-tools .tool{margin:0}
+/* The card picker: rank, then suit, as on the keyboard. */
+.picker .slots{display:flex;gap:4px;align-items:center}
+.picker .slots .card{--card-w:26px;--card-h:36px}
+.ranks{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.suits{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.suits.with-class{grid-template-columns:repeat(6,minmax(0,1fr))}
+.pick{height:44px;min-width:44px;border:1px solid var(--line-strong);border-radius:var(--r-in);background:var(--ink);display:grid;place-items:center;
+  font:800 20px/1 var(--display);color:var(--white);transition:border-color .12s}
+.pick:hover{border-color:var(--white)}
+.pick.on{background:var(--white);border-color:var(--white);color:var(--ink)}
+.pick:disabled{color:var(--grey);border-color:var(--line);background:none}
+.pick .suit{width:20px;height:20px}
+.pick.word{font:600 13px/1 var(--body)}
+
+.scrim{position:fixed;inset:0;width:100%;height:100%;background:rgba(10,10,11,.74);z-index:20;cursor:default}
+.sheet{position:fixed;z-index:21;top:12px;left:50%;transform:translateX(-50%);width:min(608px,calc(100vw - 32px));max-height:calc(100vh - 24px);
+  background:var(--panel);border:1px solid var(--line-strong);border-radius:14px;box-shadow:0 0 0 4px var(--ink);display:flex;flex-direction:column}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 8px 8px 16px;border-bottom:1px solid var(--line);flex:none}
+.sheet-head h2{font:italic 800 24px/1 var(--display);text-transform:uppercase;letter-spacing:-.01em}
+.sheet-body{padding:14px 16px 16px;overflow-y:auto;display:flex;flex-direction:column;gap:18px;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+.sheet-body .panel{background:none;border:0;padding:0;border-radius:0}
+.section{display:flex;flex-direction:column;gap:8px}
+.section > h3{font:700 11px/1.2 var(--body);letter-spacing:.12em;text-transform:uppercase;color:var(--grey)}
+.section .hint{font-size:12px;color:var(--grey)}
+.notice{font-size:13px;color:var(--soft);padding:10px 12px;border:1px solid var(--line-strong);border-radius:var(--r-in)}
+.cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.choice{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
+.choice > span{font-size:14px;color:var(--soft)}
+.choice .tabs{flex-wrap:wrap;border-radius:22px}
+.buttons{display:flex;flex-wrap:wrap;gap:8px}
+
+.keys{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 14px;align-items:center}
+.keys dt{display:flex;gap:4px;flex-wrap:wrap}
+.keys dd{margin:0;font-size:13px;color:var(--soft)}
+.history{display:flex;flex-direction:column}
+.history .hrow{display:grid;grid-template-columns:44px 64px 56px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:40px;border-bottom:1px solid var(--line);font-size:13px;color:var(--soft)}
+.history .hrow .num{font-size:16px;color:var(--white)}
+.history .hrow b{color:var(--white);font-weight:600}
+.history .pill{height:18px;padding:0 7px;font-size:10px;margin-left:6px}
+.empty-note{font-size:14px;color:var(--grey)}
+
+/* ---------- 12. Forms ---------- */
+.field{display:flex;align-items:center;gap:8px;height:44px;padding:0 10px;background:var(--ink);border:1px solid var(--grey);border-radius:var(--r-in);min-width:0;
+  transition:border-color .12s}
+.field:focus-within{border-color:var(--white);outline:2px solid var(--white);outline-offset:2px}
+.field .eyebrow{flex:none}
+.field input,.field select{flex:1;min-width:0;width:100%;height:100%;background:none;border:0;padding:0;outline:0;box-shadow:none;
+  font:800 20px/1 var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--white)}
+.field input.words,.field select{font:500 14px/1 var(--body)}
+.field input::placeholder{color:var(--grey);font:500 13px/1 var(--body);opacity:1}
+.field select{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:18px;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%239A9AA3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right center/12px}
+.field select option{background:var(--panel);color:var(--white)}
+.in{height:44px;padding:0 10px;background:var(--ink);border:1px solid var(--grey);border-radius:var(--r-in);min-width:0;
+  font:800 20px/1 var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--white)}
+.in:focus-visible{border-color:var(--white)}
+textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--body);resize:vertical;width:100%}
+.check{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--soft);cursor:pointer}
+.check input{width:20px;height:20px;accent-color:var(--white);flex:none;cursor:pointer}
+
+/* ---------- 13. Toast ---------- */
+/* The toast lies over the "Why and range" line under the slab (first run: its own row under the form). */
+.toasts{align-self:end;z-index:8;display:flex;justify-content:center;min-width:0;pointer-events:none}
+.app.first .toasts{align-self:start}
+.toasts:empty{display:none}
+.sheet-toast{flex:none;display:flex;justify-content:center;padding:10px 12px 12px;border-top:1px solid var(--line)}
+.sheet-toast .toast{box-shadow:none}
+.toast{pointer-events:auto;display:flex;align-items:center;gap:6px;min-height:44px;max-width:100%;padding:0 4px 0 14px;background:var(--panel);
+  border:1px solid var(--line-strong);border-radius:14px;box-shadow:0 0 0 4px var(--ink);font-size:13px;color:var(--white)}
+.toast .text{padding:8px 6px 8px 0;min-width:0}
+.toast .text small{display:block;font-size:12px;color:var(--grey)}
+.toast .link{flex:none;height:44px;padding:0 10px;border-radius:var(--r-in);font:800 15px/1 var(--display);text-transform:uppercase;letter-spacing:.02em;color:var(--white);text-decoration:underline;text-underline-offset:3px}
+
+/* ---------- 14. First run ---------- */
+.setup{max-width:560px;width:100%;margin:16px auto 0;display:flex;flex-direction:column;gap:14px}
+.setup h1{font:italic 800 48px/.95 var(--display);text-transform:uppercase;letter-spacing:-.01em}
+.setup .lead{font-size:14px;color:var(--soft)}
+.stacked{display:flex;flex-direction:column;gap:10px}
+.btn.start{flex:none;align-self:stretch;font-size:18px;flex-direction:row;gap:8px}
+
+/* ---------- 15. Narrower and wider screens ---------- */
+/* Under 560 the table box is 512 wide: pods and board cards give up a few pixels so five cards still fit between the bets. */
+@media (max-width:559px){
+  :root{--pod-w:96px;--card-w:34px;--card-h:47px}
+  .board{gap:10px}
+  .street{padding:0 5px;margin:0 -5px}
+}
+@media (min-width:1024px){
+  :root{--gut:16px;--gap:12px;--table-h:360px;--table-h-aof:300px;
+    --pod-w:112px;--pod-h:60px;--hero-w:216px;--hero-h:80px;--pos:20px;--stack:18px;
+    --card-w:44px;--card-h:62px;--hcard-w:48px;--hcard-h:66px;--chip-h:24px;--chip-f:14px;--deal:20px;
+    --verb:88px;--size:32px}
+  /* Two columns. The last row takes what is left of the window, so the advice column reaches the bottom. */
+  .app{max-width:1640px;height:100%;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:auto auto auto minmax(auto,1fr);column-gap:16px}
+  .header{grid-column:1/-1}
+  .bar{height:52px}
+  .word{display:block}
+  .brand .mark{width:32px;height:32px}
+  /* The advice column scrolls by itself, so the table never moves. */
+  .advice{grid-column:2;grid-row:2/5;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;
+    padding:4px;margin:-4px;align-self:stretch;min-height:0}
+  .table,.line,.actions{grid-column:1}
+  .table{grid-row:2}
+  .line{grid-row:3}
+  .actions{grid-row:4;align-self:start}
+  .first-run{grid-column:1/-1}
+  /* From 1024 the toast lies at the foot of the advice column. */
+  .toasts{grid-column:2;grid-row:2/5}
+  .app.first .toasts{grid-column:1/-1;grid-row:3}
+  .whyline{display:none}
+  .advice-tabs{display:flex}
+  .advice[data-panel=why] > .why,.advice[data-panel=why] > .where{display:flex}
+  .advice[data-panel=range] > .chart{display:flex}
+  .slab{padding:16px 20px}
+  .slab.passive{padding:15px 19px}
+  .act{flex-direction:column;align-items:flex-start;row-gap:4px}
+  .slab .pill{align-self:flex-start;margin-top:2px}
+  .stack .other{display:block}
+  .chip{min-width:40px;padding:0 8px}
+  .pod.away .stack .tag,.pod.busted .stack .tag{order:0;margin-left:auto;margin-right:0;padding-left:4px;font-size:11px}
+  .strip{gap:8px}
+  .strip .stage{padding:0 10px;font-size:12px}
+  .stat{gap:6px}
+  .value{padding:0 6px;gap:2px}
+  .value .row{flex-direction:row;align-items:baseline;gap:6px}
+  .value .row small{font-size:12px;line-height:1.2}
+  .btn{font-size:18px;padding:0 12px}
+  .btn .label{gap:8px}
+  .actions{gap:8px}
+  .amount .field{width:176px}
+  .amount .btn kbd{display:inline-grid}
+  .sheet.side{left:auto;right:16px;transform:none;width:440px;bottom:12px}
+}
+@media (min-width:1280px){
+  /* The table gives up height on a short window (a laptop at 1366 x 768) so the action bar stays in sight. */
+  :root{--gut:24px;--gap:16px;--table-h:clamp(404px,calc(100vh - 206px),460px);--table-h-aof:380px;
+    --pod-w:152px;--pod-h:80px;--hero-w:280px;--hero-h:104px;--pos:26px;--stack:22px;
+    --card-w:56px;--card-h:78px;--hcard-w:64px;--hcard-h:88px;--chip-h:28px;--chip-f:16px;--deal:24px;
+    --verb:104px;--size:36px;--pot:32px}
+  .app{grid-template-columns:minmax(0,1fr) 440px;column-gap:24px}
+  .header{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"bar strip tools";column-gap:24px}
+  .bar{height:64px;gap:20px}
+  .brand .mark{width:36px;height:36px}
+  .strip{border-top:0;margin:0;padding:0;height:64px;gap:12px}
+  .stat .v{font-size:24px}
+  .chip .exact{display:inline}
+  .chip .short{display:none}
+  .slab{padding:20px 24px}
+  .slab.passive{padding:19px 23px}
+  .pod{padding:7px 12px}
+  .pod.target,.pod.turn{padding:6px 11px}
+  .pod .name{display:block}
+  .pod.hero{padding:7px 9px;gap:12px}
+  .pod.hero.turn,.pod.hero.target{padding:6px 8px}
+  .pot{height:36px}
+  .pot .num{line-height:36px}
+}
+/* Wide but under 610 high: the table of the middle step, so the action bar is not pushed out of the window. */
+@media (min-width:1280px) and (max-height:609px){
+  :root{--table-h:360px;--table-h-aof:300px;
+    --pod-w:112px;--pod-h:60px;--hero-w:216px;--hero-h:80px;--pos:20px;--stack:18px;
+    --card-w:44px;--card-h:62px;--hcard-w:48px;--hcard-h:66px;--chip-h:24px;--chip-f:14px;--deal:20px;--pot:24px}
+  .pod{padding:7px 9px}
+  .pod.target,.pod.turn{padding:6px 8px}
+  .pod .name{display:none}
+  .pod.hero{padding:5px 7px;gap:8px}
+  .pod.hero.turn,.pod.hero.target{padding:4px 6px}
+  .chip .exact{display:none}
+  .chip .short{display:inline}
+  .pot{height:26px}
+  .pot .num{line-height:26px}
+}
+/* From 1280 the strip shares one row with the tabs. Up to 1400 that row is tight: smaller numbers, closer together. */
+@media (min-width:1280px) and (max-width:1399px){
+  .header{column-gap:16px}
+  .bar{gap:14px}
+  .strip{gap:8px}
+  .stat .v{font-size:20px}
+}
+/* The average stack and the style need more room than that. */
+@media (min-width:1024px) and (max-width:1279px),(min-width:1440px){.strip .from-avg{display:flex}}
+@media (min-width:1024px) and (max-width:1279px),(min-width:1640px){.strip .from-style{display:flex}}
+/* Room for the reasons and the range chart together, without scrolling: no tabs.
+   (The reasons carry plans, warnings and a source line, so this takes a window about 1100 high.) */
+@media (min-width:1280px) and (min-height:1100px){
+  .advice-tabs{display:none}
+  .advice > .why,.advice > .chart,.advice > .where{display:flex}
+}
+
+/* ---------- 16. Motion ---------- */
+@keyframes due{from{border-color:var(--yellow);color:var(--yellow)}to{border-color:var(--line-strong);color:var(--white)}}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}

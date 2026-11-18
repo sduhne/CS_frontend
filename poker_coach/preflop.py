@@ -919,8 +919,13 @@ _VERBS = {
 
 
 def pos_to_index(name: str, n: int) -> int | None:
+    """Index in the preflop acting order (0 = first to act) of a seat name at a table of ``n``.
+
+    Every name ``ranges.position_name`` prints comes back as its own seat.  The
+    other spellings (button, cutoff, MP, EP ...) are read by players behind.
+    """
     low = name.strip().lower()
-    # the table view prints "SB/BTN" heads-up and "UTG(LJ)" at short tables
+    # older output wrote "UTG(LJ)" at short tables; heads-up the button is "BTN/SB"
     if "(" in low:
         low = low.split("(", 1)[0].strip()
     if "/" in low:
@@ -929,8 +934,14 @@ def pos_to_index(name: str, n: int) -> int | None:
             if idx is not None:
                 return idx
         return None
+    labels = [position_name(n - 1 - i, n).lower() for i in range(n)]
+    if low in labels:
+        return labels.index(low)
     if low in ("utg", "ep", "ep1", "utg+0"):
         return 0
+    if low in ("utg+1", "utg1", "utg+2", "utg2"):
+        # no such seat at this table size: count from the first to act, but stay before the button
+        return max(0, min(int(low[-1]), n - 4))
     if low in _POS_NB:
         nb = _POS_NB[low]
         if n == 2 and low in ("btn", "bu", "button", "d", "dealer", "sb"):
