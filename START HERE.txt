@@ -1,0 +1,41 @@
+POKER COACH
+===========
+
+Everything is in this folder: the code, the solved tables, and whatever the
+coach saves. Nothing is sent anywhere: no internet and no API while it runs.
+
+TO START (Windows)
+  1. Install Python once, from https://www.python.org/downloads/
+     In the installer tick "Add python.exe to PATH".
+  2. Double-click "Start Poker Coach.bat".
+     The first time it installs three small libraries (Pillow, mss, pydantic).
+     That one step needs the internet.
+  3. In the window: 1 Set up the table, 2 Teach, 3 Check what it reads now, 4 Start.
+
+  Mac or Linux: open a terminal in this folder and run
+     pip install -r requirements-live.txt
+     python3 -m poker_coach live-app
+
+TO MAKE ONE PROGRAM (optional)
+  Double-click "Build exe.bat". It creates dist\PokerCoach.exe, which runs
+  without Python. That program keeps its files in the PokerCoach folder of
+  your user folder instead of here.
+
+WHERE THINGS ARE
+  poker_coach\            the engine: ranges, the maths, every command
+  poker_coach\live\       the screen reader, setup, teaching, the windows
+     vision.py            recognises digits and cards from your examples
+     local.py             reads one screenshot of the table
+     decide.py            turns a reading into position, stack, action, advice
+     wizard.py            the setup, teaching and launcher windows
+     app.py               the loop that watches the table, and its window
+  poker_coach\data\       the solved tables (JSON)
+  tools\                  the programs that built those tables; build_exe.py
+  tests\                  the tests:  python -m unittest discover -s tests
+  PLAYBOOK.md             the strategy, in words
+  README.md               every command
+  tournament\             made when you use it: your settings, the table
+                          setup, what you taught it, session logs
+
+Play money and study only: it gives no advice unless the table shows your
+play-money marker. Real-money sites forbid this kind of help.
