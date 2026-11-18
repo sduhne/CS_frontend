@@ -1165,12 +1165,34 @@ def _live_options(p, setup: bool = False) -> None:
     p.add_argument("--buyin", type=float, help="buy-in")
 
 
+def app_folder(path: str | None) -> str | None:
+    """``--folder`` of the table app as a full path, made if it is not there yet.
+
+    ``None`` when the option was not given: the app then uses ``$POKER_COACH_APP`` or its
+    usual folder (``model.default_folder``).  A folder that cannot be used is a ``ValueError``.
+    """
+    if not path:
+        return None
+    import os
+
+    folder = os.path.abspath(os.path.expanduser(path))      # "~" too: the Windows shell does not expand it
+    try:
+        os.makedirs(folder, exist_ok=True)                  # said now, not at the first save
+    except OSError as exc:                                  # a file of that name, or no right to write there
+        raise ValueError(f"--folder: {folder} cannot be used ({exc})") from None
+    return folder
+
+
 def cmd_app(a) -> int:
     """The table app: a local page where the table is entered by hand and the coach answers."""
     from .app.server import main as serve
 
+    options = {"port": a.port, "open_browser": not a.no_browser, "verbose": a.verbose}
+    folder = app_folder(a.folder)
+    if folder:                          # a folder named here wins over $POKER_COACH_APP and the usual one
+        options["folder"] = folder
     try:
-        return serve(port=a.port, open_browser=not a.no_browser, verbose=a.verbose)
+        return serve(**options)
     except OSError as exc:              # no free port
         return _fail(str(exc))
 
@@ -1474,6 +1496,8 @@ def build_parser() -> argparse.ArgumentParser:
                                    "(this computer only; nothing reads the screen)")
     p.add_argument("--port", type=int, default=8765, help="port on this computer (default 8765; the next free one if it is taken)")
     p.add_argument("--no-browser", action="store_true", help="do not open the browser: only print the address")
+    p.add_argument("--folder", help="where the sessions are saved (default: tournament/app in this folder, "
+                                    "or $POKER_COACH_APP; the packaged program: PokerCoach/app in the home folder)")
     p.add_argument("--verbose", action="store_true", help="log every request, and the coach's errors in full")
     p.set_defaults(fn=cmd_app)
     return ap

@@ -4,7 +4,7 @@ A tournament no-limit hold'em coach: it tracks your table from the pictures
 you send and answers "call, raise or fold?" with a tight-aggressive strategy
 tuned to get you into the money.
 
-It has two parts:
+It has three parts:
 
 - **The engine** (`poker_coach/`, pure Python, no dependencies): hand
   evaluator, equity calculator, ICM model, push/fold equilibrium solver,
@@ -12,6 +12,102 @@ It has two parts:
 - **The coach** (Claude, following `CLAUDE.md` and `PLAYBOOK.md`): reads your
   pictures, keeps the table up to date, runs the engine and gives you the
   answer in one line.
+- **The table app** (`poker_coach/app/`): the same engine behind a page in
+  your browser, for when you want to run it yourself. It comes first below.
+
+## The table app
+
+A page in your browser where you enter the table by hand, typing or clicking
+what you see, and the coach answers each of your decisions: the action and
+its size, one reason, the number that decides it and the range chart. Nothing
+reads the screen, nothing clicks for you and nothing leaves the computer: the
+program is a small server on 127.0.0.1 written with Python's standard library
+alone, and the page is plain HTML, CSS and JavaScript with its fonts beside
+it. It is for study and play money; real-money sites ban real-time help.
+
+**Start it.** On Windows, double-click `Start Poker Coach.bat`: it needs
+Python 3.10 or newer, installs nothing and works offline (`START HERE.txt`
+says the same in a few lines). Anywhere:
+
+```bash
+python3 -m poker_coach app                      # http://127.0.0.1:8765/, and the browser opens on it
+python3 -m poker_coach app --port 9000 --no-browser --folder ~/my-tables
+```
+
+A black window stays open while it runs; closing it, or Ctrl+C in it, stops
+the coach. When port 8765 is taken it moves to the next free one and says so.
+`Build exe.bat` (or `python tools/build_exe.py --check`, with `pip install
+pyinstaller`) makes `dist/PokerCoach.exe`: the same app as one program that
+needs no Python. It has no black window; a small one shows the address and
+a Stop button. Build it on the computer you use it on.
+
+**Three modes**, each with its own saved table (the tabs in the header, or
+Alt+1, Alt+2, Alt+3):
+
+| Mode | The table | What answers |
+|---|---|---|
+| Tournament | 2 to 9 seats, a blind ladder, players left, places paid, payouts | The engine with ICM, as `advise` does. Before the money a survival guard turns a play that risks the stack into a fold when the all-in or fold table would not make it |
+| Spin & Gold | 3 seats, heads-up after a bust, winner takes all, a tally of games and wins | The spin tables on chips; the engine above 16 big blinds |
+| All-In or Fold | 4 seats, stacks cut to 8 big blinds at the deal, the fee, the session's result in big blinds | The solved All-In or Fold tables |
+
+**A hand.** `N` deals. Type your two cards (`a k s` is ace-king suited,
+`a h k d` the exact cards), then what happens: a seat's digit and one of
+`f c x b r a` for that player, the same letters alone for you. Players you
+skip over are folded (or checked) for you. When it is your turn the answer is
+on screen and `Space` does what it says. `?` lists every key, and everything
+can also be done with the mouse. Undo is `Backspace`, as often as you like.
+The hand history (`Y`) keeps each hand with what the coach said and what you
+did; its Copy as text button puts the session's hands on the clipboard.
+
+**The tournament settings** (`I`, `G`, or the menu): players left and places
+paid tell the coach how far the money is; without them it plays on chip maths
+and says so. Three styles: *Cash first* (the survival guard, and a min-cash
+counts double until the bubble bursts), *Survive, then win* (the default: the
+guard on plain prize maths) and *Max EV* (plain prize maths, no guard). Two
+plans: *Full* and *All-in or fold* (one decision a hand, from the all-in or
+fold tables).
+
+**Where things are saved.** In `tournament/app/` in this folder, after every
+change: `tournament.json`, `spin.json` and `aof.json` (one per mode: the
+table, the hand, the undo steps, the last 500 hands) and `app.json` (the mode
+on screen, chips or big blinds, the deck). The next start goes on from there;
+delete a file to start that mode from nothing. `--folder <path>` saves
+somewhere else, and so does the `POKER_COACH_APP` variable (`--folder` wins).
+The packaged program saves in `PokerCoach/app` in your home folder.
+
+**Changing it.** What a user would want to change is plain data in
+`poker_coach/app/defaults.py`, with a comment on every line:
+
+- the blind ladders (`REGULAR_LEVELS`, `TURBO_LEVELS`, `SPIN_LEVELS`: small
+  blind, big blind and ante of each level) and which ladder a new session
+  starts on. One tournament's own levels need no edit: paste them in Settings;
+- starting stacks and table sizes (`START_STACK`, `TABLE_SIZE`), the All-In
+  or Fold cap and fee (`AOF_CAP_BB`, `AOF_FEE_BB`), who pays the ante;
+- the bet and raise sizes offered as buttons (`OPEN_SIZES_BB`,
+  `RERAISE_SIZES`, `BET_SIZES`), the default style and plan;
+- the key map (`KEYS_TABLE`, `KEYS_SEAT`, `KEYS_TYPE`): change a key there
+  and both the page and its `?` list follow.
+
+Start the program again after an edit (and build `PokerCoach.exe` again: the
+file is inside it). The numbers the coach itself uses (when the guard looks,
+how close "close to the money" is) are at the top of
+`poker_coach/app/advice.py`.
+
+**The code.** `model.py` holds the table and the rules of a hand (every
+change is one intent, such as `{"op": "deal"}`, and a hand is replayed from
+its list of events), `advice.py` turns the table into the engine's question
+and the engine's answer into the panel, `server.py` serves the page and three
+addresses (`/api/view`, `/api/intent`, `/api/advice`), `static/` is the page.
+The design notes are in `docs/table-app/`.
+
+```bash
+python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package
+```
+
+It has been checked in Chromium on Linux. On Windows the .bat files and the
+.exe build have not been run yet: `Build exe.bat` ends with a check that
+starts the program it built and asks it for the page, the fonts and an
+answer in each mode, and says what failed.
 
 ## How to use it
 
@@ -185,6 +281,10 @@ which all-in or fold leaves out. The details are in [PLAYBOOK.md](PLAYBOOK.md).
 
 ## Live table reader (play money and research)
 
+The older program, from before the table app. It did not read the poker
+client it was made for well enough, which is why the table app is entered by
+hand. On Windows it starts with `Start Screen Reader (old).bat`.
+
 A small program that watches a poker table on your screen and shows, in a
 window that stays on top, what the coach would do. It never clicks: you
 decide. It only gives advice at tables that show a play-money marker
@@ -254,8 +354,10 @@ python3 -m poker_coach live-setup --redo pot,s3_bet   # mark some boxes again
   go down.
 - **The one program for Windows.** `python tools/build_exe.py` (with
   `pip install pyinstaller`) builds `dist/PokerCoach.exe`: no Python needed
-  to run it, it opens the launcher, and keeps its files in `PokerCoach` in
-  your home folder. Build it on the computer you use it on.
+  to run it. Double-clicked it starts the table app; `PokerCoach.exe
+  live-app` opens this launcher, if Pillow, mss and pydantic were installed
+  when it was built. It keeps its files in `PokerCoach` in your home folder.
+  Build it on the computer you use it on.
 - **Checked how.** On a drawn table, not a real client: 6,000 numbers in 15
   fonts and sizes at random sub-pixel offsets, none misread (unsure ones are
   asked); a whole hand followed street by street; random spots on every
@@ -299,7 +401,7 @@ you play.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests        # about 80 tests, under a minute
+python3 -m unittest discover -s tests        # about 380 tests, two minutes
 ```
 
 The data files in `poker_coach/data/` are generated:

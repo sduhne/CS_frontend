@@ -386,15 +386,112 @@ python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 
   every page.
 - The sheet is a study aid, like everything else here.
 
-## Live table reader (play money and research)
+## Table app (the user's manual tracker)
 
-The user asked for a program that reads their screen and suggests the action,
-for play-money tournaments and research, running on their PC with no API.
-`poker_coach/live/` is that program; it runs on the user's computer, not in
-this session.
+What the user starts now: a page in their browser where they type or click
+what happens at their table, and the coach answers each of their decisions.
+`poker_coach/app/` is that program; it runs on the user's computer, not in
+this session. Standard library only: nothing to install, no network.
 
 ```bash
-python3 -m poker_coach live-app                        # the launcher: set up, teach, check, start (the .exe opens it)
+python3 -m poker_coach app                             # 127.0.0.1:8765, opens the browser ("Start Poker Coach.bat" runs this)
+python3 -m poker_coach app --port 9000 --no-browser    # another port; only print the address
+python3 -m poker_coach app --folder <path> --verbose   # sessions saved elsewhere; log every request and the coach's errors
+python tools/build_exe.py --check                      # dist/PokerCoach.exe, then start it and check the page and one answer per mode
+python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about a minute
+```
+
+- **Three modes**, each with its own saved table: tournament (2 to 9 seats,
+  ICM), Spin & Gold (3 seats, chips are money) and All-In or Fold (4 seats,
+  8bb cap, the fee). The user is always seat 1; seats count clockwise.
+- **Pipeline.** The page (`static/`: `render.js` draws, `controller.js`
+  reads the keys) holds no poker rules. A key or a click is one intent,
+  `POST /api/intent {"op": "act", ...}` -> `model.py` (`Session.apply`:
+  players who were skipped fold or check, a bet above the stack is an
+  all-in; it saves, and it is one undo step) -> `replay(hand)` rebuilds
+  stacks, pot, who acts next and what it costs from the hand's list of
+  events -> the view the page draws (`GET /api/view`). When it is the
+  user's turn the page asks `GET /api/advice?rev=N` -> `advice.py` reads the
+  table in the engine's terms -> the engine (`advise` before the flop,
+  `binary`, `spin` or `aof` tables, `advise_postflop` after it) -> the
+  panel. `server.py` works the answer out on a copy of the session and
+  keeps it for that revision.
+- **Files.** Sessions are in `tournament/app/`: `tournament.json`,
+  `spin.json`, `aof.json` and `app.json`, saved after every change (the
+  .exe: `~/PokerCoach/app/`; `--folder` or `$POKER_COACH_APP` names another
+  folder, `--folder` wins). `docs/table-app/` has the design notes.
+- **Which file for which problem.**
+  - A wrong pot, stack, side pot, seat name or player to act; an action
+    refused or accepted wrongly; undo; saving: `app/model.py` (its docstring
+    lists every intent).
+  - A typed amount read wrongly (`12.5k`, `3x`, `66%`, `300/600/75`):
+    `app/amounts.py`.
+  - A wrong answer, reason, number, chart or warning: `app/advice.py`
+    (its numbers are at the top). If `advise` or `quick` gives the same
+    answer for the same spot, the cause is in the engine, not the app.
+  - The page does not open, an answer never comes or is out of date, the
+    port: `app/server.py`.
+  - The look, a key that does nothing, something that cannot be clicked:
+    `app/static/` (`render.js`, `controller.js`, `app.css`).
+  - Blind ladders, starting stacks, bet-size buttons, the key map:
+    `app/defaults.py`, plain data. The user can change these themselves.
+- **Styles** (tournament). `survive` (the default, "Survive, then win"):
+  goal `balanced` and the survival guard. `cash` ("Cash first"): goal `itm`
+  and the guard. `maxev` ("Max EV"): goal `balanced`, no guard. While
+  re-entry is open, and in Spin & Gold and All-In or Fold, it is chip EV with
+  no guard.
+- **Plans.** `full`: the engine, as `advise`. `allin` ("All-in or fold"):
+  the `binary` tables answer in two words and the engine is the second line.
+- **Survival guard** (tournament, full plan, before the money). When the
+  engine's play puts a third of the stack or more in before the flop, the
+  all-in or fold table is asked too. If the table folds, the headline is
+  FOLD, marked "survival fold", and the engine's play becomes the second
+  line. It is off in the money and at a final table, for a stack too short
+  to wait, when the fold clock says CANNOT, with a type tag on the player
+  the decision depends on, and in the Max EV style. The source line under
+  the answer says which: "the all-in table agrees", "SURVIVAL FOLD (engine:
+  ...)" or "GUARD OFF (why)". It is the same rule as in the tight-aggressive
+  sheet: before the money the table wins, in the money the engine does.
+- **When an answer looks wrong**, ask for the hand from the history sheet
+  (`Y`, then Copy as text, and paste it here): it has the blinds, the
+  players, the user's seat, cards and stack, and every action. Ask also for
+  the style and plan, players left and places paid, and the source line of
+  the answer. Then run the same spot with `quick` or `advise` (`binary`,
+  `spin`, `aof` for those tables) and say which of the two is wrong and why
+  in one clause. "ICM off" in the source line means players left or places
+  paid were not entered.
+- **It knows what was typed.** A stack drawn with `~` was never entered (a
+  guess). Opponent ranges move with the type tags the user sets (seat digit,
+  `T`). "Players left" that is many hands old gets a warning.
+- **Manual on purpose.** It must not read the screen, click for the user or
+  hide from the poker client (that includes excluding its window from
+  screen capture, and drawing over the table). Do not add any of the three.
+  It is for study and play money: if the user says they use it at a
+  real-money table, say once that real-money sites ban real-time help and
+  the account can be closed, and offer a review of the hand history instead.
+- **The .exe.** `tools/build_exe.py` (PyInstaller, on the user's Windows PC)
+  puts the page, its fonts and the solved tables inside. Double-clicked it
+  starts the table app. It has no console: a small window shows the address
+  and a Stop button, and a second start opens the running copy's page.
+  `PokerCoach.exe live-app` opens the old screen reader's launcher.
+- **Checked in Chromium on Linux only.** The page, the server and a Linux
+  build of the program were run here; the .bat files, the Windows .exe and
+  other browsers were not. Say so, and treat the user's first start as the
+  evidence: when it does not start, ask for the text in the black window;
+  when the page misbehaves, for the browser's name and what its console
+  shows (F12).
+
+## Live table reader (play money and research)
+
+The older program: it reads the user's screen and suggests the action, for
+play-money tournaments and research, on their PC with no API. It did not read
+the user's poker client well, so the table app above is now what the user
+starts; this one stays reachable ("Start Screen Reader (old).bat", or
+`live-app`). `poker_coach/live/` is that program; it runs on the user's
+computer, not in this session.
+
+```bash
+python3 -m poker_coach live-app                        # the launcher: set up, teach, check, start (the .exe: PokerCoach.exe live-app)
 python3 -m poker_coach live-setup --seats 6            # mark the table and every box on it, then label them
 python3 -m poker_coach live-setup --redo pot,s3_bet    # mark some boxes again
 python3 -m poker_coach live-teach                      # label what it cannot read yet (--log: last session, --all)
@@ -455,9 +552,11 @@ python tools/build_exe.py                              # dist/PokerCoach.exe, bu
   review instead.
 - **The .exe.** `tools/build_exe.py` runs PyInstaller (on the user's
   Windows PC; it builds for the system it runs on) with the data files and
-  without `anthropic`. No arguments opens the launcher; arguments run the
-  command line. Its files go to `~/PokerCoach`. Only a Linux build has been
-  run here; the Windows one is untested until the user builds it.
+  without `anthropic`. No arguments starts the table app; arguments run the
+  command line, so this launcher is `PokerCoach.exe live-app` (it is inside
+  only when Pillow, mss and pydantic were installed for the build). Its
+  files go to `~/PokerCoach`. Only a Linux build has been run here; the
+  Windows one is untested until the user builds it.
 - **When a reading is wrong**, ask for the output of `live-test --screen`
   (or the screenshot and the line from
   `tournament/live-log/<time>/reads.jsonl`). A wrong or unknown character or
@@ -530,7 +629,8 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
 ## Housekeeping
 
 - State lives in `tournament/current.json` (git-ignored). `new` archives the
-  previous tournament.
+  previous tournament. The table app keeps its own sessions beside it, in
+  `tournament/app/`; the two do not read each other.
 - After the tournament, if asked for a review, use `log` and `show --log 30`.
 - Tests: `python3 -m unittest discover -s tests` (the live reader's tests need
   `pip install -r requirements-live.txt`; without it they are skipped). Rebuild data only if ranges

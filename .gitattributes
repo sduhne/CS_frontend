@@ -1,1 +1,3 @@
 *.bat -text
+START?HERE.txt -text
+*.woff2 binary

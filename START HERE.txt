@@ -1,41 +1,35 @@
 POKER COACH
 ===========
 
-Everything is in this folder: the code, the solved tables, and whatever the
-coach saves. Nothing is sent anywhere: no internet and no API while it runs.
-
 TO START (Windows)
-  1. Install Python once, from https://www.python.org/downloads/
-     In the installer tick "Add python.exe to PATH".
-  2. Double-click "Start Poker Coach.bat".
-     The first time it installs three small libraries (Pillow, mss, pydantic).
-     That one step needs the internet.
-  3. In the window: 1 Set up the table, 2 Teach, 3 Check what it reads now, 4 Start.
+  Unpack the whole zip, then double-click "Start Poker Coach.bat" in the unpacked folder.
+  It needs Python 3.10 or newer and nothing else: nothing is installed, no internet is used.
+  No Python yet: get it from https://www.python.org/downloads/ and tick
+  "Add python.exe to PATH" in the installer.
+  If Windows asks whether to run the file, choose Run.
 
-  Mac or Linux: open a terminal in this folder and run
-     pip install -r requirements-live.txt
-     python3 -m poker_coach live-app
+WHAT OPENS
+  A black window, which must stay open, and a page in your browser called Menlo Coach.
+  On the page you type or click what happens at your table, and the coach answers.
+  Three modes: Tournament, Spin & Gold, All-In or Fold. Press ? on the page for the keys.
+  Nothing reads your screen, nothing clicks for you, nothing is sent anywhere.
 
-TO MAKE ONE PROGRAM (optional)
-  Double-click "Build exe.bat". It creates dist\PokerCoach.exe, which runs
-  without Python. That program keeps its files in the PokerCoach folder of
-  your user folder instead of here.
+WHERE YOUR TABLES ARE SAVED
+  In this folder, in tournament\app, after every change. The next start goes on from there.
 
-WHERE THINGS ARE
-  poker_coach\            the engine: ranges, the maths, every command
-  poker_coach\live\       the screen reader, setup, teaching, the windows
-     vision.py            recognises digits and cards from your examples
-     local.py             reads one screenshot of the table
-     decide.py            turns a reading into position, stack, action, advice
-     wizard.py            the setup, teaching and launcher windows
-     app.py               the loop that watches the table, and its window
-  poker_coach\data\       the solved tables (JSON)
-  tools\                  the programs that built those tables; build_exe.py
-  tests\                  the tests:  python -m unittest discover -s tests
-  PLAYBOOK.md             the strategy, in words
-  README.md               every command
-  tournament\             made when you use it: your settings, the table
-                          setup, what you taught it, session logs
+TO STOP
+  Close the black window. Closing only the page leaves the coach running: the page comes
+  back at the address the black window shows (usually http://127.0.0.1:8765/).
 
-Play money and study only: it gives no advice unless the table shows your
-play-money marker. Real-money sites forbid this kind of help.
+STUDY AND PLAY MONEY ONLY
+  Real-money sites ban real-time help. Using this during a real-money game can close an account.
+
+ALSO HERE
+  "Start Screen Reader (old).bat"  the older program that reads the table from the screen.
+  "Build exe.bat"   makes dist\PokerCoach.exe, the same table app as one program that runs
+                    without Python. It shows a small window with a Stop button, and saves
+                    your tables in PokerCoach\app in your user folder.
+  Mac or Linux      in a terminal in this folder:  python3 -m poker_coach app
+  README.md         everything else: what to change (blinds, stacks and keys are in
+                    poker_coach\app\defaults.py), the commands, the tests
+  PLAYBOOK.md       the strategy, in words
