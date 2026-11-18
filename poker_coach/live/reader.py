@@ -13,7 +13,7 @@ import base64
 import io
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .schema import TableRead, table_from_dict
 
@@ -68,6 +68,7 @@ class ReadResult:
     output_tokens: int = 0
     cost: float = 0.0
     model: str = ""
+    blocking: list = field(default_factory=list)   # the local reader: what it could not read that a decision needs
 
 
 def encode_image(image, max_px: int = DEFAULT_MAX_PX) -> str:

@@ -982,7 +982,7 @@ def _live_config(a):
 
     cfg = LiveConfig.load()
     for key in ("mode", "reader", "seats", "model", "effort", "max_px", "min_gap", "goal", "entrants", "paid",
-                "buyin", "monitor"):
+                "buyin", "monitor", "opponents"):
         val = getattr(a, key, None)
         if val is not None:
             setattr(cfg, key, val)
@@ -1008,14 +1008,21 @@ def cmd_live_setup(a) -> int:
     elif cfg.reader == "local":
         from .live.wizard import setup_local
 
+        redo = [x.strip() for x in (a.redo or "").split(",") if x.strip()]
         try:
-            done = setup_local(cfg, LAYOUT_PATH, BOOK_PATH, cfg.seats, teach=not a.no_teach)
+            done = setup_local(cfg, LAYOUT_PATH, BOOK_PATH, cfg.seats, teach=not a.no_teach, redo=redo or None)
         except ImportError as exc:
             return _fail(f"the setup needs tkinter ({exc}): install Python from python.org, or on Linux python3-tk")
+        except ValueError as exc:
+            return _fail(str(exc))
         if done is None:
             return _fail("setup cancelled")
         cfg = done
+        from .live.local import Layout
+
         _out(f"saved the table to {LAYOUT_PATH}")
+        for note in Layout.load(LAYOUT_PATH).advice():
+            _out(f"note: {note}")
     else:
         try:
             done = setup_window(cfg)
@@ -1059,9 +1066,12 @@ def cmd_live_teach(a) -> int:
             folder = sessions[-1]
         items = items_from_images(glob.glob(os.path.join(folder, "*.png")), layout, book, limit=a.limit)
     else:
-        from .live.capture import Grabber, Rect
+        from .live.capture import Rect, dpi_aware, grab_once
 
-        items = teach_items(Grabber(Rect(*cfg.region), cfg.monitor).grab(), layout, book, everything=a.all)
+        if not cfg.region:
+            return _fail("run live-setup first")
+        dpi_aware()
+        items = teach_items(grab_once(Rect(*cfg.region), cfg.monitor), layout, book, everything=a.all)
     if not items:
         _out("nothing to teach: every box with something in it is already readable")
         _out(book.summary())
@@ -1071,7 +1081,7 @@ def cmd_live_teach(a) -> int:
         n = teach_console(items, book, BOOK_PATH, picture)
     else:
         try:
-            n = teach_window(items, book, BOOK_PATH)
+            n = teach_window(items, book, BOOK_PATH, confirm=a.all)
         except ImportError:
             n = teach_console(items, book, BOOK_PATH, os.path.join(os.path.dirname(BOOK_PATH), "teach-box.png"))
     _out(f"learned {n} of {len(items)} boxes; saved to {BOOK_PATH}")
@@ -1111,12 +1121,24 @@ def cmd_live_test(a) -> int:
     from .live.app import test_once
     from .live.reader import ReadError
 
+    if a.screen:
+        from .live.capture import Rect, dpi_aware, grab_once
+        from .live.wizard import check_text
+
+        cfg = _live_config(a)
+        if not cfg.region:
+            return _fail("run live-setup first")
+        dpi_aware()
+        _out(check_text(cfg, grab_once(Rect(*cfg.region), cfg.monitor)))
+        return 0
     if not (a.image or a.json):
-        return _fail("give --image <screenshot> or --json <saved reading>")
+        return _fail("give --image <screenshot>, --json <saved reading> or --screen")
     try:
         _out(test_once(_live_config(a), a.image, a.json, force=not a.turn_only, save_json=a.save_json))
     except ReadError as exc:
         return _fail(str(exc))
+    except OSError as exc:
+        return _fail(f"cannot open the file: {exc}")
     return 0
 
 
@@ -1131,6 +1153,8 @@ def _live_options(p, setup: bool = False) -> None:
     p.add_argument("--seats", type=int, help="seats at the table, for the local setup (default 6)")
     if setup:
         return
+    p.add_argument("--opponents", choices=("unknown", "loose", "tight", "station", "nit", "lag", "maniac"),
+                   help="how the table plays (default unknown; loose for tables that call too much)")
     p.add_argument("--model", help="vision model (default claude-opus-5-5; claude-haiku-5-5 is ~40x cheaper and faster)")
     p.add_argument("--effort", choices=("low", "medium", "high"), help="reading effort (default low)")
     p.add_argument("--max-px", type=int, dest="max_px", help="long edge of the image sent (default 1600)")
@@ -1400,6 +1424,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--buttons", help="the action-button area as left,top,width,height inside the table "
                                      "(taken now: it must not be your turn)")
     p.add_argument("--no-teach", action="store_true", help="local reader: do not ask what the boxes show at the end")
+    p.add_argument("--redo", help="local reader: mark only these boxes again, e.g. pot,s3_bet,hero1 "
+                                  "(marker, buttons, hero1-2, board1-5, pot, players_left, button_tpl, backs_tpl, "
+                                  "s<seat>_stack/_bet/_button/_cards)")
     _live_options(p, setup=True)
     p.set_defaults(fn=cmd_live_setup)
 
@@ -1425,6 +1452,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("live-test", help="live reader: read one saved screenshot (or reading) and print the suggestion")
     p.add_argument("--image", help="a screenshot of a table")
+    p.add_argument("--screen", action="store_true", help="read the table on the screen now and print what it sees")
     p.add_argument("--json", help="a saved reading (JSON) instead of a screenshot")
     p.add_argument("--save-json", help="also write the reading to this file")
     p.add_argument("--turn-only", action="store_true", help="suggest only if the screenshot shows your action buttons")

@@ -51,6 +51,21 @@ def difference(a: list[int] | None, b: list[int] | None) -> float:
     return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
 
 
+def dpi_aware() -> None:
+    """Windows: work in real pixels.  Without this a scaled display (125%, 150%...) gives
+    blurred, shrunk screenshots and windows that do not line up with them.  It must run
+    before the first window is made; elsewhere it does nothing."""
+    try:
+        import ctypes
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)      # per monitor
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
 def screen_grabber():
     """An ``mss`` screen grabber (``mss.MSS`` in new versions, ``mss.mss`` in old ones)."""
     import mss
@@ -72,6 +87,21 @@ class Grabber:
         r = self.region
         shot = self.sct.grab({"left": r.left, "top": r.top, "width": r.width, "height": r.height})
         return Image.frombytes("RGB", shot.size, shot.rgb)
+
+    def close(self) -> None:
+        try:
+            self.sct.close()
+        except Exception:
+            pass
+
+
+def grab_once(region: Rect, monitor: int = 1):
+    """One grab of a region (a grabber made and closed in the calling thread)."""
+    g = Grabber(region, monitor)
+    try:
+        return g.grab()
+    finally:
+        g.close()
 
 
 class ButtonWatch:

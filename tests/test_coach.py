@@ -1892,7 +1892,7 @@ class LocalTableReader(unittest.TestCase):
 
     def test_size_change_and_learning_errors(self):
         from fake_table import render
-        from poker_coach.live.local import TeachItem, learn
+        from poker_coach.live.local import PIECES, TeachItem, learn
         from poker_coach.live.reader import ReadError
         from poker_coach.live.vision import Book
         img = render(self.SETUP)[0]
@@ -1901,7 +1901,8 @@ class LocalTableReader(unittest.TestCase):
         crop = img.crop((self.boxes["seats"][0]["stack"][0], self.boxes["seats"][0]["stack"][1],
                          self.boxes["seats"][0]["stack"][0] + 120, self.boxes["seats"][0]["stack"][1] + 26))
         book = Book()
-        self.assertIn("separate characters", learn(book, TeachItem("text", "your stack", crop), "5000"))
+        # four characters typed for five pieces: label the pieces one by one instead
+        self.assertEqual(learn(book, TeachItem("text", "your stack", crop), "5000"), PIECES)
         self.assertEqual(learn(book, TeachItem("text", "your stack", crop), "5,000"), "")
         self.assertEqual(book.glyphs.read(crop), "5,000")
         self.assertEqual(learn(book, TeachItem("text", "x", crop), "  "), "skipped")
@@ -1924,3 +1925,297 @@ class LocalTableReader(unittest.TestCase):
             self.assertEqual(parse_amount(text), value, text)
         self.assertEqual(word_of("All-in"), "all-in")
         self.assertEqual(word_of("Sitting Out"), "away")
+
+
+@unittest.skipUnless(_has("pydantic") and _has("PIL"), "the local reader needs pydantic and Pillow "
+                     "(pip install -r requirements-live.txt)")
+class LocalCoach(LocalTableReader):
+    """The whole chain on a drawn table: reading -> position, stack, the action in front -> advice,
+    followed through a hand, and what happens when something cannot be read."""
+
+    BOARD = ["Ks", "7d", "2c"]
+
+    @staticmethod
+    def spot(stacks, bets, cards, **extra):
+        seats = [{"stack": s, "bet": b, "cards": c} for s, b, c in zip(stacks, bets, cards)]
+        return dict({"seats": seats, "button": 1, "hero": ["Ah", "Kd"]}, **extra)
+
+    def see(self, reader, spec):
+        from fake_table import render
+        return reader.read(render(spec)[0])
+
+    # the button is seat 2: seat 3 small blind, seat 4 big blind, seat 5 first to act, hero in the cutoff
+    IN = [True] * 6
+    RAISED = ([4975, 4975, 4875, 4775, 4475, 4975], [0, 0, 100, 200, 500, 0])
+
+    def test_position_stack_and_action_in_front(self):
+        from poker_coach.live.decide import HandMemory, LiveSettings, suggest
+        reader = self.reader()
+        res = self.see(reader, self.spot(*self.RAISED, [True, True, True, True, True, False], pot=950))
+        self.assertEqual((res.table.small_blind, res.table.big_blind, res.table.ante_kind), (100, 200, "per_player"))
+        sug = suggest(res.table, LiveSettings(), HandMemory(), blocking=res.blocking)
+        self.assertEqual(sug.kind, "act")
+        for part in ("AKo", "CO", "25bb", "6 players", "raises to 2.5bb"):
+            self.assertIn(part, sug.info)
+        # the same spot but the player between the raiser and hero still has cards: not hero's turn yet
+        early = self.see(reader, self.spot(*self.RAISED, self.IN, pot=950))
+        wait = suggest(early.table, LiveSettings(), HandMemory(), blocking=early.blocking)
+        self.assertEqual(wait.kind, "wait")
+        self.assertIn("Seat 6", wait.reason)
+        forced = suggest(early.table, LiveSettings(), HandMemory(), force=True, blocking=early.blocking)
+        self.assertEqual(forced.kind, "act")
+        self.assertTrue(any("Seat 6" in w for w in forced.warnings))
+        # nobody in yet and a player before hero has not acted: wait as well
+        first = self.see(reader, self.spot([4975, 4975, 4875, 4775, 4975, 4975], [0, 0, 100, 200, 0, 0],
+                                           [True, True, True, True, False, True], pot=450))
+        self.assertEqual(suggest(first.table, LiveSettings(), HandMemory()).kind, "wait")
+        folded = self.see(reader, self.spot([4975, 4975, 4875, 4775, 4975, 4975], [0, 0, 100, 200, 0, 0],
+                                            [True, True, True, True, False, False], pot=450))
+        sug = suggest(folded.table, LiveSettings(), HandMemory())
+        self.assertIn("folded to you", sug.info)
+        self.assertTrue(sug.action.startswith(("RAISE", "ALL-IN")), sug.action)
+
+    def test_a_hand_is_followed_street_by_street(self):
+        from poker_coach.live.decide import HandMemory, LiveSettings, suggest
+        reader, mem, tag = self.reader(), HandMemory(), LiveSettings()
+        two = [True, False, False, False, True, False]
+        frames = [
+            self.spot([4975, 4975, 4875, 4775, 4975, 4975], [0, 0, 100, 200, 0, 0], self.IN, pot=450, turn=False),
+            self.spot(*self.RAISED, self.IN, pot=950, turn=False),
+            self.spot(*self.RAISED, [True, True, True, True, True, False], pot=950),
+            self.spot([3675, 4975, 4875, 4775, 4475, 4975], [1300, 0, 100, 200, 500, 0], two, pot=2250, turn=False),
+            self.spot([3675, 4975, 4875, 4775, 3675, 4975], [1300, 0, 100, 200, 1300, 0], two, pot=3050, turn=False),
+            self.spot([3675, 4975, 4875, 4775, 3675, 4975], [0] * 6, two, pot=3050, board=self.BOARD),
+            self.spot([2675, 4975, 4875, 4775, 3675, 4975], [1000, 0, 0, 0, 0, 0], two, pot=4050, turn=False,
+                      board=self.BOARD),
+            self.spot([2675, 4975, 4875, 4775, 2675, 4975], [1000, 0, 0, 0, 1000, 0], two, pot=5050, turn=False,
+                      board=self.BOARD),
+            self.spot([2675, 4975, 4875, 4775, 675, 4975], [0, 0, 0, 0, 2000, 0], two, pot=7050,
+                      board=self.BOARD + ["9h"]),
+        ]
+        shown = []
+        for spec in frames:
+            res = self.see(reader, spec)
+            self.assertEqual(res.blocking, [])
+            sug = suggest(res.table, tag, mem, blocking=res.blocking)
+            self.assertEqual((res.table.small_blind, res.table.big_blind), (100, 200))   # also after the raises
+            if sug.kind == "act":
+                shown.append(sug)
+        pre, flop, turn = shown
+        self.assertIn("raises to 2.5bb", pre.info)
+        self.assertIn("checked to you", flop.info)
+        self.assertIn("CO", flop.info)
+        self.assertIn("18bb behind", flop.info)
+        self.assertTrue(flop.action.startswith("BET"), flop.action)             # top pair, top kicker
+        self.assertIn("to call 10.0bb", turn.info)
+        self.assertTrue(turn.action.split()[0] in ("CALL", "RAISE", "FOLD"), turn.action)
+        self.assertFalse(any("preflop action not seen" in w for s in (flop, turn) for w in s.warnings))
+        # what it remembers: who opened, that hero re-raised, the flop call and the turn bet
+        self.assertEqual(mem.roles, {"Seat 5": "open", "You": "3bet"})
+        self.assertTrue(mem.hero_raised)
+        self.assertEqual(mem.raises, 2)
+        line = mem.lines["Seat 5"]
+        self.assertEqual([(st, act) for st, act, _ in line], [("flop", "call"), ("turn", "bet")])
+        self.assertAlmostEqual(line[1][2], 2000 / 5050, places=2)
+
+    def test_what_it_cannot_read_stops_the_advice(self):
+        from poker_coach.live.decide import HandMemory, LiveSettings, suggest
+        from poker_coach.live.local import LocalReader
+        from poker_coach.live.vision import Book, CardBook, GlyphBook
+        # a book that has never seen a 5: the raise to 500 cannot be read, so no advice (not "folded to you")
+        chars = {c: v for c, v in self.book.glyphs.chars.items() if c != "5"}
+        reader = LocalReader(self.layout, Book(GlyphBook(chars), self.book.cards), self.boxes["buttons"],
+                             self.baseline)
+        res = self.see(reader, self.spot([4974, 4974, 4874, 4774, 4474, 4974], [0, 0, 100, 200, 500, 0],
+                                         [True, True, True, True, True, False], pot=944))
+        self.assertTrue(any("seat 5 bet" in b for b in res.blocking), res.blocking)
+        sug = suggest(res.table, LiveSettings(), HandMemory(), blocking=res.blocking)
+        self.assertEqual(sug.kind, "error")
+        self.assertIn("seat 5 bet", sug.reason)
+        self.assertEqual(sug.action, "")
+        # a board card it does not know: no advice, and never mistaken for "before the flop"
+        ranks = {r: v for r, v in self.book.cards.ranks.items() if r != "7"}
+        reader = LocalReader(self.layout, Book(self.book.glyphs, CardBook(ranks, self.book.cards.suits)),
+                             self.boxes["buttons"], self.baseline)
+        res = self.see(reader, self.spot([3675, 4975, 4875, 4775, 3675, 4975], [0] * 6,
+                                         [True, False, False, False, True, False], pot=3050, board=self.BOARD))
+        self.assertTrue(any("board card 2" in b for b in res.blocking), res.blocking)
+        self.assertEqual(suggest(res.table, LiveSettings(), HandMemory(), blocking=res.blocking).kind, "error")
+
+    def test_blinds_are_not_fooled_by_raises(self):
+        reader = self.reader()
+        hand1 = dict(hero=["Ah", "Kd"])
+        folded = [False, False, True, True, False, False]
+        self.see(reader, self.spot([4975] * 6, [0, 0, 100, 200, 0, 0], self.IN, pot=450, **hand1))
+        self.assertEqual((reader.sb, reader.bb), (100, 200))
+        # blind against blind: a raise to 600 and a re-raise to 1,800 look like blinds of 600/1,800
+        self.see(reader, self.spot([4975, 4975, 4375, 3175, 4975, 4975], [0, 0, 600, 1800, 0, 0], folded, pot=2550,
+                                   **hand1))
+        self.assertEqual((reader.sb, reader.bb), (100, 200))
+        # the next hand opens with that war already on: still not taken (blinds do not triple)
+        self.see(reader, self.spot([4975, 4975, 4375, 3175, 4975, 4975], [0, 0, 600, 1800, 0, 0], folded, pot=2550,
+                                   hero=["Qs", "Qc"]))
+        self.assertEqual((reader.sb, reader.bb), (100, 200))
+        # a new level
+        self.see(reader, self.spot([4960] * 6, [0, 0, 150, 300, 0, 0], self.IN, pot=690, hero=["9c", "9d"]))
+        self.assertEqual((reader.sb, reader.bb, reader.ante), (150, 300, 40))
+        # a fresh reader that first sees the small blind already called: the big blind's chips are the blind
+        fresh = self.reader()
+        self.see(fresh, self.spot([4975, 4975, 4775, 4775, 4975, 4975], [0, 0, 200, 200, 0, 0], folded, pot=550))
+        self.assertEqual(fresh.bb, 200)
+
+    def test_blurred_digits_are_asked_not_misread(self):
+        from PIL import Image, ImageDraw, ImageFont
+        from poker_coach.live.vision import GlyphBook, parse_amount
+        try:
+            ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 12)
+        except OSError:
+            self.skipTest("needs the DejaVu font")
+
+        def draw(text, ox, oy, size=13, scale=4):       # drawn large and shrunk: sub-pixel offsets
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size * scale)
+            img = Image.new("RGB", (140 * scale, 40 * scale), (15, 15, 18))
+            ImageDraw.Draw(img).text((12 * scale + ox, 8 * scale + oy), text, font=font, fill=(240, 240, 240))
+            return img.resize((140, 40), Image.LANCZOS)
+
+        book, rng = GlyphBook(), random.Random(5)
+        asked = wrong = 0
+        for i in range(120):
+            value = rng.choice([rng.randint(100, 999), rng.randint(1000, 99999), rng.randint(100000, 2500000)])
+            text = f"{value:,}"
+            img = draw(text, rng.randrange(4), rng.randrange(4))
+            got = book.read(img)
+            if "?" in got or not got:
+                asked += 1
+                self.assertTrue(book.learn(img, text), text)
+            elif parse_amount(got) != value:
+                wrong += 1
+        self.assertEqual(wrong, 0)
+        self.assertLess(asked, 25)                      # it settles after a handful of answers
+
+    def test_an_icon_in_the_box_is_taught_piece_by_piece(self):
+        from PIL import Image, ImageDraw
+        from fake_table import SMALL
+        from poker_coach.live.local import PIECES, TeachItem, learn, learn_pieces
+        from poker_coach.live.vision import Book, glyphs, parse_amount
+
+        def bet_box(text):                               # a chip drawn next to the amount
+            img = Image.new("RGB", (120, 26), (30, 110, 60))
+            d = ImageDraw.Draw(img)
+            d.ellipse((6, 5, 22, 21), fill=(250, 250, 250))
+            d.text((34, 4), text, font=SMALL, fill=(255, 214, 10))
+            return img
+        book, img = Book(), bet_box("1,250")
+        item = TeachItem("text", "seat 2 bet", img, pieces=glyphs(img))
+        self.assertEqual(len(item.pieces), 6)
+        self.assertEqual(learn(book, item, "1,250"), PIECES)
+        self.assertEqual(learn_pieces(book, item, ["", "1", ",", "2", "5", "0"]), "")
+        self.assertEqual(book.glyphs.read(img), "1,250")
+        self.assertEqual(parse_amount(book.glyphs.read(bet_box("5,210"))), 5210)     # the chip reads as nothing
+
+    def test_setup_checks(self):
+        from poker_coach.live.capture import Rect
+        from poker_coach.live.wizard import apply_boxes, layout_boxes, step_label, table_steps
+        self.assertTrue(self.layout.clockwise())
+        self.assertEqual(self.layout.advice(), [])
+        swapped = copy.deepcopy(self.layout)
+        swapped.seats[1], swapped.seats[4] = swapped.seats[4], swapped.seats[1]
+        self.assertFalse(swapped.clockwise())
+        self.assertTrue(any("clockwise" in a for a in swapped.advice()))
+        short = copy.deepcopy(self.layout)
+        short.board, short.pot = short.board[:3], None
+        self.assertEqual(len(short.advice()), 2)
+        # marking one box again changes that box only
+        lay = copy.deepcopy(self.layout)
+        apply_boxes(lay, {"s3_bet": Rect(1, 2, 30, 20), "board4": Rect(5, 6, 30, 50)}, {}, 6)
+        self.assertEqual(lay.seats[2].bet, [1, 2, 30, 20])
+        self.assertEqual(lay.board[3], [5, 6, 30, 50])
+        self.assertEqual(lay.seats[2].stack, self.layout.seats[2].stack)
+        self.assertEqual(lay.marker_template, self.layout.marker_template)
+        keys = [s.key for s in table_steps(6)]
+        self.assertEqual(set(layout_boxes(self.layout)) - set(keys), set())
+        self.assertEqual(step_label("s3_bet"), "seat 3 bet")
+        self.assertEqual(step_label("board4"), "board card 4")
+
+    def test_loop_advises_once_per_spot(self):
+        import queue
+        import time as _t
+        from fake_table import render
+        from poker_coach.live import app
+        two = [True, False, False, False, True, False]
+        waiting = render(self.spot(*self.RAISED, self.IN, pot=950, turn=False))[0]
+        mine = render(self.spot(*self.RAISED, [True, True, True, True, True, False], pot=950))[0]
+        flop = render(self.spot([3675, 4975, 4875, 4775, 3675, 4975], [0] * 6, two, pot=3050,
+                                board=self.BOARD))[0]
+        frames = [waiting] * 4 + [mine] * 12 + [waiting] * 4 + [flop] * 400
+
+        class Grab:
+            k = 0
+
+            def grab(self):
+                Grab.k += 1
+                return frames[min(Grab.k - 1, len(frames) - 1)]
+
+        cfg = app.LiveConfig(region=[0, 0, 960, 640], save_images=False)
+        out = queue.Queue()
+        with tempfile.TemporaryDirectory() as tmp:
+            old = app.LOG_ROOT
+            app.LOG_ROOT = tmp
+            old_gap, app.OBSERVE_EVERY = app.OBSERVE_EVERY, 0.0
+            try:
+                w = app.Worker(cfg, out, reader=self.reader(), grabber=Grab(), poll=0.002)
+                w.start()
+                deadline = _t.time() + 20
+                while Grab.k < 60 and _t.time() < deadline:
+                    _t.sleep(0.02)
+                w.stopped.set()
+                w.join(3)
+            finally:
+                app.LOG_ROOT, app.OBSERVE_EVERY = old, old_gap
+        got = []
+        while not out.empty():
+            u = out.get()
+            got.append(u.suggestion.action.split()[0] if u.suggestion else u.status)
+        acts = [g for g in got if g.isupper()]
+        self.assertEqual(len(acts), 2, got)                     # one for the raise, one for the flop
+        self.assertIn("waiting for your turn", got)
+
+    def test_random_spots_never_crash_or_give_an_illegal_move(self):
+        from fake_table import render
+        from poker_coach.live.decide import HandMemory, LiveSettings, suggest
+        rng = random.Random(21)
+        deck = [r + s for r in "23456789TJQKA" for s in "shdc"]
+        seen = set()
+        for i in range(40):
+            rng.shuffle(deck)
+            board = deck[2:2 + rng.choice([0, 3, 4, 5])]
+            bets = [0, 0, 100, 200, 0, 0] if not board else [0] * 6
+            cards = [True] + [rng.random() < 0.6 for _ in range(5)]
+            raiser = rng.choice([4, 5, 2, 3])
+            if rng.random() < 0.6:
+                bets[raiser] = rng.choice([400, 500, 800, 2400])
+                cards[raiser] = True
+            if not any(cards[1:]):
+                cards[4] = True
+            if not board:                                # before the flop everybody in front of hero has acted
+                for k in (4, 5):
+                    cards[k] = cards[k] and bets[k] > 0
+            stacks = [rng.randint(5, 80) * 200 for _ in range(6)]
+            spec = self.spot(stacks, bets, cards, hero=deck[:2], board=board, pot=sum(bets) + rng.randint(1, 20) * 200)
+            reader = self.reader()
+            reader.sb, reader.bb = 100, 200
+            res = reader.read(render(spec)[0])
+            self.assertEqual(res.blocking, [], spec)
+            for mode in ("tag", "binary"):
+                sug = suggest(res.table, LiveSettings(mode=mode), HandMemory(), blocking=res.blocking)
+                self.assertIn(sug.kind, ("act", "wait"), (sug.reason, spec))
+                seen.add(sug.kind)
+                if sug.kind != "act":
+                    continue
+                first = sug.action.split()[0]
+                facing = max(b for k, b in enumerate(bets) if k and cards[k]) > 0 if board else False
+                if board and facing:
+                    self.assertIn(first, ("CALL", "FOLD", "RAISE"), (sug.action, sug.info))
+                elif board:
+                    self.assertIn(first, ("CHECK", "BET"), (sug.action, sug.info))
+        self.assertIn("act", seen)

@@ -192,25 +192,37 @@ decide. It only gives advice at tables that show a play-money marker
 it is not reading. Real-money sites, and GGPoker and PokerStars even at
 play-money tables, forbid real-time help.
 
-How it works: when your action buttons appear it takes a screenshot of the
-table and reads it **on your computer**: no internet, no API key, no cost.
-The poker client draws the same digits, card corners and dealer button every
-time, so the reader compares each box on the table with examples you gave it
-once. The same engine as `advise` (or the all-in or fold tables) turns the
-reading into an action. A reading takes about 60 ms.
+How it works: it looks at the table several times a second and reads it
+**on your computer**: no internet, no API key, no cost. The poker client
+draws the same digits, card corners and dealer button every time, so the
+reader compares each box on the table with examples you gave it once. The
+same engine as `advise` (or the all-in or fold tables) turns the reading into
+an action. A reading takes about 30 ms.
+
+What the window shows when it is your turn:
+
+```
+ALL-IN
+AKo · CO · 25bb · 6 players · UTG raises to 2.5bb        <- your cards, seat, stack, what happened before you
+re-shoving wins the pot often enough, and you have real equity when called
+their opening range ~17%; your equity vs it 59%; pot odds to call 34%
+```
+
+After the flop the yellow line is `AhKd on Ks7d2c · CO · 18bb behind · pot
+15.2bb · checked to you · flop`, and the advice uses what it saw earlier in
+the hand: who raised before the flop, who bet or called on each street.
 
 ```bash
 pip install -r requirements-live.txt               # Pillow, mss, pydantic (+ tkinter, see the file)
 
-# 1. mark the table and every box on it (cards, stacks, bets, pot, dealer button...)
-python3 -m poker_coach live-setup --seats 6
-# 2. it then asks what each box shows: type it once (12,450 · Ah · Pot: 1,250)
-#    later, label whatever it has not seen yet (a new digit, the card ranks):
-python3 -m poker_coach live-teach                  # from the screen now
-python3 -m poker_coach live-teach --log            # from the screenshots of the last session
-# 3. run it
-python3 -m poker_coach live                        # --mode binary or spin
-python3 -m poker_coach live-app                    # or all of it from one window
+python3 -m poker_coach live-app                    # one window: set up, teach, check, start
+
+# or step by step:
+python3 -m poker_coach live-setup --seats 6        # mark the table and every box on it, then label them
+python3 -m poker_coach live-test --screen          # print what it reads right now: check it against the table
+python3 -m poker_coach live-teach                  # label what it has not learned yet (--log: from the last session)
+python3 -m poker_coach live                        # run (--mode binary or spin; --opponents loose)
+python3 -m poker_coach live-setup --redo pot,s3_bet   # mark some boxes again
 ```
 
 - **Setup.** Draw a box around: the play-money marker, the area where your
@@ -221,35 +233,48 @@ python3 -m poker_coach live-app                    # or all of it from one windo
   dealer button sits when it is that seat's, and where its cards show. Press
   G for a new screenshot when you need cards on the board, S to skip an
   optional box, Backspace to go back. Keep the table window the same size
-  and place afterwards; if it moves, run the setup again.
-- **Teaching.** Each box is cut into characters and each character, card
-  rank and suit is matched against your examples. Anything it is not sure
-  about it does not guess: the reading says "not learned yet" and
-  `live-teach` asks you. In tests on a drawn table, one setup screenshot plus
-  about ten questions taught every digit, rank and suit, after which it read
-  40 new tables with no mistake.
-- **Blinds** are learned from the chips in front of the blinds before the
-  flop (it also looks between your turns), the ante from the pot.
+  and place afterwards, and keep the coach's windows off the table (what
+  covers the table cannot be read; the window warns you).
+- **Teaching.** It shows each box and you type what it says (12,450 · Ah ·
+  Pot: 1,250). If a box has something that is not text (a chip icon) or
+  digits that touch, it asks piece by piece. The same digit drawn a fraction
+  of a pixel to the side is still recognised.
+- **It never guesses.** A bet, a card or your stack that it is not sure of
+  stops the advice: the window says NO ADVICE and what to teach. An unknown
+  bet is never read as "nobody bet".
+- **It waits for the table.** It advises after two readings in a row agree,
+  and again when the spot changes. If your buttons show while a player
+  before you still has cards and no chips in, it says WAIT (Read now
+  overrides; Not my turn teaches it that look of the buttons).
+- **Blinds and ante** are learned from the chips in front of the blinds
+  before the flop; a raise and a re-raise from the blinds are not mistaken
+  for a new level.
+- **Opponents.** `--opponents loose` (or the launcher's choice) for tables
+  that call too much, which is most play-money tables: ranges widen, bluffs
+  go down.
 - **The one program for Windows.** `python tools/build_exe.py` (with
   `pip install pyinstaller`) builds `dist/PokerCoach.exe`: no Python needed
-  to run it, it opens the launcher (Set up, Teach, Start), and keeps its
-  files in `PokerCoach` in your home folder. Build it on the computer you
-  use it on.
+  to run it, it opens the launcher, and keeps its files in `PokerCoach` in
+  your home folder. Build it on the computer you use it on.
+- **Checked how.** On a drawn table, not a real client: 6,000 numbers in 15
+  fonts and sizes at random sub-pixel offsets, none misread (unsure ones are
+  asked); a whole hand followed street by street; random spots on every
+  street with no crash and no illegal move. Your first setup on your client
+  is the real test: use step 3, Check what it reads now.
 - **Claude's vision instead** (`--reader vision`): sends the screenshot to
   Claude and needs an API key (`pip install anthropic`, `ANTHROPIC_API_KEY`).
-  No setup beyond the table, about 2 to 3 cents a reading with the default
-  model (`--model claude-haiku-5-5` is about 40 times cheaper).
-- **Session log.** Every reading, suggestion and time goes to
+  No box setup, about 2 to 3 cents a reading with the default model.
+- **Session log.** Every advised reading goes to
   `tournament/live-log/<time>/reads.jsonl`, with the screenshots
   (`--no-save` keeps only the text), for review and for teaching.
 - **Play money only.** At setup you box your client's play-money marker and
   type what it says; it must be one of the play-money words. Every reading
   checks the marker is still there, and without it there is no advice. Add
   your client's words with `--marker "Fun Table"`.
-- **What it cannot see.** Hands before the ones it read. After the flop it
-  knows who raised before the flop only if it read your preflop decision in
-  the same hand; otherwise it treats opponents as callers and says so.
-  Player names are not read (seats are numbered clockwise from you).
+- **What it cannot see.** Player names (seats are numbered clockwise from
+  you), checks (they leave no chips), and hands it was not running for. If
+  it starts in the middle of a hand it treats opponents as callers and says
+  so. Cards must have light faces, the usual deck.
 
 ## Limits
 

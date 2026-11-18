@@ -24,7 +24,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 
-from .capture import ButtonWatch, ChangeWatch, Grabber, Rect, thumb
+from .capture import ButtonWatch, ChangeWatch, Grabber, Rect, dpi_aware, thumb
 from .decide import DEFAULT_MARKERS, HandMemory, LiveSettings, Suggestion, suggest
 from .reader import DEFAULT_EFFORT, DEFAULT_MAX_PX, DEFAULT_MODEL, ClaudeReader, JsonReader, ReadError, ReadResult
 
@@ -44,6 +44,8 @@ class LiveConfig:
     monitor: int = 1
     buttons: list[int] | None = None         # the action-button area, relative to the region
     baseline: list[int] | None = None        # how that area looks when it is not your turn
+    baselines: list | None = None            # more such looks, added with "Not my turn"
+    opponents: str = "unknown"               # how the table plays: unknown, loose, tight, station...
     markers: list[str] = field(default_factory=lambda: list(DEFAULT_MARKERS))
     mode: str = "tag"
     reader: str = "local"                     # local (this computer, no network) or vision (Claude)
@@ -76,7 +78,12 @@ class LiveConfig:
 
     def settings(self) -> LiveSettings:
         return LiveSettings(mode=self.mode, markers=tuple(self.markers), goal=self.goal,
-                            entrants=self.entrants, paid=self.paid, buyin=self.buyin)
+                            entrants=self.entrants, paid=self.paid, buyin=self.buyin,
+                            opponents=self.opponents)
+
+    def idle_looks(self) -> list:
+        """Every look of the action-button area that means "not your turn"."""
+        return ([self.baseline] if self.baseline else []) + list(self.baselines or [])
 
 
 # --------------------------------------------------------------------------
@@ -125,7 +132,7 @@ class Update:
     session_cost: float = 0.0
 
 
-OBSERVE_EVERY = 1.5          # seconds between the local reader's quiet readings (blinds, ante)
+OBSERVE_EVERY = 0.5          # seconds between the local reader's looks when it is not your turn
 
 
 def make_reader(cfg: LiveConfig):
@@ -141,11 +148,16 @@ def make_reader(cfg: LiveConfig):
     missing = layout.problems()
     if missing:
         raise ReadError("the setup is missing " + ", ".join(missing) + ": run live-setup again")
-    return LocalReader(layout, Book.load(BOOK_PATH), cfg.buttons, cfg.baseline)
+    return LocalReader(layout, Book.load(BOOK_PATH), cfg.buttons, cfg.idle_looks())
 
 
 class Worker(threading.Thread):
-    """Grabs the table, reads it when it is the player's turn, posts suggestions."""
+    """Grabs the table, reads it when it is the player's turn, posts suggestions.
+
+    The local reader costs nothing, so with it the loop looks all the time:
+    between turns to follow the hand (who raised, who bet, the blinds), and on
+    the player's turn until two readings in a row agree; then it advises, and
+    again whenever the spot changes."""
 
     def __init__(self, cfg: LiveConfig, out: "queue.Queue[Update]", reader=None, grabber=None,
                  poll: float = 0.25):
@@ -154,6 +166,7 @@ class Worker(threading.Thread):
         self.force = threading.Event()
         self.paused = threading.Event()
         self.stopped = threading.Event()
+        self.idle = threading.Event()             # "Not my turn": the buttons' look now is an idle look
 
     def run(self) -> None:
         cfg = self.cfg
@@ -163,22 +176,96 @@ class Worker(threading.Thread):
         except Exception as exc:                      # no screen access, no setup, no SDK, no key...
             self.out.put(Update(status=f"cannot start: {exc}"))
             return
-        local = getattr(reader, "model", "") == "local reader" or reader.__class__.__name__ == "LocalReader"
+        if hasattr(reader, "observe"):
+            self._run_local(grabber, reader)
+        else:
+            self._run_vision(grabber, reader)
+
+    # -- the local reader: look all the time ------------------------------
+    def _run_local(self, grabber, reader) -> None:
+        from .local import signature
+
+        cfg = self.cfg
+        settings = cfg.settings()
+        memory = HandMemory()
+        log = SessionLog(cfg.save_images)
+        has_turn = bool(reader.buttons and reader.baselines)
+        how = ("advises when your action buttons appear" if has_turn else
+               "no action-button area marked, so it advises whenever you hold cards: check that it is your turn")
+        self.out.put(Update(status=f"watching ({cfg.mode} mode, local reader): {how}. Log: {log.dir}"))
+        prev = shown = None
+        was_active = False
+        last_look = last_unknown = 0.0
+        while not self.stopped.is_set():
+            try:
+                image = grabber.grab()
+            except Exception as exc:
+                self.out.put(Update(status=f"screen grab failed: {exc}"))
+                time.sleep(2.0)
+                continue
+            if self.idle.is_set():
+                self.idle.clear()
+                look = reader.turn_look(image)
+                if look:
+                    reader.baselines.append(look)
+                    cfg.baselines = (cfg.baselines or []) + [look]
+                    cfg.save()
+                    has_turn = True
+                    self.out.put(Update(status="noted: the buttons looking like this is not your turn"))
+                else:
+                    self.out.put(Update(status="mark the action buttons in the setup first"))
+            force = self.force.is_set()
+            active = reader.hero_turn(image) if has_turn else True
+            now = time.time()
+            if not force and (not active or self.paused.is_set()):
+                if was_active:
+                    was_active, prev, shown = False, None, None
+                    self.out.put(Update(status="waiting for your turn"))
+                if now - last_look >= OBSERVE_EVERY:      # follow the hand between turns
+                    last_look = now
+                    seen = reader.observe(image)
+                    if seen is not None:
+                        if not seen.blocking:
+                            memory.observe(seen.table)
+                        elif now - last_unknown > 10.0 and log.count < 500:
+                            last_unknown = now            # kept for "teach from the last session"
+                            log.record(image, seen, None, "; ".join(seen.blocking))
+                time.sleep(self.poll)
+                continue
+            was_active = True
+            try:
+                result = reader.read(image)
+            except ReadError as exc:
+                self.out.put(Update(status=f"could not read: {exc}"))
+                time.sleep(1.0)
+                continue
+            sig = signature(result.table)
+            if force or (sig == prev and sig != shown):   # the same twice in a row: the table has settled
+                self.force.clear()
+                sug = suggest(result.table, settings, memory, force=force, blocking=result.blocking)
+                if sug.kind in ("act", "error") or force:
+                    log.record(image, result, sug)
+                self.out.put(Update(suggestion=sug, seconds=result.seconds))
+                shown = sig
+            elif not result.blocking:
+                memory.observe(result.table)
+            prev = sig
+            time.sleep(self.poll)
+
+    # -- a reader that costs per reading: once per decision -----------------
+    def _run_vision(self, grabber, reader) -> None:
+        cfg = self.cfg
         if cfg.buttons and cfg.baseline:
             watch = ButtonWatch(Rect(*cfg.buttons), cfg.baseline)
             how = "reads when your action buttons appear"
         else:
-            gap = min(cfg.min_gap, 1.0) if local else cfg.min_gap
-            watch = ChangeWatch(gap)
-            how = f"reads when the table changes (at most every {gap:g}s); mark the action buttons in setup " \
-                  "to read only on your turn"
+            watch = ChangeWatch(cfg.min_gap)
+            how = f"reads when the table changes (at most every {cfg.min_gap:g}s); run live-setup to read only " \
+                  "on your turn"
         settings = cfg.settings()
         memory = HandMemory()
         log = SessionLog(cfg.save_images)
-        who = "local reader" if local else cfg.model
-        self.out.put(Update(status=f"watching ({cfg.mode} mode, {who}): {how}. Log: {log.dir}"))
-        observe = getattr(reader, "observe", None)        # the local reader learns the blinds between turns
-        last_look = 0.0
+        self.out.put(Update(status=f"watching ({cfg.mode} mode, {cfg.model}): {how}. Log: {log.dir}"))
         while not self.stopped.is_set():
             try:
                 image = grabber.grab()
@@ -188,9 +275,6 @@ class Worker(threading.Thread):
                 continue
             fire = watch.update(image)
             force = self.force.is_set()
-            if observe and not (fire or force) and time.time() - last_look > OBSERVE_EVERY:
-                last_look = time.time()
-                observe(image)
             if (fire and not self.paused.is_set()) or force:
                 self.force.clear()
                 self.out.put(Update(status="reading the table..."))
@@ -200,7 +284,8 @@ class Worker(threading.Thread):
                     log.record(image, None, None, str(exc))
                     self.out.put(Update(status=f"could not read: {exc}"))
                     continue
-                sug = suggest(result.table, settings, memory, force=force)
+                sug = suggest(result.table, settings, memory, force=force,
+                              blocking=getattr(result, "blocking", None))
                 log.record(image, result, sug)
                 self.out.put(Update(suggestion=sug, seconds=result.seconds, cost=result.cost,
                                     session_cost=log.cost))
@@ -226,29 +311,52 @@ def _tone(sug: Suggestion) -> str:
     return "go"
 
 
+def _overlap(region, window) -> bool:
+    """The window (left, top, width, height) covers part of the table region."""
+    l, t, w, h = region
+    x, y, ww, wh = window
+    return x < l + w and x + ww > l and y < t + h and y + wh > t
+
+
+def _beside(region, screen_w: int, screen_h: int, w: int, h: int) -> str:
+    """A place for the coach's window that does not cover the table: '+x+y', or '' if there is none."""
+    if not region:
+        return ""
+    l, t, rw, rh = region
+    for x, y in ((l + rw + 8, t), (l - w - 8, t), (l, t + rh + 40), (l, t - h - 60)):
+        if 0 <= x and x + w <= screen_w and 0 <= y and y + h + 40 <= screen_h:
+            return f"+{int(x)}+{int(y)}"
+    return ""
+
+
 def run_window(cfg: LiveConfig, worker: Worker, out: "queue.Queue[Update]", master=None) -> None:
     import tkinter as tk
 
+    if master is None:
+        dpi_aware()
     root = tk.Toplevel(master) if master is not None else tk.Tk()
     root.title("Coach · play money")
     root.attributes("-topmost", True)
     root.configure(bg="#0A0A0B")
-    root.geometry("420x230")
+    root.geometry("480x300" + _beside(cfg.region, root.winfo_screenwidth(), root.winfo_screenheight(), 480, 300))
     fg, sub = "#FFFFFF", "#B9B9C1"
-    action = tk.Label(root, text="watching", font=("Helvetica", 24, "bold"), fg=fg, bg="#0A0A0B", anchor="w")
+    action = tk.Label(root, text="watching", font=("Helvetica", 24, "bold"), fg=fg, bg="#0A0A0B", anchor="w",
+                      justify="left", wraplength=456)
     action.pack(fill="x", padx=12, pady=(10, 0))
-    info = tk.Label(root, text="", font=("Helvetica", 11), fg=sub, bg="#0A0A0B", anchor="w")
+    # what it saw: your cards, seat, stack in big blinds, what happened before you
+    info = tk.Label(root, text="", font=("Helvetica", 11, "bold"), fg="#FFD60A", bg="#0A0A0B", anchor="w",
+                    justify="left", wraplength=456)
     info.pack(fill="x", padx=12)
     reason = tk.Label(root, text="", font=("Helvetica", 12), fg=fg, bg="#0A0A0B", anchor="w",
-                      justify="left", wraplength=396)
+                      justify="left", wraplength=456)
     reason.pack(fill="x", padx=12, pady=(4, 0))
     detail = tk.Label(root, text="", font=("Helvetica", 10), fg=sub, bg="#0A0A0B", anchor="w",
-                      justify="left", wraplength=396)
+                      justify="left", wraplength=456)
     detail.pack(fill="x", padx=12)
     bar = tk.Frame(root, bg="#0A0A0B")
     bar.pack(side="bottom", fill="x", padx=12, pady=8)
     status = tk.Label(root, text="", font=("Helvetica", 9), fg=sub, bg="#0A0A0B", anchor="w",
-                      justify="left", wraplength=396)
+                      justify="left", wraplength=456)
     status.pack(side="bottom", fill="x", padx=12)
 
     def read_now() -> None:
@@ -269,6 +377,8 @@ def run_window(cfg: LiveConfig, worker: Worker, out: "queue.Queue[Update]", mast
     tk.Button(bar, text="Read now", command=read_now).pack(side="left")
     pause_btn = tk.Button(bar, text="Pause", command=pause)
     pause_btn.pack(side="left", padx=6)
+    # it advised although it was not your turn: the buttons' look now is added to the idle looks
+    tk.Button(bar, text="Not my turn", command=worker.idle.set).pack(side="left")
     tk.Button(bar, text="Quit", command=quit_).pack(side="right")
 
     def poll() -> None:
@@ -277,10 +387,15 @@ def run_window(cfg: LiveConfig, worker: Worker, out: "queue.Queue[Update]", mast
                 u = out.get_nowait()
                 if u.suggestion is None:
                     status.config(text=u.status)
+                    if u.status == "waiting for your turn":       # the advice shown is for a spot that is over
+                        action.config(fg="#4A4A52")
+                        reason.config(fg="#6F6F78")
                     continue
                 s = u.suggestion
                 tone = COLORS[_tone(s)]
-                action.config(text=s.action or s.kind.upper(), fg=tone)
+                reason.config(fg=fg)
+                action.config(text=s.action or {"wait": "WAIT", "error": "NO ADVICE", "blocked": "BLOCKED"}.get(
+                    s.kind, s.kind.upper()), fg=tone)
                 info.config(text=s.info)
                 reason.config(text=s.reason)
                 detail.config(text="\n".join(s.details[:2] + [f"! {w}" for w in s.warnings[:2]]))
@@ -288,8 +403,16 @@ def run_window(cfg: LiveConfig, worker: Worker, out: "queue.Queue[Update]", mast
                                    + (f" · ${u.cost:.3f} · session ${u.session_cost:.2f}" if u.session_cost else ""))
         except queue.Empty:
             pass
+        if cfg.region and _overlap(cfg.region, (root.winfo_rootx(), root.winfo_rooty(), root.winfo_width(),
+                                                root.winfo_height())):
+            status.config(text="MOVE THIS WINDOW OFF THE POKER TABLE: what it covers cannot be read", fg="#FF6B5E")
+            covered["on"] = True
+        elif covered["on"]:
+            covered["on"] = False
+            status.config(text="", fg=sub)
         root.after(100, poll)
 
+    covered = {"on": False}
     root.protocol("WM_DELETE_WINDOW", quit_)
     poll()
     if master is not None:
@@ -327,6 +450,7 @@ def run_console(worker: Worker, out: "queue.Queue[Update]") -> None:
 
 
 def run(cfg: LiveConfig, window: bool = True) -> int:
+    dpi_aware()
     out: "queue.Queue[Update]" = queue.Queue()
     worker = Worker(cfg, out)
     worker.start()
@@ -372,6 +496,7 @@ def setup_window(cfg: LiveConfig) -> LiveConfig | None:
 
     from .capture import screen_grabber
 
+    dpi_aware()
     with screen_grabber() as sct:
         mon = sct.monitors[cfg.monitor if cfg.monitor < len(sct.monitors) else 1]
         shot = sct.grab(mon)
@@ -454,19 +579,26 @@ def setup_window(cfg: LiveConfig) -> LiveConfig | None:
 # --------------------------------------------------------------------------
 
 def describe_reading(r) -> str:
+    from ..ranges import position_name
+    from .decide import HandMemory as _HM
+
+    n = len(r.seats)
+    order = _HM._order(r) if any(s.has_button for s in r.seats) else []
+    pos = {k: position_name(n - 1 - i, n) for i, k in enumerate(order)}
+    bb = r.big_blind if (r.big_blind and not r.amounts_in_bb) else (1.0 if r.amounts_in_bb else None)
     seats = []
-    for s in r.seats:
+    for k, s in enumerate(r.seats):
         flags = "".join([" (you)" if s.is_hero else "", " D" if s.has_button else "", " folded" if s.folded else "",
                          " all-in" if s.all_in else "", " away" if s.sitting_out else ""])
-        stack = "?" if s.stack is None else f"{s.stack:,.0f}"
+        stack = "?" if s.stack is None else f"{s.stack:,.0f}" + (f" = {s.stack / bb:.0f}bb" if bb else "")
         bet = f" bet {s.bet:,.0f}" if s.bet else ""
-        seats.append(f"{s.name or '?'} {stack}{bet}{flags}")
+        seats.append(f"{pos.get(k, '?') + ' ' if pos else ''}{s.name or '?'} {stack}{bet}{flags}")
     blinds = f"{r.small_blind or '?'}/{r.big_blind or '?'}" + (f" ante {r.ante:g} ({r.ante_kind})" if r.ante else "")
     lines = [f"table: {r.table_text or '-'} | money: {r.money_text or '-'} | blinds {blinds}"
              + (" | amounts in bb" if r.amounts_in_bb else ""),
              f"cards: {' '.join(r.hero_cards) or '-'} | board: {' '.join(r.board) or '-'} | "
              f"pot: middle {r.middle_pot}, total {r.total_pot} | your turn: {'yes' if r.hero_to_act else 'no'}",
-             "seats (clockwise from you): " + " | ".join(seats)]
+             "seats (clockwise from you):"] + [f"  {x}" for x in seats]
     if r.players_left or r.places_paid:
         lines.append(f"tournament: {r.players_left} left, {r.places_paid} paid, average {r.average_stack}")
     if r.unreadable:
@@ -485,7 +617,8 @@ def test_once(cfg: LiveConfig, image_path: str | None = None, json_path: str | N
     if save_json:
         with open(save_json, "w") as fh:
             json.dump(result.table.model_dump(), fh, indent=1)
-    sug = suggest(result.table, cfg.settings(), HandMemory(), force=force)
+    sug = suggest(result.table, cfg.settings(), HandMemory(), force=force,
+                  blocking=getattr(result, "blocking", None))
     if result.cost:
         head = (f"read by {result.model} in {result.seconds:.1f}s, ${result.cost:.4f} "
                 f"({result.input_tokens} in, {result.output_tokens} out tokens)")

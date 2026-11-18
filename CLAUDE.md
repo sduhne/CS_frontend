@@ -389,59 +389,85 @@ python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 
 ## Live table reader (play money and research)
 
 The user asked for a program that reads their screen and suggests the action,
-for play-money tournaments and research, and then for it to run on their PC
-without the API. `poker_coach/live/` is that program; it runs on the user's
-computer, not in this session.
+for play-money tournaments and research, running on their PC with no API.
+`poker_coach/live/` is that program; it runs on the user's computer, not in
+this session.
 
 ```bash
+python3 -m poker_coach live-app                        # the launcher: set up, teach, check, start (the .exe opens it)
 python3 -m poker_coach live-setup --seats 6            # mark the table and every box on it, then label them
-python3 -m poker_coach live-teach                      # label what it cannot read yet (--log: last session)
-python3 -m poker_coach live --mode tag                 # run (tag, binary or spin)
-python3 -m poker_coach live-test --image table.png     # one screenshot -> reading and suggestion
-python3 -m poker_coach live-app                        # the launcher window (what the .exe opens)
+python3 -m poker_coach live-setup --redo pot,s3_bet    # mark some boxes again
+python3 -m poker_coach live-teach                      # label what it cannot read yet (--log: last session, --all)
+python3 -m poker_coach live-test --screen              # what it reads right now (--image shot.png: a screenshot)
+python3 -m poker_coach live --mode tag                 # run (tag, binary or spin; --opponents loose)
 python tools/build_exe.py                              # dist/PokerCoach.exe, built on the user's PC
 ```
 
 - **Pipeline.** Screenshot of the table -> the local reader (`live/local.py`,
-  `live/vision.py`) returns a `TableRead` (`live/schema.py`) ->
-  `live/decide.py` rebuilds the table and the actions from the chips in front
-  of each player -> `advise` (tag mode), `binary` or `spin` before the flop,
-  `advise_postflop` after it -> the window. No network: the decisions were
-  always local, and the reading now is too.
+  `live/vision.py`) returns a `TableRead` (`live/schema.py`) plus `blocking`
+  (what it could not read that a decision needs) -> `live/decide.py`
+  rebuilds the table and the actions from the chips in front of each player
+  -> `advise` (tag mode), `binary` or `spin` before the flop,
+  `advise_postflop` after it -> the window. No network anywhere.
+- **What the window shows.** The action, then one line with the user's
+  cards, seat, stack in big blinds and what happened in front of them
+  ("UTG raises to 2.5bb, CO calls" or "folded to you"); after the flop the
+  board, big blinds behind, the pot and the bet to call.
 - **The local reader.** The setup wizard (`live/wizard.py`) records a box for
-  every item (card corners, stacks, bets, pot, button places, cards areas)
-  and three templates (the dealer button, face-down cards, the play-money
-  marker) in `tournament/reader/layout.json`. Teaching stores labelled
-  characters and card corners in `book.json`. Text is cut into characters
-  and matched to the examples; cards by rank shape and suit colour or shape.
-  Anything not matched closely becomes "?" and the reading says "not learned
-  yet": it never guesses, `live-teach` asks. Blinds come from the blinds'
-  chips before the flop, the ante from the pot. The table window must keep
-  its size and place; a different size is refused with a message.
-- **`--reader vision`** keeps the old Claude reader (API key, about 2 to 3
-  cents a reading; `--model claude-haiku-5-5` about 40 times cheaper). It
-  needs no box setup, only the table.
-- **It reads once per decision**: when the action-button area (marked in the
-  setup) stops looking like it does when it is not the user's turn. Without
-  that area it reads when the table changes.
+  every item and three templates (dealer button, face-down cards, the
+  play-money marker) in `tournament/reader/layout.json`. Teaching stores
+  labelled shapes in `book.json`. Text is cut into pieces and each piece
+  matched to the examples with a little give (soft edges, slid by thirds of a
+  pixel); a piece can be labelled as several characters (they touch) or as
+  nothing (an icon). Cards by rank shape and suit colour or shape. A match
+  must be close and clearly closer than any other label, otherwise the piece
+  is "?".
+- **It never guesses.** An unsure bet, board card, hero card or hero stack
+  goes to `blocking` and the suggestion is "NO ADVICE: ... teach it". Do not
+  loosen that: an unread bet treated as zero is advice for the wrong spot.
+- **The loop** (`app.Worker._run_local`) looks all the time: between turns
+  to follow the hand (`HandMemory.observe`: who opened, re-raised, limped;
+  each opponent's bet, call or check per street; the blinds), and on the
+  user's turn until two readings agree. It advises once per spot.
+- **Turn check.** If the buttons show but a player in front still has cards
+  and has not matched the bet, the answer is WAIT. "Read now" forces it;
+  "Not my turn" adds the buttons' look to the idle looks (clients show
+  pre-action boxes in the same place).
+- **Blinds.** From the two seats after the button before the flop; within a
+  hand the smallest pair seen counts, and a pair is refused while somebody
+  has fewer chips in front than its big blind, or when it is more than
+  three times the last level.
+- **`--opponents`** (unknown, loose, tight...) sets every opponent's type:
+  preflop ranges through the seat types, after the flop through the
+  villains' type and wider calling ranges for loose tables. Suggest `loose`
+  for play money once the user sees the table calling everything.
+- **`--reader vision`** keeps the Claude reader (API key, about 2 to 3
+  cents a reading). It needs no box setup, only the table.
 - **Play money only.** `play_money_check` refuses to suggest unless the
   table shows a marker. In the local reader the user boxes the marker at
   setup and types its words, which must contain a play-money word
   (`--marker` adds the user's client's words); every reading checks the
   template is still there. Keep it that way: do not add auto-clicking, ways
-  to hide it from the poker client, or a way round the check. If the user
-  says they use it at a real-money table, say once that real-money sites ban
-  it and the account can be closed, and offer `live-test` on saved
-  screenshots for review instead.
+  to hide it from the poker client (that includes excluding its windows
+  from screen capture), or a way round the check. If the user says they use
+  it at a real-money table, say once that real-money sites ban it and the
+  account can be closed, and offer `live-test` on saved screenshots for
+  review instead.
 - **The .exe.** `tools/build_exe.py` runs PyInstaller (on the user's
   Windows PC; it builds for the system it runs on) with the data files and
   without `anthropic`. No arguments opens the launcher; arguments run the
-  command line. Its files go to `~/PokerCoach`.
-- **When a reading is wrong**, ask for the screenshot and the line from
-  `tournament/live-log/<time>/reads.jsonl`, run `live-test` on it. A wrong
-  character or card: label it with `live-teach --image`. A box in the wrong
-  place: setup again. A wrong conversion: `live/decide.py`.
-  `tests/fake_table.py` draws a table to test the reader without a client.
+  command line. Its files go to `~/PokerCoach`. Only a Linux build has been
+  run here; the Windows one is untested until the user builds it.
+- **When a reading is wrong**, ask for the output of `live-test --screen`
+  (or the screenshot and the line from
+  `tournament/live-log/<time>/reads.jsonl`). A wrong or unknown character or
+  card: `live-teach` (`--image`, `--all`). A box in the wrong place:
+  `live-setup --redo <keys>`. Advice at the wrong moment: "Not my turn". A
+  wrong conversion: `live/decide.py`. `tests/fake_table.py` draws a table to
+  test the reader without a client.
+- **Checked on drawn tables only.** The reader has not seen the user's real
+  client. Say so, and treat their first `live-test --screen` output as the
+  evidence.
 
 ## Spins (3 players, winner takes all)
 
