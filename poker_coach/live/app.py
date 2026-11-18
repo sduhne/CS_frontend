@@ -1,18 +1,25 @@
 """The live loop, its window, the setup and the session log.
 
-    python3 -m poker_coach live-setup                 # mark the table and the action buttons once
+    python3 -m poker_coach live-setup                 # mark the table and every box on it once
+    python3 -m poker_coach live-teach                 # label what the reader does not know yet
     python3 -m poker_coach live                       # run: a small window shows each suggestion
     python3 -m poker_coach live-test --image shot.png # one saved screenshot -> reading and suggestion
 
-Settings live in ``tournament/live.json`` (git-ignored).  Each session writes
+The default reader runs on this computer (``local.py``): no network, no key,
+no cost.  ``--reader vision`` sends the screenshot to Claude instead.
+
+Settings live in ``tournament/live.json`` (git-ignored), the local reader's
+files in ``tournament/reader/``.  Each session writes
 ``tournament/live-log/<time>/reads.jsonl`` with every reading, suggestion,
 time and cost, plus the screenshots (``--no-save`` to keep only the text).
+The packaged program keeps all of it in ``PokerCoach`` in the home folder.
 """
 from __future__ import annotations
 
 import json
 import os
 import queue
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -21,9 +28,14 @@ from .capture import ButtonWatch, ChangeWatch, Grabber, Rect, thumb
 from .decide import DEFAULT_MARKERS, HandMemory, LiveSettings, Suggestion, suggest
 from .reader import DEFAULT_EFFORT, DEFAULT_MAX_PX, DEFAULT_MODEL, ClaudeReader, JsonReader, ReadError, ReadResult
 
-ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tournament")
+if getattr(sys, "frozen", False):                 # the packaged program: keep files in the home folder
+    ROOT = os.path.join(os.path.expanduser("~"), "PokerCoach")
+else:
+    ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tournament")
 CONFIG_PATH = os.path.join(ROOT, "live.json")
 LOG_ROOT = os.path.join(ROOT, "live-log")
+LAYOUT_PATH = os.path.join(ROOT, "reader", "layout.json")
+BOOK_PATH = os.path.join(ROOT, "reader", "book.json")
 
 
 @dataclass
@@ -34,6 +46,8 @@ class LiveConfig:
     baseline: list[int] | None = None        # how that area looks when it is not your turn
     markers: list[str] = field(default_factory=lambda: list(DEFAULT_MARKERS))
     mode: str = "tag"
+    reader: str = "local"                     # local (this computer, no network) or vision (Claude)
+    seats: int = 6                            # seats at the table, for the local reader's setup
     model: str = DEFAULT_MODEL
     effort: str = DEFAULT_EFFORT
     max_px: int = DEFAULT_MAX_PX
@@ -45,7 +59,8 @@ class LiveConfig:
     buyin: float | None = None
 
     @classmethod
-    def load(cls, path: str = CONFIG_PATH) -> "LiveConfig":
+    def load(cls, path: str | None = None) -> "LiveConfig":
+        path = path or CONFIG_PATH
         if not os.path.exists(path):
             return cls()
         with open(path) as fh:
@@ -53,7 +68,8 @@ class LiveConfig:
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         return cls(**known)
 
-    def save(self, path: str = CONFIG_PATH) -> None:
+    def save(self, path: str | None = None) -> None:
+        path = path or CONFIG_PATH
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as fh:
             json.dump(asdict(self), fh, indent=1)
@@ -109,6 +125,25 @@ class Update:
     session_cost: float = 0.0
 
 
+OBSERVE_EVERY = 1.5          # seconds between the local reader's quiet readings (blinds, ante)
+
+
+def make_reader(cfg: LiveConfig):
+    """The reader the settings ask for: local (needs the setup) or Claude's vision."""
+    if cfg.reader == "vision":
+        return ClaudeReader(cfg.model, cfg.effort, cfg.max_px)
+    from .local import Layout, LocalReader
+    from .vision import Book
+
+    if not os.path.exists(LAYOUT_PATH):
+        raise ReadError("the local reader is not set up: run live-setup (or Set up in the launcher) first")
+    layout = Layout.load(LAYOUT_PATH)
+    missing = layout.problems()
+    if missing:
+        raise ReadError("the setup is missing " + ", ".join(missing) + ": run live-setup again")
+    return LocalReader(layout, Book.load(BOOK_PATH), cfg.buttons, cfg.baseline)
+
+
 class Worker(threading.Thread):
     """Grabs the table, reads it when it is the player's turn, posts suggestions."""
 
@@ -124,20 +159,26 @@ class Worker(threading.Thread):
         cfg = self.cfg
         try:
             grabber = self.grabber or Grabber(Rect(*cfg.region) if cfg.region else None, cfg.monitor)
-            reader = self.reader or ClaudeReader(cfg.model, cfg.effort, cfg.max_px)
-        except Exception as exc:                      # no screen access, no SDK, no key...
+            reader = self.reader or make_reader(cfg)
+        except Exception as exc:                      # no screen access, no setup, no SDK, no key...
             self.out.put(Update(status=f"cannot start: {exc}"))
             return
+        local = getattr(reader, "model", "") == "local reader" or reader.__class__.__name__ == "LocalReader"
         if cfg.buttons and cfg.baseline:
             watch = ButtonWatch(Rect(*cfg.buttons), cfg.baseline)
             how = "reads when your action buttons appear"
         else:
-            watch = ChangeWatch(cfg.min_gap)
-            how = f"reads when the table changes (at most every {cfg.min_gap:g}s); run live-setup to read only on your turn"
+            gap = min(cfg.min_gap, 1.0) if local else cfg.min_gap
+            watch = ChangeWatch(gap)
+            how = f"reads when the table changes (at most every {gap:g}s); mark the action buttons in setup " \
+                  "to read only on your turn"
         settings = cfg.settings()
         memory = HandMemory()
         log = SessionLog(cfg.save_images)
-        self.out.put(Update(status=f"watching ({cfg.mode} mode, {cfg.model}): {how}. Log: {log.dir}"))
+        who = "local reader" if local else cfg.model
+        self.out.put(Update(status=f"watching ({cfg.mode} mode, {who}): {how}. Log: {log.dir}"))
+        observe = getattr(reader, "observe", None)        # the local reader learns the blinds between turns
+        last_look = 0.0
         while not self.stopped.is_set():
             try:
                 image = grabber.grab()
@@ -147,6 +188,9 @@ class Worker(threading.Thread):
                 continue
             fire = watch.update(image)
             force = self.force.is_set()
+            if observe and not (fire or force) and time.time() - last_look > OBSERVE_EVERY:
+                last_look = time.time()
+                observe(image)
             if (fire and not self.paused.is_set()) or force:
                 self.force.clear()
                 self.out.put(Update(status="reading the table..."))
@@ -182,10 +226,10 @@ def _tone(sug: Suggestion) -> str:
     return "go"
 
 
-def run_window(cfg: LiveConfig, worker: Worker, out: "queue.Queue[Update]") -> None:
+def run_window(cfg: LiveConfig, worker: Worker, out: "queue.Queue[Update]", master=None) -> None:
     import tkinter as tk
 
-    root = tk.Tk()
+    root = tk.Toplevel(master) if master is not None else tk.Tk()
     root.title("Coach · play money")
     root.attributes("-topmost", True)
     root.configure(bg="#0A0A0B")
@@ -240,15 +284,18 @@ def run_window(cfg: LiveConfig, worker: Worker, out: "queue.Queue[Update]") -> N
                 info.config(text=s.info)
                 reason.config(text=s.reason)
                 detail.config(text="\n".join(s.details[:2] + [f"! {w}" for w in s.warnings[:2]]))
-                status.config(text=f"{time.strftime('%H:%M:%S')} · read in {u.seconds:.1f}s · "
-                                   f"${u.cost:.3f} · session ${u.session_cost:.2f}")
+                status.config(text=f"{time.strftime('%H:%M:%S')} · read in {u.seconds:.2f}s"
+                                   + (f" · ${u.cost:.3f} · session ${u.session_cost:.2f}" if u.session_cost else ""))
         except queue.Empty:
             pass
         root.after(100, poll)
 
     root.protocol("WM_DELETE_WINDOW", quit_)
     poll()
-    root.mainloop()
+    if master is not None:
+        master.wait_window(root)
+    else:
+        root.mainloop()
 
 
 def run_console(worker: Worker, out: "queue.Queue[Update]") -> None:
@@ -272,8 +319,9 @@ def run_console(worker: Worker, out: "queue.Queue[Update]") -> None:
             if u.suggestion is None:
                 print(f"[{time.strftime('%H:%M:%S')}] {u.status}", flush=True)
             else:
-                print(f"\n[{time.strftime('%H:%M:%S')}] read in {u.seconds:.1f}s, ${u.cost:.3f} "
-                      f"(session ${u.session_cost:.2f})\n{u.suggestion.text()}", flush=True)
+                cost = f", ${u.cost:.3f} (session ${u.session_cost:.2f})" if u.session_cost else ""
+                print(f"\n[{time.strftime('%H:%M:%S')}] read in {u.seconds:.2f}s{cost}\n{u.suggestion.text()}",
+                      flush=True)
     except KeyboardInterrupt:
         worker.stopped.set()
 
@@ -319,11 +367,12 @@ def setup_from_rects(cfg: LiveConfig, region: Rect, buttons: Rect | None) -> Liv
 
 def setup_window(cfg: LiveConfig) -> LiveConfig | None:
     """Two drags on a screenshot: the table, then the action-button area."""
-    import mss
     import tkinter as tk
     from PIL import Image, ImageTk
 
-    with mss.mss() as sct:
+    from .capture import screen_grabber
+
+    with screen_grabber() as sct:
         mon = sct.monitors[cfg.monitor if cfg.monitor < len(sct.monitors) else 1]
         shot = sct.grab(mon)
         full = Image.frombytes("RGB", shot.size, shot.rgb)
@@ -426,18 +475,20 @@ def describe_reading(r) -> str:
 
 
 def test_once(cfg: LiveConfig, image_path: str | None = None, json_path: str | None = None,
-              force: bool = True, save_json: str | None = None) -> str:
+              force: bool = True, save_json: str | None = None, reader=None) -> str:
     if json_path:
         result = JsonReader(json_path).read()
     else:
         from PIL import Image
 
-        result = ClaudeReader(cfg.model, cfg.effort, cfg.max_px).read(Image.open(image_path))
+        result = (reader or make_reader(cfg)).read(Image.open(image_path).convert("RGB"))
     if save_json:
         with open(save_json, "w") as fh:
             json.dump(result.table.model_dump(), fh, indent=1)
     sug = suggest(result.table, cfg.settings(), HandMemory(), force=force)
-    head = f"read by {result.model}" + (f" in {result.seconds:.1f}s, ${result.cost:.4f} "
-                                         f"({result.input_tokens} in, {result.output_tokens} out tokens)"
-                                         if result.seconds else "")
+    if result.cost:
+        head = (f"read by {result.model} in {result.seconds:.1f}s, ${result.cost:.4f} "
+                f"({result.input_tokens} in, {result.output_tokens} out tokens)")
+    else:
+        head = f"read by {result.model}" + (f" in {result.seconds * 1000:.0f} ms" if result.seconds else "")
     return f"{head}\n{describe_reading(result.table)}\n\n{sug.text()}"

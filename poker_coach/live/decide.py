@@ -133,7 +133,8 @@ def to_table(read: TableRead, settings: LiveSettings) -> Table:
     else:
         unit = "chips"
     if not bb:
-        raise ValueError("the blinds could not be read")
+        raise ValueError("the blinds could not be read (the local reader learns them from the blinds in front "
+                         "of the players before the flop: it will know them from the next hand)")
     sb = read.small_blind if (read.small_blind and not in_bb) else bb / 2.0
     ante = float(read.ante or 0.0)
     if in_bb and read.ante and read.big_blind and read.ante > 1.0:

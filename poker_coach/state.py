@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import sys
 import time
 from datetime import datetime
 
@@ -17,8 +18,12 @@ from .icm import Prizes, default_payouts
 from .pushfold import HandSetup
 from .ranges import norm_type, position_name
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATE_PATH = os.environ.get("POKER_COACH_STATE") or os.path.join(ROOT, "tournament", "current.json")
+if getattr(sys, "frozen", False):          # the packaged program keeps its files in the home folder
+    ROOT = os.path.join(os.path.expanduser("~"), "PokerCoach")
+    STATE_PATH = os.environ.get("POKER_COACH_STATE") or os.path.join(ROOT, "current.json")
+else:
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    STATE_PATH = os.environ.get("POKER_COACH_STATE") or os.path.join(ROOT, "tournament", "current.json")
 MAX_UNDO = 15
 GOALS = ("itm", "balanced", "chips")
 SEC_PER_HAND = {"online": 55, "fast": 35, "live": 120}

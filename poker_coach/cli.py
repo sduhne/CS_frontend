@@ -8,7 +8,7 @@ Decisions:       advise (uses the tracked table), quick (no table needed)
 All-in or fold:  binary, binary-chart, binary-sheet (a whole tournament on two moves)
 Spins:           spin, spin-sheet, spin-odds (3-player winner-take-all games)
 Sheet:           tag-sheet (every preflop situation as text, for 6, 7 or 8 players)
-Live reader:     live-setup, live, live-test (play-money tables only: reads the screen, suggests)
+Live reader:     live-setup, live-teach, live, live-test, live-app (play-money tables only: reads the screen, suggests)
 Tools:           equity, range, chart, icm
 """
 
@@ -981,7 +981,8 @@ def _live_config(a):
     from .live.app import LiveConfig
 
     cfg = LiveConfig.load()
-    for key in ("mode", "model", "effort", "max_px", "min_gap", "goal", "entrants", "paid", "buyin", "monitor"):
+    for key in ("mode", "reader", "seats", "model", "effort", "max_px", "min_gap", "goal", "entrants", "paid",
+                "buyin", "monitor"):
         val = getattr(a, key, None)
         if val is not None:
             setattr(cfg, key, val)
@@ -995,13 +996,26 @@ def _live_config(a):
 
 
 def cmd_live_setup(a) -> int:
-    """Mark the table (and the action buttons) on the screen once; saved for `live`."""
-    from .live.app import CONFIG_PATH, setup_from_rects, setup_window
+    """Mark the table and every box on it once (local reader), or just the table (vision reader)."""
+    from .live.app import BOOK_PATH, CONFIG_PATH, LAYOUT_PATH, setup_from_rects, setup_window
     from .live.capture import Rect
 
     cfg = _live_config(a)
     if a.region:
         cfg = setup_from_rects(cfg, Rect.parse(a.region), Rect.parse(a.buttons) if a.buttons else None)
+        if cfg.reader == "local":
+            _out("the local reader also needs every box on the table marked: run live-setup without --region")
+    elif cfg.reader == "local":
+        from .live.wizard import setup_local
+
+        try:
+            done = setup_local(cfg, LAYOUT_PATH, BOOK_PATH, cfg.seats, teach=not a.no_teach)
+        except ImportError as exc:
+            return _fail(f"the setup needs tkinter ({exc}): install Python from python.org, or on Linux python3-tk")
+        if done is None:
+            return _fail("setup cancelled")
+        cfg = done
+        _out(f"saved the table to {LAYOUT_PATH}")
     else:
         try:
             done = setup_window(cfg)
@@ -1018,6 +1032,60 @@ def cmd_live_setup(a) -> int:
     return 0
 
 
+def cmd_live_teach(a) -> int:
+    """Label the boxes the local reader cannot read yet (from the screen, a picture or the last session)."""
+    import glob
+    import os
+
+    from PIL import Image
+
+    from .live.app import BOOK_PATH, LAYOUT_PATH, LOG_ROOT
+    from .live.local import Layout, teach_items
+    from .live.vision import Book
+    from .live.wizard import items_from_images, teach_console, teach_window
+
+    if not os.path.exists(LAYOUT_PATH):
+        return _fail("run live-setup first: the reader needs to know where everything is")
+    cfg = _live_config(a)
+    layout, book = Layout.load(LAYOUT_PATH), Book.load(BOOK_PATH)
+    if a.image:
+        items = teach_items(Image.open(a.image).convert("RGB"), layout, book, everything=a.all)
+    elif a.log is not None:
+        folder = a.log
+        if not folder:
+            sessions = sorted(glob.glob(os.path.join(LOG_ROOT, "*")))
+            if not sessions:
+                return _fail("no session log yet")
+            folder = sessions[-1]
+        items = items_from_images(glob.glob(os.path.join(folder, "*.png")), layout, book, limit=a.limit)
+    else:
+        from .live.capture import Grabber, Rect
+
+        items = teach_items(Grabber(Rect(*cfg.region), cfg.monitor).grab(), layout, book, everything=a.all)
+    if not items:
+        _out("nothing to teach: every box with something in it is already readable")
+        _out(book.summary())
+        return 0
+    if a.console:
+        picture = os.path.join(os.path.dirname(BOOK_PATH), "teach-box.png")
+        n = teach_console(items, book, BOOK_PATH, picture)
+    else:
+        try:
+            n = teach_window(items, book, BOOK_PATH)
+        except ImportError:
+            n = teach_console(items, book, BOOK_PATH, os.path.join(os.path.dirname(BOOK_PATH), "teach-box.png"))
+    _out(f"learned {n} of {len(items)} boxes; saved to {BOOK_PATH}")
+    _out(Book.load(BOOK_PATH).summary())
+    return 0
+
+
+def cmd_live_app(a) -> int:
+    """The launcher window: set up, teach, start."""
+    from .live.wizard import launcher
+
+    return launcher()
+
+
 def cmd_live(a) -> int:
     """Watch the table and show what the coach would do, on play-money tables only."""
     from .live.app import run
@@ -1027,7 +1095,13 @@ def cmd_live(a) -> int:
         from .live.capture import Rect
 
         cfg.region = Rect.parse(a.region).as_list()
-    if not cfg.region:
+    if cfg.reader == "local":
+        import os
+
+        from .live.app import LAYOUT_PATH
+        if not os.path.exists(LAYOUT_PATH) or not cfg.region:
+            return _fail("the local reader is not set up yet: run live-setup first (or live-app for the launcher)")
+    elif not cfg.region:
         _out("no table marked yet: reading the whole screen (run live-setup to mark the table)")
     return run(cfg, window=not a.no_window)
 
@@ -1052,6 +1126,9 @@ def _live_options(p, setup: bool = False) -> None:
     p.add_argument("--marker", action="append", help="text your play-money tables show (repeatable); "
                    "default: Play Money, Play chips, Practice, Free chips, Fun chips, Play for fun")
     p.add_argument("--monitor", type=int, help="screen number (default 1, the main screen)")
+    p.add_argument("--reader", choices=("local", "vision"), help="local (default): reads on this computer, no "
+                   "network; vision: sends the screenshot to Claude (needs an API key, costs per read)")
+    p.add_argument("--seats", type=int, help="seats at the table, for the local setup (default 6)")
     if setup:
         return
     p.add_argument("--model", help="vision model (default claude-opus-5-5; claude-haiku-5-5 is ~40x cheaper and faster)")
@@ -1322,8 +1399,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--region", help="the table as left,top,width,height (instead of the setup window)")
     p.add_argument("--buttons", help="the action-button area as left,top,width,height inside the table "
                                      "(taken now: it must not be your turn)")
+    p.add_argument("--no-teach", action="store_true", help="local reader: do not ask what the boxes show at the end")
     _live_options(p, setup=True)
     p.set_defaults(fn=cmd_live_setup)
+
+    p = sub.add_parser("live-teach", help="live reader: label what the local reader cannot read yet")
+    p.add_argument("--image", help="a screenshot of the table (default: the screen now)")
+    p.add_argument("--log", nargs="?", const="", help="the screenshots of a session folder (default: the last one)")
+    p.add_argument("--all", action="store_true", help="ask about every box, not only the unknown ones")
+    p.add_argument("--limit", type=int, default=40, help="with --log: at most this many questions (default 40)")
+    p.add_argument("--console", action="store_true", help="ask in the terminal instead of a window")
+    _live_options(p, setup=True)
+    p.set_defaults(fn=cmd_live_teach)
+
+    p = sub.add_parser("live-app", help="live reader: the launcher window (set up, teach, start)")
+    p.set_defaults(fn=cmd_live_app)
 
     p = sub.add_parser("live", help="live reader for play-money tables: reads the screen and suggests (never clicks)")
     p.add_argument("--region", help="the table as left,top,width,height (default: from live-setup)")
@@ -1335,7 +1425,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("live-test", help="live reader: read one saved screenshot (or reading) and print the suggestion")
     p.add_argument("--image", help="a screenshot of a table")
-    p.add_argument("--json", help="a saved reading (JSON) instead of a screenshot: no API call")
+    p.add_argument("--json", help="a saved reading (JSON) instead of a screenshot")
     p.add_argument("--save-json", help="also write the reading to this file")
     p.add_argument("--turn-only", action="store_true", help="suggest only if the screenshot shows your action buttons")
     _live_options(p)

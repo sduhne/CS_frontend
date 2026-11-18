@@ -51,13 +51,18 @@ def difference(a: list[int] | None, b: list[int] | None) -> float:
     return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
 
 
+def screen_grabber():
+    """An ``mss`` screen grabber (``mss.MSS`` in new versions, ``mss.mss`` in old ones)."""
+    import mss
+
+    return mss.MSS() if hasattr(mss, "MSS") else mss.mss()
+
+
 class Grabber:
     """Screen grabs of one region (``mss``; create it in the thread that uses it)."""
 
     def __init__(self, region: Rect | None = None, monitor: int = 1):
-        import mss
-
-        self.sct = mss.mss()
+        self.sct = screen_grabber()
         mon = self.sct.monitors[monitor if monitor < len(self.sct.monitors) else 1]
         self.region = region or Rect(mon["left"], mon["top"], mon["width"], mon["height"])
 

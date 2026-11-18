@@ -389,38 +389,59 @@ python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 
 ## Live table reader (play money and research)
 
 The user asked for a program that reads their screen and suggests the action,
-for play-money tournaments and research. `poker_coach/live/` is that program;
-it runs on the user's computer, not in this session.
+for play-money tournaments and research, and then for it to run on their PC
+without the API. `poker_coach/live/` is that program; it runs on the user's
+computer, not in this session.
 
 ```bash
-python3 -m poker_coach live-test --image table.png     # one screenshot -> reading and suggestion
-python3 -m poker_coach live-test --json reading.json   # a saved reading: no API call
-python3 -m poker_coach live-setup                      # mark the table and the action buttons once
+python3 -m poker_coach live-setup --seats 6            # mark the table and every box on it, then label them
+python3 -m poker_coach live-teach                      # label what it cannot read yet (--log: last session)
 python3 -m poker_coach live --mode tag                 # run (tag, binary or spin)
+python3 -m poker_coach live-test --image table.png     # one screenshot -> reading and suggestion
+python3 -m poker_coach live-app                        # the launcher window (what the .exe opens)
+python tools/build_exe.py                              # dist/PokerCoach.exe, built on the user's PC
 ```
 
-- **Pipeline.** Screenshot of the table -> Claude vision returns a
-  `TableRead` (structured output, `live/schema.py`) -> `live/decide.py`
-  rebuilds the table and the actions from the chips in front of each player
-  -> `advise` (tag mode), `binary` or `spin` before the flop,
-  `advise_postflop` after it -> the window.
-- **It reads once per decision**: when the action-button area (marked in
-  `live-setup`) stops looking like it does when it is not the user's turn.
-  Without that area it reads when the table changes, at most every few
-  seconds, which costs more.
+- **Pipeline.** Screenshot of the table -> the local reader (`live/local.py`,
+  `live/vision.py`) returns a `TableRead` (`live/schema.py`) ->
+  `live/decide.py` rebuilds the table and the actions from the chips in front
+  of each player -> `advise` (tag mode), `binary` or `spin` before the flop,
+  `advise_postflop` after it -> the window. No network: the decisions were
+  always local, and the reading now is too.
+- **The local reader.** The setup wizard (`live/wizard.py`) records a box for
+  every item (card corners, stacks, bets, pot, button places, cards areas)
+  and three templates (the dealer button, face-down cards, the play-money
+  marker) in `tournament/reader/layout.json`. Teaching stores labelled
+  characters and card corners in `book.json`. Text is cut into characters
+  and matched to the examples; cards by rank shape and suit colour or shape.
+  Anything not matched closely becomes "?" and the reading says "not learned
+  yet": it never guesses, `live-teach` asks. Blinds come from the blinds'
+  chips before the flop, the ante from the pot. The table window must keep
+  its size and place; a different size is refused with a message.
+- **`--reader vision`** keeps the old Claude reader (API key, about 2 to 3
+  cents a reading; `--model claude-haiku-5-5` about 40 times cheaper). It
+  needs no box setup, only the table.
+- **It reads once per decision**: when the action-button area (marked in the
+  setup) stops looking like it does when it is not the user's turn. Without
+  that area it reads when the table changes.
 - **Play money only.** `play_money_check` refuses to suggest unless the
-  table shows a marker (`--marker` adds the user's client's words). Keep it
-  that way: do not add auto-clicking, ways to hide it from the poker client,
-  or a way round the check. If the user says they use it at a real-money
-  table, say once that real-money sites ban it and the account can be
-  closed, and offer `live-test` on saved screenshots for review instead.
-- **Model.** Default `claude-opus-5-5` at low effort with refusal fallbacks
-  on (about 2 to 3 cents a reading); `--model claude-haiku-5-5` is about 40
-  times cheaper and faster; tell the user to compare readings with
-  `live-test` before switching.
+  table shows a marker. In the local reader the user boxes the marker at
+  setup and types its words, which must contain a play-money word
+  (`--marker` adds the user's client's words); every reading checks the
+  template is still there. Keep it that way: do not add auto-clicking, ways
+  to hide it from the poker client, or a way round the check. If the user
+  says they use it at a real-money table, say once that real-money sites ban
+  it and the account can be closed, and offer `live-test` on saved
+  screenshots for review instead.
+- **The .exe.** `tools/build_exe.py` runs PyInstaller (on the user's
+  Windows PC; it builds for the system it runs on) with the data files and
+  without `anthropic`. No arguments opens the launcher; arguments run the
+  command line. Its files go to `~/PokerCoach`.
 - **When a reading is wrong**, ask for the screenshot and the line from
-  `tournament/live-log/<time>/reads.jsonl`, run `live-test` on it, and fix
-  the prompt in `live/reader.py` or the conversion in `live/decide.py`.
+  `tournament/live-log/<time>/reads.jsonl`, run `live-test` on it. A wrong
+  character or card: label it with `live-teach --image`. A box in the wrong
+  place: setup again. A wrong conversion: `live/decide.py`.
+  `tests/fake_table.py` draws a table to test the reader without a client.
 
 ## Spins (3 players, winner takes all)
 

@@ -193,36 +193,63 @@ it is not reading. Real-money sites, and GGPoker and PokerStars even at
 play-money tables, forbid real-time help.
 
 How it works: when your action buttons appear it takes a screenshot of the
-table, sends it to Claude's vision (an API call, so it needs an Anthropic
-API key) and gets back the cards, stacks, bets, pot and button as JSON. The
-same engine as `advise` (or the all-in or fold tables) turns that into an
-action.
+table and reads it **on your computer**: no internet, no API key, no cost.
+The poker client draws the same digits, card corners and dealer button every
+time, so the reader compares each box on the table with examples you gave it
+once. The same engine as `advise` (or the all-in or fold tables) turns the
+reading into an action. A reading takes about 60 ms.
 
 ```bash
-pip install -r requirements-live.txt
-export ANTHROPIC_API_KEY=...                       # or: ant auth login
+pip install -r requirements-live.txt               # Pillow, mss, pydantic (+ tkinter, see the file)
 
-# 1. check the reading on one saved screenshot of your client (do this first)
-python3 -m poker_coach live-test --image table.png
-# 2. mark the table and your action buttons once (it must not be your turn)
-python3 -m poker_coach live-setup
+# 1. mark the table and every box on it (cards, stacks, bets, pot, dealer button...)
+python3 -m poker_coach live-setup --seats 6
+# 2. it then asks what each box shows: type it once (12,450 · Ah · Pot: 1,250)
+#    later, label whatever it has not seen yet (a new digit, the card ranks):
+python3 -m poker_coach live-teach                  # from the screen now
+python3 -m poker_coach live-teach --log            # from the screenshots of the last session
 # 3. run it
-python3 -m poker_coach live                        # --mode binary or spin; --model claude-haiku-5-5
+python3 -m poker_coach live                        # --mode binary or spin
+python3 -m poker_coach live-app                    # or all of it from one window
 ```
 
-- **Cost and speed.** One reading per decision. With the default model
-  (`claude-opus-5-5`) a reading costs about 2 to 3 cents and takes a few
-  seconds; `--model claude-haiku-5-5` costs about 40 times less and is
-  faster, so check its reading with `live-test` first. The window shows the
-  cost of each reading and of the session.
-- **Session log.** Every reading, suggestion, time and cost goes to
+- **Setup.** Draw a box around: the play-money marker, the area where your
+  Fold / Call / Raise buttons appear (when it is not your turn), the corner
+  of each of your cards and of the five board cards (rank and suit), the pot,
+  the dealer button itself and one opponent's face-down cards; then for each
+  seat, clockwise from you: the stack, where its bet appears, where the
+  dealer button sits when it is that seat's, and where its cards show. Press
+  G for a new screenshot when you need cards on the board, S to skip an
+  optional box, Backspace to go back. Keep the table window the same size
+  and place afterwards; if it moves, run the setup again.
+- **Teaching.** Each box is cut into characters and each character, card
+  rank and suit is matched against your examples. Anything it is not sure
+  about it does not guess: the reading says "not learned yet" and
+  `live-teach` asks you. In tests on a drawn table, one setup screenshot plus
+  about ten questions taught every digit, rank and suit, after which it read
+  40 new tables with no mistake.
+- **Blinds** are learned from the chips in front of the blinds before the
+  flop (it also looks between your turns), the ante from the pot.
+- **The one program for Windows.** `python tools/build_exe.py` (with
+  `pip install pyinstaller`) builds `dist/PokerCoach.exe`: no Python needed
+  to run it, it opens the launcher (Set up, Teach, Start), and keeps its
+  files in `PokerCoach` in your home folder. Build it on the computer you
+  use it on.
+- **Claude's vision instead** (`--reader vision`): sends the screenshot to
+  Claude and needs an API key (`pip install anthropic`, `ANTHROPIC_API_KEY`).
+  No setup beyond the table, about 2 to 3 cents a reading with the default
+  model (`--model claude-haiku-5-5` is about 40 times cheaper).
+- **Session log.** Every reading, suggestion and time goes to
   `tournament/live-log/<time>/reads.jsonl`, with the screenshots
-  (`--no-save` keeps only the text), for review afterwards.
-- **Your client marks play money differently?** Add its words:
-  `--marker "Fun Table"` (on `live-setup` it is saved for next time).
+  (`--no-save` keeps only the text), for review and for teaching.
+- **Play money only.** At setup you box your client's play-money marker and
+  type what it says; it must be one of the play-money words. Every reading
+  checks the marker is still there, and without it there is no advice. Add
+  your client's words with `--marker "Fun Table"`.
 - **What it cannot see.** Hands before the ones it read. After the flop it
   knows who raised before the flop only if it read your preflop decision in
   the same hand; otherwise it treats opponents as callers and says so.
+  Player names are not read (seats are numbered clockwise from you).
 
 ## Limits
 

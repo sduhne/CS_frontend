@@ -1,5 +1,6 @@
 """Tests for the poker coach engine.  Run: python -m unittest discover -s tests"""
 
+import copy
 import io
 import json
 import os
@@ -1776,3 +1777,150 @@ class LiveReader(unittest.TestCase):
         with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
             self.assertNotEqual(main(["live-test"]), 0)
         self.assertIn("play money", DEFAULT_MARKERS)
+
+
+import sys  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # tests/fake_table.py
+
+
+@unittest.skipUnless(_has("pydantic") and _has("PIL"), "the local reader needs pydantic and Pillow "
+                     "(pip install -r requirements-live.txt)")
+class LocalTableReader(unittest.TestCase):
+    """The local reader (live/local.py, live/vision.py): taught on a drawn table, then reading new ones."""
+
+    SETUP = {"seats": [{"stack": 5000}, {"stack": 4900, "bet": 100}, {"stack": 6000, "bet": 200},
+                       {"stack": 4000}, {"stack": 7000}, {"stack": 3000}], "button": 0, "hero": ["Ah", "Kd"],
+             "board": ["Qs", "Jc", "Th", "9d", "8s"], "pot": 375, "turn": False}
+
+    @classmethod
+    def setUpClass(cls):
+        from fake_table import layout_for, render, truth
+        from poker_coach.live.capture import Rect, thumb
+        from poker_coach.live.local import learn, teach_items
+        from poker_coach.live.vision import Book
+
+        img, cls.boxes = render(cls.SETUP)
+        cls.layout = layout_for(img, cls.boxes)
+        cls.baseline = thumb(img.crop(Rect(*cls.boxes["buttons"]).box()))
+        cls.book = Book()
+        cls.first_questions = len(teach_items(img, cls.layout, cls.book))
+        for it in teach_items(img, cls.layout, cls.book, everything=True):
+            assert learn(cls.book, it, truth(cls.SETUP, it.name)) == "", it.name
+        rng = random.Random(3)
+        for _ in range(12):                      # a few hands later: label what is still unknown
+            spec = cls.random_spec(rng)
+            for it in teach_items(render(spec)[0], cls.layout, cls.book):
+                assert learn(cls.book, it, truth(spec, it.name)) == "", it.name
+
+    @staticmethod
+    def random_spec(rng, turn=True):
+        deck = [r + s for r in "23456789TJQKA" for s in "shdc"]
+        rng.shuffle(deck)
+        seats = [{"stack": rng.choice([rng.randint(800, 99999), rng.randint(100, 9999)]),
+                  "bet": rng.choice([0, 0, rng.randint(50, 4000)]), "cards": rng.random() < 0.7} for _ in range(6)]
+        return {"seats": seats, "button": rng.randrange(6), "hero": deck[:2],
+                "board": deck[2:2 + rng.choice([0, 3, 4, 5])], "pot": rng.randint(100, 50000), "turn": turn}
+
+    def reader(self):
+        from poker_coach.live.local import LocalReader
+        return LocalReader(self.layout, self.book, self.boxes["buttons"], self.baseline)
+
+    def test_everything_is_asked_first(self):
+        self.assertGreaterEqual(self.first_questions, 10)       # an empty book knows nothing
+        for c in "0123456789,":
+            self.assertIn(c, self.book.glyphs.chars)
+        self.assertEqual(set(self.book.cards.suits), set("shdc"))
+
+    def test_reads_new_tables(self):
+        from fake_table import render
+        reader = self.reader()
+        rng = random.Random(100)
+        for i in range(15):
+            spec = self.random_spec(rng, turn=(i % 4 != 0))
+            t = reader.read(render(spec)[0]).table
+            self.assertEqual(t.hero_cards, spec["hero"])
+            self.assertEqual(t.board, spec["board"])
+            self.assertEqual(t.hero_to_act, spec["turn"])
+            self.assertEqual([s.stack for s in t.seats], [s["stack"] for s in spec["seats"]])
+            self.assertEqual([s.bet for s in t.seats], [s["bet"] for s in spec["seats"]])
+            self.assertEqual([k for k, s in enumerate(t.seats) if s.has_button], [spec["button"]])
+            self.assertEqual([s.folded for s in t.seats[1:]], [not s["cards"] for s in spec["seats"][1:]])
+            self.assertEqual(t.total_pot, spec["pot"])
+            self.assertEqual(t.money_text, "PLAY MONEY")
+            self.assertEqual(t.unreadable, "")
+
+    def test_suggests_from_a_reading(self):
+        from fake_table import render
+        from poker_coach.live.decide import HandMemory, LiveSettings, suggest
+        spec = {"seats": [{"stack": 5000}, {"stack": 4900, "bet": 100}, {"stack": 6000, "bet": 200},
+                          {"stack": 4000, "cards": False}, {"stack": 7000, "cards": False},
+                          {"stack": 3000, "cards": False}], "button": 0, "hero": ["Ah", "Jd"], "pot": 375}
+        r = self.reader().read(render(spec)[0]).table
+        self.assertEqual((r.small_blind, r.big_blind), (100, 200))
+        self.assertEqual(r.ante_kind, "per_player")
+        sug = suggest(r, LiveSettings(), HandMemory())
+        self.assertEqual(sug.kind, "act")
+        self.assertTrue(sug.action.startswith("RAISE"), sug.text())
+
+    def test_unknown_is_asked_not_guessed(self):
+        from fake_table import render
+        from poker_coach.live.local import LocalReader, teach_items
+        from poker_coach.live.vision import Book
+        img = render(self.SETUP)[0]
+        fresh = LocalReader(self.layout, Book()).read(img).table
+        self.assertEqual(fresh.hero_cards, [])
+        self.assertIn("not learned yet", fresh.unreadable)
+        self.assertTrue(all(s.stack is None for s in fresh.seats))
+        names = [it.name for it in teach_items(img, self.layout, Book())]
+        self.assertIn("your card 1", names)
+        self.assertIn("seat 3 bet", names)
+
+    def test_play_money_marker_required(self):
+        from fake_table import render
+        from poker_coach.live.decide import DEFAULT_MARKERS, LiveSettings, suggest
+        from poker_coach.live.wizard import marker_ok
+        img = render(dict(self.SETUP, board=[], marker=False))[0]
+        r = self.reader().read(img).table
+        self.assertNotIn("money", r.money_text.lower())
+        self.assertEqual(suggest(r, LiveSettings()).kind, "blocked")
+        self.assertTrue(marker_ok("PLAY MONEY", DEFAULT_MARKERS))
+        self.assertFalse(marker_ok("Bounty $5.40", DEFAULT_MARKERS))
+        lay = copy.deepcopy(self.layout)
+        lay.marker_text = ""
+        self.assertIn("the play-money marker", lay.problems())
+
+    def test_size_change_and_learning_errors(self):
+        from fake_table import render
+        from poker_coach.live.local import TeachItem, learn
+        from poker_coach.live.reader import ReadError
+        from poker_coach.live.vision import Book
+        img = render(self.SETUP)[0]
+        with self.assertRaises(ReadError):
+            self.reader().read(img.resize((800, 533)))
+        crop = img.crop((self.boxes["seats"][0]["stack"][0], self.boxes["seats"][0]["stack"][1],
+                         self.boxes["seats"][0]["stack"][0] + 120, self.boxes["seats"][0]["stack"][1] + 26))
+        book = Book()
+        self.assertIn("separate characters", learn(book, TeachItem("text", "your stack", crop), "5000"))
+        self.assertEqual(learn(book, TeachItem("text", "your stack", crop), "5,000"), "")
+        self.assertEqual(book.glyphs.read(crop), "5,000")
+        self.assertEqual(learn(book, TeachItem("text", "x", crop), "  "), "skipped")
+
+    def test_files_round_trip(self):
+        from poker_coach.live.local import Layout
+        from poker_coach.live.vision import Book
+        with tempfile.TemporaryDirectory() as d:
+            self.layout.save(os.path.join(d, "layout.json"))
+            self.book.save(os.path.join(d, "book.json"))
+            lay, book = Layout.load(os.path.join(d, "layout.json")), Book.load(os.path.join(d, "book.json"))
+        self.assertEqual(lay, self.layout)
+        self.assertEqual(lay.problems(), [])
+        self.assertEqual(book.summary(), self.book.summary())
+
+    def test_amounts(self):
+        from poker_coach.live.vision import parse_amount, word_of
+        for text, value in (("12,450", 12450), ("Pot: 1,250", 1250), ("1.5K", 1500), ("2M", 2e6),
+                            ("1.250", 1250), ("Pot: 3,4?0", None), ("12.5", 12.5)):
+            self.assertEqual(parse_amount(text), value, text)
+        self.assertEqual(word_of("All-in"), "all-in")
+        self.assertEqual(word_of("Sitting Out"), "away")
