@@ -8,6 +8,7 @@ depth, ICM pressure and reads on the players involved.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .cards import HANDS, format_range, parse_range, range_combos, range_pct
@@ -918,7 +919,19 @@ _VERBS = {
 }
 
 
+_UTG_PLUS = re.compile(r"utg\s*\+\s*(\d+)|utg(\d+)")
+
+
 def pos_to_index(name: str, n: int) -> int | None:
+    """Place in the preflop acting order (0 = first to act) of a named seat at a table of ``n``.
+
+    ``UTG+k`` is the seat k places after the first to act, whatever the table
+    size, so every name the sheets (``binary.seat_name``) and the table view
+    (``ranges.position_name``) print leads back to the seat it was printed for.
+    The other names stand for a number of players behind (BB 0 ... LJ 5, MP 6);
+    one that needs more players than the table has is the first seat.  ``None``
+    when the name is not a seat of this table.
+    """
     low = name.strip().lower()
     # the table view prints "SB/BTN" heads-up and "UTG(LJ)" at short tables
     if "(" in low:
@@ -929,8 +942,16 @@ def pos_to_index(name: str, n: int) -> int | None:
             if idx is not None:
                 return idx
         return None
-    if low in ("utg", "ep", "ep1", "utg+0"):
+    if low in ("utg", "ep", "ep1"):
         return 0
+    m = _UTG_PLUS.fullmatch(low)
+    if m:
+        k = int(m.group(1) or m.group(2))
+        if n == 8 and k == 2:
+            # the table view used to call the second of eight seats UTG+2 (it now
+            # says UTG+1, like the sheets): the old name still means that seat
+            return 1
+        return k if k < n else None
     if low in _POS_NB:
         nb = _POS_NB[low]
         if n == 2 and low in ("btn", "bu", "button", "d", "dealer", "sb"):
@@ -968,7 +989,6 @@ def parse_actions(text: str, setup: HandSetup, hero: int, resolve, chips: bool) 
         return acts
     bet_level = setup.bb
     n_raises = 0
-    import re
 
     for part in re.split(r"[,;]+|\bthen\b", text):
         words = part.strip().split()

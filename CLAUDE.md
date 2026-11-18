@@ -85,7 +85,10 @@ from it.
 
 Preflop, table tracked. `--facing` lists what happened before hero acts, in
 order; players are named by position, seat (`s3`) or name; amounts are chips,
-or `2.2bb`. Leave `--facing` out when it is folded to hero.
+or `2.2bb`. Leave `--facing` out when it is folded to hero. Positions are the
+names `show` prints, the same as on the sheets: `UTG+1` is the seat after the
+first to act at any table size (eight-handed: UTG, UTG+1, LJ, HJ, CO, BTN,
+SB, BB).
 
 ```bash
 python3 -m poker_coach advise --hand AJo

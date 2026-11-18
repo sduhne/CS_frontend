@@ -3,7 +3,10 @@
 Positions are identified by ``n_behind``: how many players are still to act
 after you preflop.  0 = BB, 1 = SB, 2 = BTN, 3 = CO, 4 = HJ, 5 = LJ,
 6 = UTG+2, 7 = UTG+1, 8 = UTG (9-max).  That works for any table size:
-first to act 6-handed simply has 5 players behind.
+first to act 6-handed simply has 5 players behind.  Only the names of the
+seats before the LJ depend on the table: they count on from the first to act
+(``UTG``, ``UTG+1``, ...), so six players behind is UTG+2 nine-handed and
+UTG+1 eight-handed.
 
 The charts are deliberately tight from early position and aggressive in late
 position, and they are the baseline that stack depth, ICM and player reads
@@ -17,21 +20,33 @@ from functools import lru_cache
 from .cards import COMBO_COUNT, parse_range, range_pct, top_percent
 from .equity import allin_order
 
-POSITION_NAMES = {0: "BB", 1: "SB", 2: "BTN", 3: "CO", 4: "HJ", 5: "LJ",
-                  6: "UTG+2", 7: "UTG+1", 8: "UTG", 9: "UTG"}
+POSITION_NAMES = {0: "BB", 1: "SB", 2: "BTN", 3: "CO", 4: "HJ", 5: "LJ"}
 
 
+# Names that mean a fixed number of players behind.  UTG+1, UTG+2, ... are not
+# here: they count from the first seat of the table (``preflop.pos_to_index``).
 _POSITION_ALIASES = {"bb": 0, "sb": 1, "btn": 2, "bu": 2, "button": 2, "d": 2, "dealer": 2,
                      "co": 3, "cutoff": 3, "hj": 4, "hijack": 4, "mp3": 4, "lj": 5, "lojack": 5,
-                     "mp2": 5, "utg+2": 6, "utg2": 6, "mp": 6, "mp1": 6, "utg+1": 7, "utg1": 7}
+                     "mp2": 5, "mp": 6, "mp1": 6}
 
 
 def position_name(n_behind: int, n_players: int) -> str:
+    """Seat label for the table view, from the players still to act behind the seat.
+
+    The same names as the sheets (``binary.seat_name``): the seats before the LJ
+    are UTG, UTG+1, ... counted from the first to act, so the second of eight
+    seats is UTG+1.  Two labels say more than the sheets do: heads-up the first
+    seat is ``SB/BTN``, and at 4 to 6 players it is ``UTG(LJ)``, ``UTG(HJ)`` or
+    ``UTG(CO)``, first to act with that seat's ranges.
+    """
     if n_players == 2:
         return "SB/BTN" if n_behind == 1 else "BB"
     if n_behind >= 3 and n_behind == n_players - 1:
         return "UTG" if n_players >= 7 else f"UTG({POSITION_NAMES[n_behind]})"
-    return POSITION_NAMES.get(n_behind, "UTG")
+    if n_behind in POSITION_NAMES:
+        return POSITION_NAMES[n_behind]
+    early = n_players - 1 - n_behind               # seats after the first to act
+    return f"UTG+{early}" if early > 0 else "UTG"
 
 
 # Raise-first-in ladder, tightest first.  Index = "tightness level"; a seat

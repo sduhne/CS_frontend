@@ -444,6 +444,167 @@ class StateAndCli(unittest.TestCase):
         self.assertEqual(rfi_range(2)[HAND_INDEX["AA"]], 1.0)
 
 
+class SeatNames(unittest.TestCase):
+    """A seat name leads to the same seat whoever printed it: the sheets or the table view."""
+
+    EIGHT = ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB", "BB"]
+    # what the table view printed before it used the sheets' names at eight players
+    OLD_VIEW = {2: ["SB/BTN", "BB"], 3: ["BTN", "SB", "BB"], 4: ["UTG(CO)", "BTN", "SB", "BB"],
+                5: ["UTG(HJ)", "CO", "BTN", "SB", "BB"], 6: ["UTG(LJ)", "HJ", "CO", "BTN", "SB", "BB"],
+                7: ["UTG", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+                8: ["UTG", "UTG+2", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+                9: ["UTG", "UTG+1", "UTG+2", "LJ", "HJ", "CO", "BTN", "SB", "BB"]}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old = S.STATE_PATH
+        S.STATE_PATH = os.path.join(self.tmp.name, "current.json")
+
+    def tearDown(self):
+        S.STATE_PATH = self.old
+        self.tmp.cleanup()
+
+    def run_cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_sheet_names_round_trip(self):
+        from poker_coach import binary as B
+        from poker_coach.preflop import pos_to_index
+
+        for n in range(2, 10):
+            names = [B.seat_name(n - 1 - i, n) for i in range(n)]
+            self.assertEqual([pos_to_index(name, n) for name in names], list(range(n)), (n, names))
+        self.assertEqual([B.seat_name(7 - i, 8) for i in range(8)], self.EIGHT)
+
+    def test_table_view_names_round_trip(self):
+        from poker_coach import binary as B
+        from poker_coach.preflop import pos_to_index
+        from poker_coach.ranges import position_name
+
+        for n in range(2, 10):
+            names = [position_name(n - 1 - i, n) for i in range(n)]
+            self.assertEqual(len(set(names)), n, names)
+            self.assertEqual([pos_to_index(name, n) for name in names], list(range(n)), (n, names))
+            # the names it printed before still lead to the same seats
+            self.assertEqual([pos_to_index(name, n) for name in self.OLD_VIEW[n]], list(range(n)), n)
+            # and it says what the sheets say; only the first seat of a short table says more
+            sheet = [B.seat_name(n - 1 - i, n) for i in range(n)]
+            if n == 2:
+                sheet[0] = "SB/BTN"
+            elif 4 <= n <= 6:
+                sheet[0] = f"UTG({sheet[0]})"
+            self.assertEqual(names, sheet, n)
+        self.assertEqual([position_name(7 - i, 8) for i in range(8)], self.EIGHT)
+        self.assertEqual([position_name(8 - i, 9) for i in range(9)], self.OLD_VIEW[9])
+
+    def test_utg_plus_counts_from_the_first_seat(self):
+        from poker_coach.preflop import pos_to_index
+
+        for n in range(2, 10):
+            self.assertEqual(pos_to_index("UTG", n), 0)
+            for k in range(n):
+                if (n, k) == (8, 2):
+                    continue                           # the old name of the second seat, below
+                for text in (f"UTG+{k}", f"utg+{k}", f"utg{k}", f" UTG +{k} "):
+                    self.assertEqual(pos_to_index(text, n), k, (text, n))
+            self.assertIsNone(pos_to_index(f"UTG+{n}", n))      # no such seat at this table
+        # eight-handed the second seat is UTG+1, not a second UTG
+        self.assertEqual(pos_to_index("UTG+1", 8), 1)
+        self.assertEqual(pos_to_index("UTG+2", 8), 1)           # what the table view used to call it
+        self.assertEqual(pos_to_index("UTG+1", 7), pos_to_index("LJ", 7))
+        self.assertEqual(pos_to_index("UTG+1", 6), pos_to_index("HJ", 6))
+        self.assertIsNone(pos_to_index("UTG+", 8))
+        self.assertIsNone(pos_to_index("nobody", 8))
+
+    def test_other_names_keep_their_seat(self):
+        from poker_coach.preflop import pos_to_index
+
+        behind = {"BB": 0, "SB": 1, "BTN": 2, "BU": 2, "button": 2, "D": 2, "dealer": 2, "CO": 3, "cutoff": 3,
+                  "HJ": 4, "hijack": 4, "MP3": 4, "LJ": 5, "lojack": 5, "MP2": 5, "MP": 6, "MP1": 6}
+        for n in range(3, 10):
+            for name, nb in behind.items():
+                self.assertEqual(pos_to_index(name, n), max(0, n - 1 - nb), (name, n))
+            for name in ("UTG", "EP", "EP1"):
+                self.assertEqual(pos_to_index(name, n), 0, (name, n))
+        self.assertEqual([pos_to_index(x, 2) for x in ("SB", "BTN", "button", "SB/BTN", "BB")], [0, 0, 0, 0, 1])
+
+    def test_binary_reads_the_named_row(self):
+        from poker_coach import binary as B
+        from poker_coach.cli import _binary_seat
+
+        self.assertEqual([_binary_seat(name, 8) for name in self.EIGHT], [7, 6, 5, 4, 3, 2, 1, 0])
+        h = HAND_INDEX["A9s"]
+        rows = {seat: B.decide(h, nb, 10, players=8) for seat, nb in (("UTG", 7), ("UTG+1", 6))}
+        self.assertEqual((rows["UTG"][0], rows["UTG+1"][0]), ("FOLD", "ALL-IN"))
+        for seat, (action, why) in rows.items():
+            code, out, _ = self.run_cli("binary", "--hand", "A9s", "--pos", seat, "--stack", "10", "--players", "8")
+            self.assertEqual(code, 0)
+            self.assertIn(f">>> {action}   A9s in {seat} with 10bb", out)
+            self.assertIn(f"why: {why}", out)
+        # the player whose raise or all-in you face is found the same way
+        code, out, _ = self.run_cli("binary", "--hand", "99", "--pos", "BTN", "--stack", "15", "--players", "8",
+                                    "--facing", "UTG+1 raise")
+        self.assertEqual(code, 0)
+        self.assertIn(B.decide(HAND_INDEX["99"], 2, 15, facing="raise", facing_seat=6, players=8)[1], out)
+        self.assertIn("over a raise from UTG+1", out)
+        code, out, _ = self.run_cli("binary-chart", "--pos", "UTG+1", "--players", "8")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.rstrip("\n"), B.grid_text("before", 6, 8).rstrip("\n"))
+        code, _, err = self.run_cli("binary", "--hand", "A9s", "--pos", "UTG+8", "--stack", "10", "--players", "8")
+        self.assertEqual(code, 2)
+        self.assertIn("unknown position", err)
+
+    def test_quick_and_chart_at_eight_players(self):
+        from poker_coach.ranges import villain_open_range
+
+        code, out, _ = self.run_cli("quick", "--hand", "AJo", "--pos", "UTG+1", "--stack", "30", "--players", "8")
+        self.assertEqual(code, 0)
+        self.assertIn("AJo in UTG+1 with 30.0bb", out)
+        self.assertIn("6 players behind", out)
+        code, out, _ = self.run_cli("chart", "open", "--pos", "UTG+1", "--stack", "30", "--players", "8")
+        self.assertEqual(code, 0)
+        self.assertIn("UTG+1 (6 behind)", out)
+        code, out, _ = self.run_cli("chart", "push", "--pos", "UTG", "--stack", "10", "--players", "8")
+        self.assertIn("UTG (7 behind)", out)
+        # the opener of a hand already on the flop: "open:UTG+1"
+        for n in (8, 9):
+            self.assertEqual(range_from_spec("open:UTG+1", n)[0], villain_open_range(n - 2, "unknown"), n)
+            self.assertEqual(range_from_spec("open:LJ", n)[0], villain_open_range(5, "unknown"), n)
+        self.assertEqual(range_from_spec("open:UTG+2", 9)[0], villain_open_range(6, "unknown"))
+
+    def test_tracked_table_of_eight(self):
+        snap = {"blinds": [300, 600, 75], "button": 3, "hero": 3, "remaining": 300,
+                "seats": {"1": ["Bob", 21000], "2": ["Ann", 29500], "3": ["HERO", 28000], "4": ["Dee", 25500],
+                          "5": ["Eve", 22400], "6": ["Fox", 33000], "7": ["Gus", 27000], "8": ["Hal", 18000]}}
+        self.assertEqual(self.run_cli("new", "--name", "Eight", "--buyin", "11", "--entrants", "500",
+                                      "--paid", "75", "--start-stack", "10000")[0], 0)
+        code, shown, _ = self.run_cli("sync", json.dumps(snap))
+        self.assertEqual(code, 0)
+        st = S.load()
+        order = S.action_order(st)
+        self.assertEqual(order, [6, 7, 8, 1, 2, 3, 4, 5])
+        self.assertEqual([S.positions(st)[seat] for seat in order], self.EIGHT)
+        self.assertRegex(shown, r"(?m)^\s+6\s+UTG\s+Fox\b")       # seat, position, player
+        self.assertRegex(shown, r"(?m)^\s+7\s+UTG\+1\s+Gus\b")
+        self.assertRegex(shown, r"(?m)^\s+8\s+LJ\s+Hal\b")
+        self.assertNotIn("UTG+2", shown)
+        answers = {}
+        for who in ("UTG", "UTG+1", "UTG+2", "Gus", "LJ"):
+            code, out, _ = self.run_cli("advise", "--hand", "99", "--facing", f"{who} raise 1400")
+            self.assertEqual(code, 0, who)
+            answers[who] = out
+        self.assertIn("UTG Fox raised", answers["UTG"])
+        self.assertIn("UTG+1 Gus raised", answers["UTG+1"])
+        self.assertIn("LJ Hal raised", answers["LJ"])
+        self.assertEqual(answers["UTG+1"], answers["Gus"])
+        self.assertEqual(answers["UTG+2"], answers["UTG+1"])      # the name the table view used to print
+        code, out, _ = self.run_cli("type", "UTG+1", "lag")       # a seat name also picks the player
+        self.assertEqual(S.seats(S.load())["7"]["type"], "lag")
+
+
 if __name__ == "__main__":
     unittest.main()
 

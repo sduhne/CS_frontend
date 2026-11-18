@@ -18,7 +18,7 @@ from .cards import cards_str, format_range, range_pct
 from .equity import expand_range, hand_equity
 from .evaluator import (NIB, SBIT, SCNT, STRAIGHT_HI, CATEGORIES, describe, evaluate,
                         value_from_acc)
-from .preflop import Advice, _pct
+from .preflop import Advice, _pct, pos_to_index
 from .ranges import (PLAYER_TYPES, norm_type, parse, play_order, threebet_range, top_percent,
                      villain_limp_range, villain_open_range, vs_open_chart, _POSITION_ALIASES)
 
@@ -51,7 +51,10 @@ def range_from_spec(spec: str, n_players: int = 9, ptype: str = "unknown",
             return default
         if name in ("utg", "ep"):
             return max(2, n_players - 1)
-        return _POSITION_ALIASES.get(name, default)
+        if name in _POSITION_ALIASES:
+            return _POSITION_ALIASES[name]
+        idx = pos_to_index(name, n_players)        # UTG+1, UTG+2: counted from this table's first seat
+        return default if idx is None else n_players - 1 - idx
 
     hero_nb = 3 if hero_pos_nb is None else hero_pos_nb
     if kind in ("open", "raise", "pfr", "opened"):
