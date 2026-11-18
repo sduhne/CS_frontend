@@ -649,7 +649,19 @@
   }
   withUi("preflop-open", ["ui-settings", "The settings sheet"], {sheet: "settings"});
   withUi("spin-3", ["ui-settings-spin", "The settings sheet in Spin & Go"], {sheet: "settings"});
-  withUi("preflop-open", ["ui-keys", "The keys"], {sheet: "keys"});
+  // The real key map comes from the server (defaults.py, in view.settings.keys); this is a short sample of its shape.
+  const SAMPLE_KEYS = {
+    table: [{keys: ["n"], do: "deal", text: "New hand, next hand"}, {keys: ["Space"], do: "follow", text: "Do what the coach says"},
+            {keys: ["Backspace", "z", "Ctrl+z"], do: "undo", text: "Undo"}, {keys: ["+", "="], do: "blinds_up", text: "Blinds up"}],
+    seat: [{keys: ["f", "c", "x", "b", "r", "a"], do: "act", text: "That player folds, calls, checks, bets, raises, moves all-in"},
+           {keys: ["s"], do: "stack", text: "Stack"}],
+    type: [{keys: ["n"], do: "nit", text: "Nit"}, {keys: ["g"], do: "tag", text: "Tight-aggressive"}],
+  };
+  add("ui-keys", "The keys (a sample of the key map)", (params) => {
+    const example = FIXTURES["preflop-open"].build(params);
+    example.view.settings = Object.assign({}, example.view.settings, {keys: SAMPLE_KEYS});
+    return {view: example.view, advice: example.advice, ui: Object.assign({}, example.ui || {}, {sheet: "keys"})};
+  });
   withUi("preflop-open", ["ui-history", "The hand history"], {sheet: "history"});
   withUi("preflop-open", ["ui-why", "Why and range as a sheet (narrow screens)"], {sheet: "why"});
   withUi("preflop-open", ["ui-new", "New tournament"], {sheet: "new"});

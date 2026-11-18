@@ -618,7 +618,7 @@
 
   /* ---------- 8. Keys in a field (FIELD) ---------- */
 
-  const AMOUNT_KEYS = /^[0-9.,kmbx%+\-]$/;      // what an amount is typed with: 1,300  12.5k  25bb  3x  66%
+  const AMOUNT_KEYS = /^[0-9.,kmbx%+\- ]$/i;    // what an amount is typed with: 1,300  12.5k  25bb  3x  66%
 
   // Returns true when the key was used here; false lets the browser type it into the field.
   function fieldKey(key, field, live) {
@@ -640,6 +640,8 @@
         return tableKey(key);
       }
     }
+    // The amount of a bet takes digits and the letters amounts are written with; another letter is not typed into it.
+    if ((fk === "amount" || fk === "event-amount") && key.name.length === 1 && !AMOUNT_KEYS.test(key.name)) return true;
     // Up and Down in the amount of a bet walk through the sizes offered as buttons.
     if (fk === "amount" && (key.name === "ArrowUp" || key.name === "ArrowDown")) {
       stepPreset(field, key.name === "ArrowUp" ? 1 : -1);
