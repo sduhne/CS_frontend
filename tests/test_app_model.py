@@ -3041,22 +3041,25 @@ class Ops14LateCaller(unittest.TestCase):
         view = s.do("act", seat=3, kind="call")                     # the big blind had called
         self.assertEqual(toast_of(view), "Added to the betting before the flop: BB calls")
         self.assertEqual((view["hand"]["phase"], view["hand"]["needs"], view["hand"]["pot"]), ("flop", "board", 1750))
-        view = s.do("act", seat=2, kind="raise", amount=2000)       # and the small blind had raised: the round is open again
+        # a raise is not taken there (T1): it could as well be a bet on the flop.  The fold chip has Raised for it
+        self.assertIn("Type the flop first", refused(s, "act", seat=2, kind="raise", amount=2000).message)
+        fold = next(item["i"] for item in view["hand"]["line"] if item.get("seat") == 2 and item["verb"] == "fold")
+        view = s.do("edit_event", index=fold, kind="raise", amount=2000)        # the small blind had raised
         self.assertEqual((view["hand"]["phase"], view["hand"]["to_call"], view["hand"]["target_is_hero"]),
                          ("preflop", 1500, True))
-        self.assertIn("SB raises to 2,000", toast_of(view))
 
     def test_ops_14_an_implied_check_can_become_a_bet(self):
+        """At the showdown only: while a street's cards are wanted a bet is not taken into the closed round (T1)."""
         s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
         s.do("deal", hero_cards="AhKh")
         play(s, "6 raise 500, 1 call, 3 call")
-        s.do("set_cards", board="Ks7d2c")
-        s.do("close_round")                                         # checked through, says Enter
-        self.assertEqual((s.view()["hand"]["phase"], s.view()["hand"]["needs"]), ("turn", "board"))
-        view = s.do("act", seat=6, kind="bet", amount=700)          # no: the cutoff had bet the flop
-        self.assertIn("Added to the betting on the flop: CO bets 700", toast_of(view))
+        s.do("set_cards", board="Ks7d2c5h9c")                       # checked down to the river
+        s.do("close_round")                                         # ... and through it, says Enter
+        self.assertEqual((s.view()["hand"]["phase"], s.view()["hand"]["needs"]), ("showdown", "result"))
+        view = s.do("act", seat=6, kind="bet", amount=700)          # no: the cutoff had bet the river
+        self.assertIn("Added to the betting on the river: CO bets 700", toast_of(view))
         self.assertEqual((view["hand"]["phase"], view["hand"]["to_call"], view["hand"]["target_is_hero"]),
-                         ("flop", 700, True))
+                         ("river", 700, True))
 
     def test_ops_14_no_seat_named_is_the_next_street_as_before(self):
         s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
@@ -3099,6 +3102,197 @@ class Ops14LateCaller(unittest.TestCase):
         err = refused(s, "act", seat=3, kind="call")
         self.assertIn("sitting out", err.message)
         self.assertIn("back", err.fix)
+
+
+class T1ABetWhileCardsAreWanted(unittest.TestCase):
+    """T1: while the hand waits for a street's cards, the round just closed opens again only for a call or a check.
+
+    A bet, a raise or an all-in typed for a seat then is refused with what to do: the cards first.
+    """
+
+    def flop_wanted(self, stacks=None):
+        """6 seats, 100/200 ante 25, button on hero.  CO raises to 500, hero calls, Enter: the blinds fold."""
+        s = tournament(size=6, level="100/200/25", stacks=stacks or [20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        view = s.do("close_round")
+        self.assertEqual((view["hand"]["phase"], view["hand"]["needs"]), ("flop", "board"))
+        return s
+
+    def test_t1_a_bet_a_raise_and_an_all_in_are_refused_with_the_cards_to_type(self):
+        s = self.flop_wanted()
+        for kind, amount, word in (("bet", 600, "bet"), ("raise", 2000, "raise"), ("allin", None, "all-in"),
+                                   ("bet", None, "bet"), ("raise", None, "raise")):
+            for seat in (2, 3, 4, 5):                               # the blinds, and two players passed by in front
+                err = refused(s, "act", seat=seat, kind=kind, amount=amount)
+                self.assertEqual(err.message, f"Type the flop first (K S 7 D 2 C), then record the {word}.", (kind, seat))
+                self.assertEqual(err.fix, "A bet or raise he made before the flop: select his fold on the hand line, "
+                                          "then Raised.", (kind, seat))
+        self.assertEqual(state(s).phase, "flop")
+        self.assertFalse([e for e in state(s).log if e["kind"] in ("bet", "raise") and e["seat"] != 6])
+
+    def test_t1_the_forgotten_caller_still_fits_and_then_the_bet_goes_on_the_flop(self):
+        s = self.flop_wanted()
+        view = s.do("act", seat=3, kind="call")                     # reopening is for a call
+        self.assertEqual(toast_of(view), "Added to the betting before the flop: BB calls")
+        self.assertEqual((view["hand"]["phase"], view["hand"]["needs"]), ("flop", "board"))
+        s.do("set_cards", board="Ks7d2c")                           # as the refusal says: the flop first ...
+        view = s.do("act", seat=3, kind="bet", amount=600)          # ... then the bet
+        self.assertEqual((marked(s)[-2:], view["hand"]["to_call"]), (["Ks 7d 2c", "BB bet 3bb"], 600))
+        # the same for the player who was never mentioned: the flop, then his bet (he must have called)
+        s = self.flop_wanted()
+        refused(s, "act", seat=3, kind="bet", amount=600)
+        s.do("set_cards", board="Ks7d2c")
+        view = s.do("act", seat=3, kind="bet", amount=600)
+        self.assertIn("now he called there, and bets 600 here", toast_of(view))
+        self.assertEqual([(e["street"], e["kind"]) for e in state(s).log if e["seat"] == 3],
+                         [("preflop", "call"), ("flop", "bet")])
+
+    def test_t1_the_turn_and_the_river_are_named_and_an_implied_check_says_undo(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call, 3 call")
+        s.do("set_cards", board="Ks7d2c")
+        s.do("close_round")                                         # the flop is checked through, says Enter
+        self.assertEqual((s.view()["hand"]["phase"], s.view()["hand"]["needs"]), ("turn", "board"))
+        err = refused(s, "act", seat=6, kind="bet", amount=700)     # the cutoff's check on the flop was implied
+        self.assertEqual((err.message, err.fix), ("Type the turn first (5 H), then record the bet.",
+                                                  "A bet or raise he made on the flop: undo to that point (Backspace)."))
+        err = refused(s, "act", seat=2, kind="allin")               # folded before the flop on the record
+        self.assertEqual(err.message, "Type the turn first (5 H), then record the all-in.")
+        self.assertIn("on the flop: undo to that point", err.fix)
+        s.do("set_cards", board="Ks7d2c5h")
+        s.do("close_round")
+        self.assertEqual((s.view()["hand"]["phase"], s.view()["hand"]["needs"]), ("river", "board"))
+        err = refused(s, "act", seat=3, kind="raise")
+        self.assertEqual(err.message, "Type the river first (9 C), then record the raise.")
+        view = s.do("act", seat=3, kind="check")                    # a check is taken: the players behind him decide again
+        self.assertEqual((view["hand"]["phase"], state(s).log[-1]["street"]), ("turn", "turn"))
+
+    def test_t1_a_player_whose_last_action_was_typed_acts_on_the_new_street_as_before(self):
+        s = self.flop_wanted()
+        view = s.do("act", seat=6, kind="bet", amount=700)          # the raiser: nothing of his was implied
+        self.assertEqual((state(s).log[-1]["street"], state(s).log[-1]["kind"], view["hand"]["to_call"]), ("flop", "bet", 700))
+        self.assertEqual([e["kind"] for e in state(s).log if e["street"] == "preflop" and not e["auto"]], ["raise", "call"])
+
+    def test_t1_an_all_in_that_can_only_be_a_call_is_the_forgotten_caller(self):
+        s = self.flop_wanted(stacks=[20000, 20000, 450, 20000, 20000, 20000])     # the big blind has 425 after the ante
+        view = s.do("act", seat=3, kind="allin")
+        self.assertEqual(toast_of(view), "Added to the betting before the flop: BB calls all-in")
+        self.assertEqual([(e["kind"], e["allin"]) for e in state(s).log if e["seat"] == 3], [("call", True)])
+
+    def test_t1_your_own_seat_and_no_seat(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "4 call")
+        s.do("close_round")                                         # hero and the blinds take the default
+        self.assertEqual((s.view()["hand"]["phase"], s.view()["hand"]["needs"]), ("flop", "board"))
+        err = refused(s, "act", seat=1, kind="raise", amount=900)   # hero is folded on the record
+        self.assertEqual((err.message, err.fix), ("Type the flop first (K S 7 D 2 C), then record the raise.",
+                                                  "A bet or raise you made before the flop: select your fold on the "
+                                                  "hand line, then Raised."))
+        view = s.do("act", kind="bet", amount=300)                  # no seat named: the next player, on the flop
+        self.assertEqual((view["hand"]["phase"], state(s).log[-1]["street"]), ("flop", "flop"))
+
+
+class T2AFoldForAPlayerAlreadyFolded(unittest.TestCase):
+    """T2: a fold typed for a player the record has out since an earlier street changes nothing and says so."""
+
+    def test_t2_a_fold_on_the_flop_for_a_player_folded_before_it(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        s.do("set_cards", board="Ks7d2c")                           # the blinds get the implied fold
+        line, pot = marked(s), s.view()["hand"]["pot"]
+        for seat, name in ((3, "BB"), (2, "SB"), (4, "LJ")):
+            err = refused(s, "act", seat=seat, kind="fold")
+            self.assertEqual((err.message, err.fix), (f"{name} is already folded on the record.", ""))
+        self.assertEqual((marked(s), s.view()["hand"]["pot"]), (line, pot))        # nobody was put back in with a call
+        self.assertNotIn("BB call~", marked(s))
+        s.do("rename", seat=3, name="Carl")
+        self.assertEqual(refused(s, "act", seat=3, kind="fold").message, "Carl is already folded on the record.")
+
+    def test_t2_a_fold_while_the_cards_are_wanted_does_not_reopen_the_round(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        s.do("close_round")                                         # Enter: the blinds fold, the flop is wanted
+        err = refused(s, "act", seat=2, kind="fold")
+        self.assertEqual(err.message, "SB is already folded on the record.")
+        view = s.view()
+        self.assertEqual((view["hand"]["phase"], view["hand"]["needs"]), ("flop", "board"))
+        self.assertEqual(marked(s)[-2:], ["SB fold*", "BB fold*"])
+
+    def test_t2_at_the_showdown_and_for_hero(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 3 call")                              # hero on the button is passed by: an implied fold
+        s.do("set_cards", board="Ks7d2c")
+        self.assertEqual(refused(s, "act", seat=1, kind="fold").message, "You are already folded on the record.")
+        s.do("set_cards", board="Ks7d2c5h9c")
+        s.do("close_round")
+        self.assertEqual(s.view()["hand"]["needs"], "result")
+        self.assertEqual(refused(s, "act", seat=2, kind="fold").message, "SB is already folded on the record.")
+
+    def test_t2_the_other_actions_still_say_he_must_have_called(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        s.do("set_cards", board="Ks7d2c")
+        self.assertIn("now he called there, and checks here", toast_of(s.do("act", seat=3, kind="check")))
+        # and a fold on the street being played still takes the place of the one nobody typed
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 4 fold")
+        self.assertEqual(marked(s)[1:4], ["LJ fold", "HJ fold*", "CO raise 2.5bb"])
+
+
+class T3TheBigBlindFirst(unittest.TestCase):
+    """T3: an action typed for the big blind before anybody has come in gets a sentence that says what to do."""
+
+    MESSAGE = "Nobody has entered the pot before the big blind."
+    FIX = "Record who called or raised first, or press Enter if everybody folded."
+
+    def test_t3_the_first_typed_action_is_for_the_big_blind(self):
+        for kind in ("check", "call", "fold", "raise", "allin"):
+            s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+            s.do("deal", hero_cards="AhKh")
+            err = refused(s, "act", seat=3, kind=kind)
+            self.assertEqual((err.message, err.fix), (self.MESSAGE, self.FIX), kind)
+            self.assertNotIn("no turn", err.message)
+        view = s.do("act", seat=5, kind="call")                     # as it says: who came in first ...
+        view = s.do("act", seat=3, kind="check")                    # ... then the big blind has his option
+        self.assertEqual((view["hand"]["phase"], marked(s)[-1]), ("flop", "BB check"))
+
+    def test_t3_after_typed_folds_in_front_and_with_hero_in_the_big_blind(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6, button=5)   # hero is the big blind
+        s.do("deal", hero_cards="AhKh")
+        self.assertEqual(s.view()["table"]["seats"][0]["pos"], "BB")
+        play(s, "2 fold, 3 fold")
+        err = refused(s, "act", seat=1, kind="check")
+        self.assertEqual((err.message, err.fix), (self.MESSAGE, self.FIX))
+        view = s.do("close_round")                                  # Enter: everybody folded, the blind comes back
+        self.assertEqual((view["hand"]["needs"], view["hand"]["result"]["winners"][0]["seat"]), ("next", 1))
+
+    def test_t3_heads_up_and_all_in_or_fold(self):
+        s = tournament(size=2, level="100/200/25", stacks=[20000] * 2, button=1)   # hero is the button and small blind
+        s.do("deal", hero_cards="AhKh")
+        self.assertEqual(refused(s, "act", seat=2, kind="check").message, self.MESSAGE)
+        s = aof()                                                   # hero on the button, the big blind is seat 3
+        err = refused(s, "act", seat=3, kind="allin")
+        self.assertEqual((err.message, err.fix), (self.MESSAGE, "Record who moved all-in first, or press Enter if everybody folded."))
+
+    def test_t3_no_turn_now_is_still_the_answer_where_it_is_true(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call, 2 call, 3 call")
+        s.do("set_cards", board="Ks7d2c")
+        play(s, "2 check, 3 check, 6 check, 1 check")               # the flop is over, the turn card is typed
+        s.do("set_cards", board="Ks7d2c5h")
+        play(s, "2 bet 400, 3 call, 6 call, 1 call")
+        s.do("set_cards", board="Ks7d2c5h9c")
+        play(s, "2 check, 3 check, 6 check")
+        self.assertIn("no turn now", refused(s, "act", seat=2, kind="bet", amount=500).message)
 
 
 class SeenInPassing(unittest.TestCase):

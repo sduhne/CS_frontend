@@ -95,7 +95,9 @@ Choices worth knowing:
   and cards sent without a slot go to the board unless they are that hand.
 - An action for a player who was passed by: see the comment above
   ``_late_action``.  While the hand waits for a street's cards or a result,
-  such an action reopens the betting round that just closed.
+  such an action reopens the betting round that just closed; while it waits
+  for a street's cards only a call or a check does, and a bet, raise or
+  all-in is refused ("Type the flop first ..., then record the bet").
 - Hero with no chips keeps his seat.  After a bust, a stack typed there is a
   re-entry: players left and entrants go up by one.
 - Files: every accepted change is saved (the file before it is kept as
@@ -128,6 +130,7 @@ BOARD_CARDS = {"preflop": 0, "flop": 3, "turn": 4, "river": 5, "showdown": 5, "d
 STREET_OF_CARD = ("flop", "flop", "flop", "turn", "river")  # which street a board card belongs to
 SUIT_ORDER = "shdc"                                         # the order suits are offered in, as on the card keys
 STREET_WORDS = {"preflop": "before the flop", "flop": "on the flop", "turn": "on the turn", "river": "on the river"}
+BOARD_EXAMPLE = {"flop": "K S 7 D 2 C", "turn": "5 H", "river": "9 C"}     # a street's cards as they are typed
 
 # What to type instead, said when a field's text cannot be read: each field has its own sentence.
 COUNT_FIELDS = {"remaining": ("Players left", 96), "paid": ("Places paid", 75), "entrants": ("Entrants", 500)}
@@ -2349,7 +2352,13 @@ class Session:
     # - his fold was implied on an earlier street: he must have called there.  The fold becomes a
     #   call (a check when it was free) on its own street and the typed action is recorded on the
     #   street being played;
-    # - his fold was typed: refused, the hand line is the place to change it.
+    # - his fold was typed: refused, the hand line is the place to change it;
+    # - a fold is typed for him and the record has him folded since an earlier street (or since the
+    #   round that just closed): nothing changes, and the answer says he is folded already.
+    #
+    # While the hand waits for a street's cards the round just closed is reopened only for a call
+    # or a check (the forgotten caller).  A bet, a raise or an all-in typed then could be meant for
+    # either street, so it is refused: the cards first, then the bet.
     #
     # In no case is a typed action read on another street than the one it was typed for, and none
     # of this may drop, change or imply an action of hero: then it is refused and nothing changes.
@@ -2362,9 +2371,19 @@ class Session:
         if seat in state.away:
             raise ModelError(f"{self._who_is(seat, labels)} sitting out: the defaults are his actions.",
                              "Mark the player as back first.")
-        if last is not None and last["auto"] and last["street"] == now:
+        implied_here = last is not None and last["auto"] and last["street"] == now
+        implied_fold = seat in state.folded and last is not None and last["auto"] and last["kind"] == "fold"
+        if kind == "fold" and implied_fold and last["street"] != state.phase:
+            # a fold for a player the record already has out since an earlier street (or since the round
+            # that just closed): nothing to do.  It must not put him back in with a call, or reopen that round
+            raise ModelError(f"{self._who_is(seat, labels)} already folded on the record.", "")
+        if (implied_here or implied_fold) and state.phase in BETTING and now != state.phase \
+                and kind in ("bet", "raise", "allin") \
+                and not (kind == "allin" and implied_here and self._all_in_is_a_call(hand, mine[-1], seat)):
+            raise self._cards_first(state, seat, kind, now, his_fold=implied_here and last["kind"] == "fold")
+        if implied_here:
             self._replace_implied(hand, state, seat, mine[-1], kind, amount, force, now)
-        elif seat in state.folded and last is not None and last["auto"] and last["kind"] == "fold":
+        elif implied_fold:
             self._must_have_called(hand, state, seat, last["street"], kind, amount, force, now)
         elif seat in state.folded:
             street = last["street"] if last is not None else now
@@ -2382,8 +2401,38 @@ class Session:
                 raise ModelError(f"{self._who_has(seat, labels)} no turn now.",
                                  "Select the earlier action on the hand line to change it.") from None
         else:
+            ahead = replay(hand)
+            try:
+                imply_until(ahead, seat)
+            except _NoTurn:
+                pass
+            if last is None and ahead.phase == "done" and ahead.live() == [seat]:
+                # everybody in front would be folded and the pot would be his without a decision
+                # (the big blind, typed before anybody came in)
+                entered = "moved all-in" if state.aof else "called or raised"
+                where = "the big blind" if labels[seat] == "BB" else labels[seat]
+                raise ModelError(f"Nobody has entered the pot before {where}.",
+                                 f"Record who {entered} first, or press {key_for('accept')} if everybody folded.")
             raise ModelError(f"{self._who_has(seat, labels)} no turn now.",
                              "Select the earlier action on the hand line to change it.")
+
+    def _cards_first(self, state: HandState, seat: int, kind: str, now: str, his_fold: bool) -> ModelError:
+        """The refusal of a bet, raise or all-in typed for a seat while the hand waits for a street's cards."""
+        street = state.phase                            # the street whose cards are wanted
+        word = {"bet": "bet", "raise": "raise", "allin": "all-in"}[kind]
+        he, his = ("you", "your") if seat == HERO else ("he", "his")
+        if his_fold:
+            way = f"select {his} fold on the hand line, then Raised."
+        else:
+            way = f"undo to that point ({key_for('undo')})."
+        return ModelError(f"Type the {street} first ({BOARD_EXAMPLE[street]}), then record the {word}.",
+                          f"A bet or raise {he} made {STREET_WORDS[now]}: {way}")
+
+    @staticmethod
+    def _all_in_is_a_call(hand: dict, index: int, seat: int) -> bool:
+        """Where his implied action stands (the stored event ``index``): all his chips are no more than a call."""
+        there = replay(dict(hand, events=hand["events"][:index], ranking=None))
+        return there.phase in BETTING and there.to_act() == seat and there.owe(seat) > 0 and not there.may_raise(seat)
 
     def _replace_implied(self, hand: dict, state: HandState, seat: int, index: int, kind: str, amount, force: bool,
                          now: str) -> None:

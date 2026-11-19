@@ -267,12 +267,12 @@ button.pod:hover{border-color:var(--grey)}
 .other,.pod .tag{font:700 12px/14px var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--grey);white-space:nowrap}
 .pod .tag{letter-spacing:.04em;text-transform:uppercase}
 .stack .other,.stack .tag{display:none;margin-left:auto;padding-left:4px}
-.more{display:flex;align-items:center;gap:4px;height:14px;min-width:0}
-.more .other{flex:0 1 auto;min-width:0;overflow:hidden}      /* (if the row is ever too short, this gives way, not the type) */
+.pod .more{display:flex;align-items:center;gap:4px;height:14px;min-width:0}
+.pod .more .other{flex:0 1 auto;min-width:0;overflow:hidden}      /* (if the row is ever too short, this gives way, not the type) */
 /* The player's type: a small tag of its own, never cut (it changes the advice). */
-.type{flex:none;height:14px;padding:0 3px;border-radius:4px;background:var(--line);color:var(--white);
+.pod .type{flex:none;height:14px;padding:0 3px;border-radius:4px;background:var(--line);color:var(--white);
   font:800 12px/14px var(--display);text-transform:uppercase;white-space:nowrap}
-.more .type,.more .pill.you{margin-left:auto}
+.pod .more .type,.pod .more .pill.you{margin-left:auto}
 .pod .name{display:none;min-width:0;font:500 12px/14px var(--body);color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pod.out,.pod.out .num,.pod.out .name,.pod.out .type{color:var(--grey)}
 .pod.out{border-color:var(--line)}
@@ -659,10 +659,10 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .pod{padding:7px 12px}
   .pod.target,.pod.turn{padding:6px 11px}
   .stack .other,.stack .tag{display:block}
-  .more .other,.more .tag{display:none}
-  .more{height:16px;gap:6px}
-  .more .type,.more .pill.you{margin-left:0}
-  .type{height:16px;line-height:16px;padding:0 5px;letter-spacing:.03em}
+  .pod .more .other,.pod .more .tag{display:none}
+  .pod .more{height:16px;gap:6px}
+  .pod .more .type,.pod .more .pill.you{margin-left:0}
+  .pod .type{height:16px;line-height:16px;padding:0 5px;letter-spacing:.03em}
   .pod .name{display:block;line-height:16px}
   .pod.hero{padding:7px 9px;gap:12px}
   .pod.hero.turn,.pod.hero.target{padding:6px 8px}
@@ -685,10 +685,10 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .pod{padding:6px 9px}
   .pod.target,.pod.turn{padding:5px 8px}
   .stack .other,.stack .tag{display:none}
-  .more .other,.more .tag{display:block}
-  .more{height:14px;gap:4px}
-  .more .type,.more .pill.you{margin-left:auto}
-  .type{height:14px;line-height:14px;padding:0 3px;letter-spacing:0}
+  .pod .more .other,.pod .more .tag{display:block}
+  .pod .more{height:14px;gap:4px}
+  .pod .more .type,.pod .more .pill.you{margin-left:auto}
+  .pod .type{height:14px;line-height:14px;padding:0 3px;letter-spacing:0}
   .pod .name{display:none}
   .pod.hero{padding:5px 7px;gap:8px}
   .pod.hero.turn,.pod.hero.target{padding:4px 6px}
