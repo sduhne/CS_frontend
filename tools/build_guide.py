@@ -377,6 +377,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--quick", action="store_true", help="three stacks and one opponent type only")
     ap.add_argument("--only", help="families, comma separated")
+    ap.add_argument("--styles", help="compute these styles only, comma separated (to redo part of the cache)")
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--out", default=os.path.join(ROOT, "guide", "data.js"))
     ap.add_argument("--cache", default=os.path.join(ROOT, "guide", ".cache"), help="finished jobs are kept here")
@@ -398,6 +399,9 @@ def main() -> int:
         return os.path.join(a.cache, f"{family}.{opp}.{style}.{'quick' if quick else 'full'}.v{VERSION}.json")
 
     todo = [job for job in jobs if not os.path.exists(cache_path(job))]
+    if a.styles:
+        todo = [job for job in todo if job[0] in a.styles.split(",")]
+        jobs = [job for job in jobs if job[0] in a.styles.split(",") or os.path.exists(cache_path(job))]
     print(f"{len(jobs)} jobs, {len(todo)} to compute", flush=True)
     started = time.time()
     if a.assemble_only:

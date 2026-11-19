@@ -97,6 +97,12 @@ Sizes: 2x under 25bb, 2.2x to 40bb, 2.3-2.5x deeper, 3x from the small blind.
   raise to 11bb about 99+ and AQ; against a 12bb all-in and a raise to 26bb
   still JJ+ and AK only. Against a raiser tagged nit or tight only JJ+ and
   AK play.
+- **You raised, a player re-raised and another moved all-in over both:**
+  that all-in is the narrowest range before the flop, and the re-raiser is
+  still behind you. Deep, only AA and KK go on. With 40bb QQ is close and
+  AK folds. With 25bb or less QQ+ and AK go on, and JJ after a raise from
+  CO or later; with about 12bb also TT and AQs. Against a tight player one
+  notch fewer, against a loose one a notch more.
 - **You opened and got 3-bet:** with 45bb or less the all-in goes by the
   seat you raised from: KK+ and AKs from UTG or UTG+1; QQ+ and AK from LJ
   or HJ; TT+, AQs+ and AKo from CO, BTN or SB. TT+, AQs+ and AKo are not
@@ -880,3 +886,53 @@ break-even is 17.9%.
   games and a drop of 60 buy-ins is ordinary. Published bankroll advice is
   120 to 300 buy-ins.
 - GGPoker forbids charts during play. The sheet is a study aid.
+
+
+## Play to win: the quick guide's wider ranges
+
+The quick guide (`guide/`) has two styles. `Tight` is everything above.
+`Play to win` is the same engine with these changes, for a player who finds
+the tight ranges give up too many pots. It counts chips only: no prizes.
+
+Opening ranges, folded to you, 30bb or more:
+
+| Seat (players behind) | Opens | Range |
+|---|---|---|
+| UTG (8) | 13% | 55+, A9s+, A5s-A3s, KTs+, QTs+, J9s+, T9s, 98s, AJo+, KQo |
+| UTG+1 (7) | 17% | 44+, A7s+, A5s-A2s, K9s+, Q9s+, J9s+, T9s, 98s, 87s, ATo+, KJo+ |
+| UTG+2 (6) | 20% | 33+, A2s+, K8s+, Q9s+, J9s+, T8s+, 98s, 87s, 76s, ATo+, KJo+, QJo |
+| LJ (5) | 23% | 22+, A2s+, K7s+, Q8s+, J8s+, T8s+, 97s+, 87s, 76s, 65s, ATo+, KTo+, QJo |
+| HJ (4) | 27% | 22+, A2s+, K5s+, Q8s+, J8s+, T8s+, 97s+, 86s+, 76s, 65s, 54s, A9o+, KTo+, QTo+, JTo |
+| CO (3) | 36% | 22+, A2s+, K2s+, Q6s+, J7s+, T7s+, 96s+, 86s+, 75s+, 65s, 54s, A7o+, A5o, K9o+, Q9o+, J9o+, T9o |
+| BTN (2) | 50% | 22+, A2s+, K2s+, Q2s+, J4s+, T6s+, 95s+, 85s+, 74s+, 64s+, 53s+, A2o+, K7o+, Q8o+, J8o+, T8o+, 98o, 87o |
+| SB (1) | 50% | 22+, A2s+, K2s+, Q2s+, J4s+, T6s+, 96s+, 85s+, 75s+, 64s+, 54s, A2o+, K5o+, Q8o+, J8o+, T8o+, 98o |
+
+With 25bb or less every seat up to the cutoff loses its small suited
+connectors and weakest suited hands (the cutoff keeps J9s and T9s and drops
+J8s, T8s, 97s, 86s, 76s and below); the button and the small blind keep
+theirs.
+
+- **Opponents are taken to open the same rows.** So re-raises and all-ins
+  over their raises get wider with them: there is more to fold out. Against
+  a table that opens tighter than this, set Opponents to Tight.
+- **13 to 16bb, first in:** a hand of the row that is not a profitable
+  all-in is raised to 2bb, and folded to an all-in unless the plan under it
+  says call. The tight style folds it.
+- **Big blind against one small raise, 25bb or less:** an all-in must earn
+  more than the call is worth. The call's worth is the share of its equity
+  a hand turns into chips after the flop (suited connectors 95%, other
+  suited hands 88%, two offsuit cards ten or higher 85%, pairs 80%, other
+  offsuit hands 72%) times the pot, less the call. So 76s and A2o call a
+  cutoff raise with 20bb, and 55 and AJo still move all-in.
+- **In position against a raise, 15 to 25bb:** a hand the chart plays that
+  is no profitable all-in calls, with 10 points over the price.
+- **You raised and were re-raised:** the all-in needs half as much (0.25bb,
+  and 42% when called); TT+, AQs+ and AKo go on with 5 points over the
+  price; in position with 25bb or more 77+, ATs+, KTs+, QTs+ and JTs call
+  with 3 points over the price after an 8% discount on their equity.
+- **The all-in bars are the tight style's.** The width comes from the rows
+  and the calls, not from thinner all-ins.
+- **Limits.** The rows are written by hand from standard modern ranges, not
+  solved, and nothing here has been measured against results. They are
+  right for a table that plays back the way these ranges assume; against
+  players who never fold, drop the bottom of each row.

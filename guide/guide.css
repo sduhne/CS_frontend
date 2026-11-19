@@ -43,7 +43,6 @@ h1,h2,h3,p{margin:0}
   padding-left:10px;border-left:1px solid var(--line-strong)}
 .next{flex:none;height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--line-strong);background:var(--panel);
   font:600 13px/1 var(--body);color:var(--white);white-space:nowrap}
-.next:hover{border-color:var(--white)}
 .next b{color:var(--yellow);font-weight:700}
 
 /* ---------- 4. Columns ---------- */
@@ -103,7 +102,6 @@ h1,h2,h3,p{margin:0}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{min-height:40px;min-width:44px;padding:0 12px;border-radius:var(--r-in);border:1px solid var(--line-strong);background:var(--raised);
   font:600 14px/1 var(--body);color:var(--soft);display:inline-flex;align-items:center;justify-content:center;text-align:center;white-space:nowrap}
-.chip:hover{border-color:var(--grey);color:var(--white)}
 .chip.on{background:var(--yellow);border-color:var(--yellow);color:var(--ink);font-weight:700}
 .chip.small{min-height:34px;padding:0 10px;font-size:13px}
 .chip:disabled{opacity:.35}
@@ -119,7 +117,6 @@ h1,h2,h3,p{margin:0}
 .stepper{display:inline-flex;align-items:center;gap:6px}
 .stepper button{width:40px;height:40px;border-radius:var(--r-in);border:1px solid var(--line-strong);background:var(--raised);
   font:800 22px/1 var(--display);display:grid;place-items:center;color:var(--white)}
-.stepper button:hover{border-color:var(--grey)}
 .stepper .val{min-width:34px;text-align:center;font:800 22px/1 var(--display)}
 .stepper.small button{width:32px;height:32px;font-size:18px}
 .stepper.small .val{font-size:18px;min-width:22px}
@@ -143,11 +140,9 @@ h1,h2,h3,p{margin:0}
 .suit button.on{background:var(--yellow);color:var(--ink);font-weight:700}
 .suit button:disabled{opacity:.35}
 .clear{margin-left:auto;min-height:40px;padding:0 10px;border-radius:var(--r-in);font:600 13px/1 var(--body);color:var(--grey)}
-.clear:hover{color:var(--white)}
 .keys{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:8px}
 .key{height:46px;border-radius:var(--r-in);border:1px solid var(--line-strong);background:var(--raised);
   font:800 24px/1 var(--display);display:grid;place-items:center;color:var(--white)}
-.key:hover{border-color:var(--grey)}
 .key:active{background:var(--yellow);color:var(--ink);border-color:var(--yellow)}
 .key.back{font:600 13px/1 var(--body);color:var(--grey)}
 
@@ -155,7 +150,6 @@ h1,h2,h3,p{margin:0}
 .plan .rows{display:flex;flex-direction:column;gap:6px}
 .planrow{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:44px;padding:6px 10px 6px 12px;
   border-radius:var(--r-in);border:1px solid var(--line);background:var(--raised)}
-button.planrow:hover{border-color:var(--grey)}
 .planrow .if{font-size:13px;color:var(--soft);min-width:0}
 .planrow .then{flex:none;display:flex;align-items:center;gap:8px;font:italic 800 20px/1 var(--display);text-transform:uppercase;white-space:nowrap}
 .planrow .then.attack{color:var(--yellow)}
@@ -216,7 +210,18 @@ button.planrow:hover{border-color:var(--grey)}
 .loading{padding:48px 0;text-align:center;color:var(--grey)}
 .foot{margin-top:16px;font-size:12px;color:var(--grey);text-align:center}
 
-/* ---------- 10. Wider ---------- */
+/* ---------- 10. A pointer that hovers (on a phone these would stay lit after a tap) ---------- */
+@media (hover:hover){
+  .next:hover{border-color:var(--white)}
+  .chip:hover{border-color:var(--grey);color:var(--white)}
+  .stepper button:hover{border-color:var(--grey)}
+  .clear:hover{color:var(--white)}
+  .key:hover{border-color:var(--grey)}
+  button.planrow:hover{border-color:var(--grey)}
+  .chip.on:hover{border-color:var(--yellow);color:var(--ink)}
+}
+
+/* ---------- 11. Wider ---------- */
 @media (min-width:560px){
   .keys{grid-template-columns:repeat(13,1fr)}
   .key{height:44px;font-size:22px}

@@ -18,3 +18,16 @@
 		}
 		reverse_proxy 127.0.0.1:8765
 	}
+
+
+# The quick guide under https://menlo.bet/guide/ : a folder of files, no program behind it.
+# It stores nothing, so it works without a login; to keep it private, put the same login lines as above
+# at the top of this block.
+
+	redir /guide /guide/ 308
+	handle_path /guide/* {
+		root * /opt/menlo-coach/guide
+		encode zstd gzip
+		header Cache-Control "max-age=300"
+		file_server
+	}

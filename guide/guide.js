@@ -333,7 +333,8 @@
     const playing = pct(1 - (sh.Fold ? sh.Fold.share : 0) - (sh.Check ? sh.Check.share : 0));
     if (a.bubble === "close") return `On the bubble the close ones are let go: with chips only this is ${verbOf(a.was, res.table)[0].toLowerCase()}, by a small margin.`;
     if (a.bubble === "price") return `On the bubble a call needs ${Math.round(100 * BUBBLE_POINTS)} points more than its price: with chips only this is a call.`;
-    const edge = a.close ? (a.name === "FOLD" || a.name === "CHECK" ? " Close: just outside the range, and fine to play against weak players." : " Close: the edge of the range. Let it go against strong players behind you.") : "";
+    const edge = a.close ? (a.name === "FOLD" || a.name === "CHECK" ? " Close: just outside the range. Playing it is fine against weak players."
+                                                                     : " Close: the edge of the range. The quieter play is fine too.") : "";
     const fam = res.fam;
     if (fam === "open" || fam === "hu_open") {
       if (a.name === "RAISE") return `${hand} is in the ${me} opening range at ${s}: ${playing} of hands play here.` + edge;
@@ -443,7 +444,7 @@
 
   function factsHtml(st, res, h) {
     const f = res.table.f || {}, out = [];
-    const vs = {vsraise: "They raise", hu_vsraise: "They raise", raise3: "The re-raise is", re3: "They re-raise", hu_re3: "They re-raise"}[res.fam] || "They do it with";
+    const vs = {vsraise: "They raise", hu_vsraise: "They raise", raise3: "The re-raise range", re3: "They re-raise", hu_re3: "They re-raise"}[res.fam] || "Their all-in range";
     if (f.vp != null) out.push(`<span class="fact">${vs}<b>${f.vp >= 10 ? Math.round(f.vp) : f.vp}%</b></span>`);
     if (h != null && f.v != null) {
       const eq = equity(h, D.ranges[f.v]);
@@ -488,7 +489,7 @@
     for (let h = 0; h < 169; h++) {
       const a = ans[h], kind = KIND[a.name];
       const band = me == null && st.r1 != null && (Math.floor(h / 13) === st.r1 || h % 13 === st.r1);
-      cells += `<button class="cell ${kind}${a.close ? " close" : ""}${h === me ? " me" : ""}${band ? " band" : ""}" data-hand="${h}" aria-label="${handName(h)}: ${LEGEND[a.name]}${a.close ? ", close" : ""}">${handName(h).slice(0, 2)}${h === me ? "" : ""}</button>`;
+      cells += `<button class="cell ${kind}${a.close ? " close" : ""}${h === me ? " me" : ""}${band ? " band" : ""}" data-hand="${h}" aria-label="${handName(h)}: ${LEGEND[a.name]}${a.close ? ", close" : ""}">${handName(h).slice(0, 2)}</button>`;
     }
     const order = ["Raise", "Raise, call an all-in", "Re-raise", "Re-raise as a bluff", "All-in", "Call", "Check", "Fold"];
     const legend = order.filter((k) => sh[k]).map((k) => {
@@ -528,10 +529,11 @@
       const cls = ATTACK.includes(b.name) ? "attack" : b.name === "FOLD" ? "fold" : "";
       rows.push(`<button class="planrow"${set(patch || over)}><span class="if">${esc(text)}</span><span class="then ${cls}">${verb}${size ? " " + esc(size.replace("to ", "")) : ""}<i class="go"></i></span></button>`);
     };
-    const first = st.line === "open" || st.line === "limp";
-    if (first && (a.name === "RAISE" || a.name === "RAISE_CALL") && st.seat >= 1) {
+    if (st.line === "limp" && a.name === "RAISE") {
+      /* no table is made for a raise over callers that is raised again */
+      rules.push("If a player moves all-in or re-raises over this raise, it is a stronger range than over a first raise: the chart under \u201cYou raised, then: All-in\u201d is the widest you should call, and a caller who now raises usually holds a big hand.");
+    } else if (st.line === "open" && (a.name === "RAISE" || a.name === "RAISE_CALL") && st.seat >= 1) {
       if (a.name === "RAISE_CALL") rules.push("Any all-in behind you: call.");
-      if (st.line === "limp") rules.push("These rows are read from the tables for a first raise: against a player who called and then re-raises, lean to the fold.");
       if (n === 2) {
         if (st.stack >= 12) row("The BB re-raises", {line: "re3"});
         row("The BB moves all-in", {line: "re_allin"});
@@ -549,8 +551,10 @@
         for (const g of groups) row(`All-in from ${g.seats.map((v) => seatName(v, n)).join(", ")}`, {line: "re_allin", byAll: g.seats[0]});
         if (st.seat >= 2 && st.stack >= 10) row("A re-raise and an all-in", {line: "re3_allin"});
       }
-    } else if (st.line === "raise" && (a.name === "RERAISE" || a.name === "RERAISE_BLUFF")) {
+    } else if (st.line === "raise" && a.name === "RERAISE") {
       row(n === 2 ? "The SB moves all-in" : `The ${seatName(st.from, n)} moves all-in`, {line: "sq_allin"});
+    } else if (st.line === "raise" && a.name === "RERAISE_BLUFF") {
+      rules.push("If they move all-in or re-raise again: fold. This re-raise was a bluff.");
     } else if (a.name === "LIMP") {
       rules.push("If a player raises behind you: fold. With a pair and 15 times the raise behind, call once.");
     } else if (a.name === "CHECK") {
@@ -658,14 +662,14 @@
           else r = out("Fold", "", "One weak pair is not worth a big bet on the " + (turn ? "turn" : "river") + ".");
           break;
         case "combo":
-          if (river) r = out("Fold", "", "The draw missed.");
+          if (river) r = out("Fold", "", "The draw missed, and what is left of the hand does not beat a bet.");
           else if (flop && short4) r = out("All-in", "", "A big draw with 4 pots or less behind: move in over the bet. You have about 45% when called and they fold some of the time.");
           else if (flop) r = out("Call", "", "Too deep to move in: call. You have about 45% with two cards to come.");
           else if (big && !deep) r = out("Fold", "", "One card to come gives about 26%, and a big bet needs 29% or more. Call only with more than 4 pots behind.");
           else r = out("Call", "", "About 26% with one card to come: the price is right.");
           break;
         case "draw":
-          if (river) r = out("Fold", "", "The draw missed.");
+          if (river) r = out("Fold", "", "The draw missed, and what is left of the hand does not beat a bet.");
           else if (flop && (small || half)) r = out("Call", "", "The price is right for 8 or 9 outs with two cards to come and chips behind.");
           else if (flop) r = low ? out("Call", "", "The bet is close to all-in, so you see both cards: about 35%, enough for a bet up to the size of the pot.")
                                  : ip ? out("Call", "", "In position with chips behind, a flush or open-ended draw calls one big bet. Fold the turn to another if it misses.")
@@ -707,7 +711,7 @@
         <p><b>Play to win</b> opens and defends wider than the coach's tight ranges. <b>Tight</b> is those ranges. Both take stacks as equal and know nothing about prizes.</p>
         <p><b>Bubble</b> folds the close ones and asks 10 points of equity more before calling an all-in. It is a rule of thumb, not a prize calculation: with the real stacks and prizes, the coach's own table app is exact.</p>
         <p><b>Opponents</b> changes the hands they are taken to raise and move in with: tight players fewer, loose players more.</p>
-        <p><b>Three players in the pot</b> (a raise and an all-in, two all-ins) are made for the big blind and four first seats; the chart says so when your spot is read from a neighbour.</p>
+        <p><b>Three players in the pot</b> (a raise and an all-in, two all-ins, a re-raise and an all-in behind your raise) are made for four seats of the first player, and the first two for the big blind; the chart says so when your spot is read from a neighbour.</p>
         <p><b>After the flop</b> is the playbook's rules of thumb with pot-odds arithmetic, not a solver.</p>
         <p>A study aid. Most sites do not allow charts or outside help while you play for real money: check the rules of yours.</p>
       </div></details>`;
@@ -810,7 +814,7 @@
     const tag = event.target.tagName;
     if (tag === "INPUT") { if (event.key === "Enter") event.target.blur(); return; }
     const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
-    const rank = RANKS.indexOf(key === "1" ? "A" : key);
+    const rank = RANKS.indexOf({"1": "A", "0": "T"}[key] || key);         // 1 is the ace and 0 the ten, for a number pad
     if (key.length === 1 && rank >= 0) { pickRank(rank); event.preventDefault(); }
     else if (key === "S" || key === "O") { if (state.r1 !== state.r2 || state.r1 == null) apply({suited: key === "S"}); }
     else if (key === "Backspace" || key === "Delete") act("clear");

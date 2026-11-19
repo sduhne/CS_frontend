@@ -32,7 +32,7 @@ from .icm import Prizes, default_payouts
 from .postflop import PostflopSpot, Villain, advise_postflop, parse_line, range_from_spec
 from .preflop import Spot, advise, parse_actions, parse_amount, pos_to_index, quick_spot
 from .pushfold import HandSetup, nash_push_range, solve_open_shove
-from .ranges import PLAYER_TYPES, norm_type, parse, position_name, rfi_range
+from .ranges import PLAYER_TYPES, norm_type, parse, position_name, rfi_range, set_style
 
 
 def _out(text: str = "") -> None:
@@ -516,6 +516,7 @@ def cmd_advise(a) -> int:
 
 def cmd_quick(a) -> int:
     try:
+        set_style(getattr(a, "style", None) or "tag")
         hand, cards = parse_hand(a.hand)
         prizes = Prizes()
         stage = {}
@@ -560,6 +561,8 @@ def cmd_quick(a) -> int:
             targets = acted[:1] if acted else list(range(spot.hero + 1, spot.setup.n))
             for i in targets:
                 spot.types[i] = norm_type(a.villain_type[0])
+        if getattr(a, "opponents", None):
+            spot.types = [a.opponents] * spot.setup.n
         adv = advise(spot)
         _out(adv.render())
         _out(_context_line(spot))
@@ -1337,6 +1340,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--entrants", type=int)
     p.add_argument("--avg-bb", dest="avg_bb", type=float)
     p.add_argument("--goal", choices=S.GOALS, default="itm")
+    p.add_argument("--style", choices=("tag", "win"), default="tag",
+                   help="tag: the coach's tight ranges (default); win: the wider rows of the quick guide")
+    p.add_argument("--opponents", choices=sorted(PLAYER_TYPES), help="every opponent is of this type (the quick guide's Opponents)")
     _add_postflop_args(p)
     p.set_defaults(fn=cmd_quick)
 

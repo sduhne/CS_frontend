@@ -83,3 +83,30 @@ service) to take them along.
 
 It is for study and play money, like the program on the computer: the
 notice on the page says so and stays.
+
+
+## The quick guide: a folder of files
+
+The quick guide is not a program. `guide/` holds a page and its tables;
+the web server hands them out as they are, and the page keeps the user's
+choices in their own browser. Nothing is stored on the server, so it needs
+no login of its own (put it behind one if the address should stay private).
+
+1. The files are in the same checkout: `/opt/menlo-coach/guide/`
+   (`index.html`, `guide.css`, `guide.js`, `fonts.css`, `fonts/`, `data.js`).
+   Without the coach, copy that one folder anywhere the web server can read.
+2. Put the second block of `deploy/Caddyfile.snippet` inside the site's
+   block, then `caddy validate --config /etc/caddy/Caddyfile` and
+   `systemctl reload caddy`.
+3. Check: `https://menlo.bet/guide/` shows the page, and
+
+   ```bash
+   curl -s -o /dev/null -w "%{http_code} %{size_download}\n" https://menlo.bet/guide/data.js    # 200 and the size of the file
+   ```
+
+To update: `git pull` in the checkout (or copy the folder again). The tables
+are one file of a few megabytes; with `encode` the web server sends it
+compressed.
+
+Not run behind Caddy or on the server: the page was checked from the disk
+and behind a small stand-in web server, in a browser on Linux.

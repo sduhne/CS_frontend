@@ -400,10 +400,78 @@ python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 
   too): where they differ, `tag-sheet` is right.
 - The sheet is a study aid, like everything else here.
 
+## Quick guide (what the user starts now)
+
+The user found the table app too slow to feed and its answers too tight, and
+asked for a page that looks the play up: cards, stack in big blinds, what
+happened; then the play, the reason and the whole chart. `guide/` is that
+page: plain files, no server program. `tools/build_guide.py` makes its tables
+by asking the engine about each of the 169 hands of every spot before the
+flop.
+
+```bash
+python3 tools/build_guide.py                         # every table -> guide/data.js (about 40 minutes on four processors)
+python3 tools/build_guide.py --only open,vsraise --styles win    # some again; finished jobs are kept in guide/.cache
+python3 tools/build_guide_page.py <folder>           # one HTML file and data.json, to publish as an Artifact
+python3 -m poker_coach quick --hand A7o --stack 40 --pos CO --goal chips --style win   # one of its answers, from the engine
+python3 -m unittest tests.test_guide                 # the style, the builder, the tables against the engine
+```
+
+- **To open it:** `guide/index.html` in a browser ("Open Quick Guide.bat"),
+  or the folder behind a web server (`deploy/README.md`, for
+  `https://menlo.bet/guide/`). It needs no Python and no network.
+- **What the user sets**, one tap each: two ranks and suited or offsuit (or a
+  hand in the chart), what happened before them, their seat and the table
+  size (2 to 9), the stack, opponents (Standard, Tight, Loose), style (Play
+  to win, Tight), stage (Normal, Bubble). "Next hand" moves the seat on.
+- **What happened** is one of eleven lines. First decision: nobody in,
+  limpers, a raise (with callers), an all-in, a raise and a re-raise, a raise
+  and an all-in, two all-ins. After the user's raise: a re-raise, an all-in,
+  a re-raise and an all-in. After the user's re-raise: the raiser moves
+  all-in. Under an answer, "If the hand goes on" shows the follow-ups for
+  the same hand at once.
+- **The answers are the engine's, on chips:** no prizes, a big blind ante of
+  1bb, equal stacks. `Play to win` is `ranges.set_style("win")`: wider
+  opening rows (13% first to act at nine players, 36% cutoff, 50% button),
+  the same rows for the opponents, a small raise with 13 to 16bb where the
+  all-in does not earn, the big blind's call where it is worth more than an
+  all-in, wider calls of a re-raise in position. `Tight` is the default
+  style: the ranges of this file. Every other command keeps the default.
+- **The page works out three things itself:** how many hands take each
+  action; the equity of the hand against the range the table names (from
+  the engine's hand-against-hand numbers); and the bubble rule (the close
+  plays are folded, a call of an all-in needs 10 points more than its
+  price). The bubble rule is a rule of thumb, not ICM: for real stacks and
+  prizes use `advise` or the table app.
+- **After the flop** on the page is the playbook's rules with pot-odds
+  arithmetic (`postAdvice` in `guide/guide.js`), not `advise_postflop`.
+- **Seats are numbers of players behind**, for a table of nine; a smaller
+  table uses the last seats. Checked: for random spots at 2 to 9 players the
+  page's answer equals the engine asked at that table size.
+- **When an answer looks wrong**, ask for the title over the chart (seat,
+  what happened, stack) and the three options, then run `quick` with
+  `--goal chips --style win` (no `--style` for Tight) and `--opponents
+  tight` or `loose`. If `quick` says the same, the cause is in the engine;
+  if not, it is `lookup` in `guide/guide.js`, or the tables are stale.
+- **Tables go stale when the engine changes.**
+  `tests.test_guide.Tables.test_the_tables_are_what_the_engine_answers_today`
+  asks a sample again and fails then: build them again.
+- **Limits.** Stacks are taken as equal. Three players in the pot (a raise
+  and an all-in, two all-ins, a re-raise and an all-in behind the user's
+  raise) are made for the big blind and four first seats; a raise and a
+  re-raise for the big blind. A stack between two of the 28 on the grid is
+  read at the nearest. The looser rows are written by hand from standard
+  ranges, not solved. Checked in headless Chromium on Linux only: never on
+  the user's phone or on Windows. Say so.
+- **It is a chart.** Sites forbid charts and outside help during real-money
+  play. If the user says they use it there, say so once and offer a review
+  instead. Do not add anything that reads the screen or the poker client.
+
 ## Table app (the user's manual tracker)
 
-What the user starts now: a page in their browser where they type or click
-what happens at their table, and the coach answers each of their decisions.
+The program before the quick guide, still there: a page in their browser
+where they type or click what happens at their table, and the coach answers
+each of their decisions.
 `poker_coach/app/` is that program; it runs on the user's computer, not in
 this session. Standard library only: nothing to install, no network. It
 calls itself Menlo Coach wherever it speaks; file names keep "Poker Coach".
@@ -754,8 +822,8 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   previous tournament. The table app keeps its own sessions beside it, in
   `tournament/app/`; the two do not read each other.
 - After the tournament, if asked for a review, use `log` and `show --log 30`.
-- Tests: `python3 -m unittest discover -s tests` (about 650 tests, six and
-  a half minutes; the live reader's tests need
+- Tests: `python3 -m unittest discover -s tests` (about 700 tests, seven
+  minutes; the live reader's tests need
   `pip install -r requirements-live.txt`; without it they are skipped). Rebuild data only if ranges
   or the solver change: `tools/gen_preflop_equity.c` (equity table),
   `python3 -c "from poker_coach.pushfold import build_charts; build_charts()"`,
@@ -769,4 +837,6 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   and a half; it asks the engine and reads the all-in or fold tables);
   `python3 tools/build_spin.py` (spin tables, about 7 minutes; it reads the
   All-In or Fold tables), then `python3 tools/spin_sim.py` (the whole-game
-  simulation, about 6 minutes).
+  simulation, about 6 minutes); `python3 tools/build_guide.py` (the quick
+  guide's tables, about 40 minutes; needed after any change to the engine's
+  answers before the flop).

@@ -26,6 +26,12 @@ TO STOP
 STUDY AND PLAY MONEY ONLY
   Real-money sites ban real-time help. Using this during a real-money game can close an account.
 
+THE QUICK GUIDE (new)
+  Double-click "Open Quick Guide.bat" (or guide\index.html). A page opens in your browser:
+  tap your two cards, what happened before you, your seat and your stack in big blinds,
+  and it shows the play, why, and the whole chart. It needs no Python and no black window.
+  It looks answers up in tables; it reads nothing from your screen.
+
 ALSO HERE
   "Start Screen Reader (old).bat"  the older program that reads the table from the screen.
   "Build exe.bat"   makes dist\PokerCoach.exe, the same table app as one program that runs

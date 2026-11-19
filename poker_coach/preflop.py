@@ -135,7 +135,14 @@ def _bar(tag: float, win: float) -> float:
     return win if _win() else tag
 
 
-_RAISE_FOLD_FROM = 13.0        # win: from this stack a hand of the opening row that is no all-in raises small
+_RAISE_FOLD_FROM = 13.0
+# The big blind against one small raise, 25bb or less, in the looser style.  The share of its equity a
+# kind of hand turns into chips after the flop, out of position (small pairs and unconnected offsuit
+# cards the least); the call counts as clear from this margin over its price, and as clearly better
+# than an all-in from this many big blinds.
+_BB_REALISED = {"pair": 0.80, "suited_conn": 0.95, "suited": 0.88, "broadway_off": 0.85, "off": 0.72}
+_BB_CALL_CLEAR = 0.05
+_CALL_OVER_ALLIN_CLEAR = 0.25        # win: from this stack a hand of the opening row that is no all-in raises small
 _CALL_RERAISE_IP = parse_range("77+, ATs+, KTs+, QTs+, JTs")      # win: the hands that may call one re-raise in position
 _FLAT_SHORT_FROM = 15.0        # win: from this stack a strong hand may call a raise in position (25bb or less)
 _FLAT_SHORT_EDGE = 0.10        # ... with this much equity over the price
@@ -447,7 +454,7 @@ def first_in(spot: Spot) -> Advice:
             adv.confidence = "clear"
             adv.why.append("a premium hand: the small raise invites a re-shove from worse; never fold it")
             adv.alt.append("ALL-IN is also fine if the players behind call light")
-        elif ev > _bar(0.05, 0.0):
+        elif ev > 0.05:
             adv.action = "ALL-IN"
             adv.confidence = _conf(ev, 0.35, 0.12)
             adv.why.append("too strong to fold and too awkward to raise-fold at this depth: take the "
@@ -558,9 +565,9 @@ def vs_limp(spot: Spot, limpers: list[int]) -> Advice:
         ev = sol.ev_bb(hand)
         adv.numbers.append(f"shove EV {ev:+.2f}bb vs folding; everyone folds {_pct(sol.fold_equity[hand])}; "
                            f"when called you have {_pct(sol.eq_called[hand])}")
-        if ev > _bar(0.15, 0.05):
+        if ev > 0.15:
             adv.action = "ALL-IN"
-            adv.confidence = _conf(ev - _bar(0.15, 0.05), 0.4, 0.1)
+            adv.confidence = _conf(ev - 0.15, 0.4, 0.1)
             adv.why.append("limpers leave dead money and rarely call a shove: take it")
         else:
             adv.action = free
@@ -1119,9 +1126,21 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
             adv.numbers.append(f"opener calls with ~{_pct(call_share)} of their opens [{format_range(oc.call_range)}]")
         adv.data.update(reshove_ev_bb=ev)
         jam_word = "ALL-IN" if hero_bb <= 32 else f"3-BET to {min(hero_bb, max(2.6 * raise_to / bb, eff)):.0f}bb (puts the opener all-in)"
-        bar = _bar(0.15, 0.05)
+        bar = 0.15
         chart = vs_open_chart(o_nb, h_nb)
-        if ev > bar:
+        # The looser style also asks what the big blind's call is worth: the share of its equity this kind of
+        # hand turns into chips after the flop, times the pot, less the call.  An all-in that earns less
+        # than that is a call.  (Without it a suited connector moved all-in for 20bb to win 0.05bb.)
+        price_call = h_nb == 0 and bb_edge >= 0 and to_call <= 0.12 * live[hero]
+        call_bb = (_BB_REALISED[kind] * eq_open * (pot + to_call) - to_call) / bb if price_call else 0.0
+        if _win() and price_call and ev > bar and call_bb >= ev:
+            adv.action = "CALL"
+            adv.confidence = "close" if call_bb - ev < _CALL_OVER_ALLIN_CLEAR else "standard"
+            adv.why.append("the all-in earns, but less than the call is worth at this price: call, and go on "
+                           "with top pair or better or a strong draw")
+            adv.numbers.append(f"the call is worth about {call_bb:+.2f}bb, the all-in {ev:+.2f}bb")
+            adv.data.update(call_value_bb=call_bb)
+        elif ev > bar:
             adv.action = jam_word
             adv.confidence = _conf(ev - bar, 0.6, 0.15)
             adv.why.append("re-shoving wins the pot often enough, and you have real equity when called")
@@ -1137,7 +1156,8 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
                            "with top pair or better or a strong draw")
         elif bb_edge >= 0 and to_call <= 0.12 * live[hero]:
             adv.action = "CALL"
-            adv.confidence = "close"
+            # the looser style says "close" by the margin; the default says it of every such call
+            adv.confidence = "standard" if _win() and bb_edge >= _BB_CALL_CLEAR else "close"
             adv.why.append("not a profitable shove, but the big blind is getting the right price to see a flop")
             adv.warnings.append("play fit-or-fold after the flop: continue with top pair or better, or a strong draw")
         else:

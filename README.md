@@ -13,7 +13,75 @@ It has three parts:
   pictures, keeps the table up to date, runs the engine and gives you the
   answer in one line.
 - **The table app** (`poker_coach/app/`): the same engine behind a page in
-  your browser, for when you want to run it yourself. It comes first below.
+  your browser, for when you want to run it yourself.
+- **The quick guide** (`guide/`): a page that looks the play up from tables
+  made by the engine. No program runs behind it. It comes first below.
+
+## The quick guide
+
+Cards, seat, stack in big blinds, what happened before you: the play, one
+sentence of why, the numbers behind it and the whole chart, at once. Nothing
+is worked out while you play: every answer is read from tables that
+`tools/build_guide.py` made by asking the engine about each of the 169 hands
+of every spot before the flop (every seat, 28 stack sizes, three kinds of opponent, two
+styles).
+
+**To open it:** double-click `guide/index.html` ("Open Quick Guide.bat" on
+Windows). It is a page on your own computer: no Python, no internet. On a
+web server it is a folder of files (`deploy/README.md`).
+
+**To use it:**
+
+- **Your cards:** tap two ranks, then Suited or Offsuit; or tap the hand in
+  the chart. On a keyboard: `a k s` is ace-king suited, `o` offsuit,
+  Backspace clears, the arrows move the stack, `n` is the next hand.
+- **Before you:** nobody in, limpers, a raise (and who raised, with how many
+  callers), an all-in, a raise and a re-raise, a raise and an all-in, two
+  all-ins. If you already raised: a re-raise, an all-in, or a re-raise and
+  an all-in behind you. If you re-raised: the raiser moved all-in.
+- **Your seat** and the number of players (2 to 9). "Next hand" moves your
+  seat on by one and clears the cards.
+- **Stack in big blinds:** the smaller of yours and the biggest stack that
+  can still call you. Against an all-in, its size.
+- **Opponents** (Standard, Tight, Loose), **Style** (Play to win, Tight) and
+  **Stage** (Normal, Bubble).
+
+**What it shows:**
+
+- The play and its size, and whether it is close.
+- "They raise 36%. You have about 58%. A call needs 18%": the range the
+  table assumes, your equity against it, and the price.
+- **If the hand goes on:** what to do with the same hand if you are
+  re-raised, if a player moves all-in behind you, or both. One tap opens
+  that chart.
+- **The chart:** all 169 hands of the spot, coloured by play, with the share
+  of hands for each. A cut corner marks a close one.
+- **After the flop:** rules of thumb from the playbook, by your hand, the
+  bet you face, the street, the board and the chips behind.
+
+**What the answers are.** The engine's, counting chips only (no prizes), with
+a big blind ante and equal stacks. **Play to win** opens and defends wider
+than the coach's tight ranges (`PLAYBOOK.md`, "Play to win"); **Tight** is
+those ranges. **Bubble** folds the close plays and asks 10 points of equity
+more before calling an all-in: a rule of thumb, not a prize calculation.
+For real stacks and prizes the table app is exact.
+
+**Limits.** Stacks are taken as equal. Spots with three players in the pot
+are made for the big blind and four first seats, and the page says so when
+yours is read from a neighbour. A stack between two of the 28 on the grid
+is read at the nearest. The wider opening rows are written by hand from
+standard ranges, not solved. After the flop it is rules, not a solver.
+Checked in headless Chromium on Linux only.
+
+It is a chart. Most real-money sites forbid charts and outside help while
+you play: use it to study, to review hands and where help is allowed.
+
+```bash
+python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 40 minutes on four processors
+python3 tools/build_guide.py --only open --styles win    # some of them; finished jobs are kept in guide/.cache
+python3 tools/build_guide_page.py out/       # the page as one file, with data.json beside it
+python3 -m unittest tests.test_guide         # about 20 seconds
+```
 
 ## The table app
 
@@ -658,7 +726,7 @@ you play.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests        # about 650 tests, six and a half minutes
+python3 -m unittest discover -s tests        # about 700 tests, seven minutes
 ```
 
 The data files in `poker_coach/data/` are generated:
@@ -675,4 +743,5 @@ python3 tools/build_binary.py       # all-in or fold tournament tables, half a m
 python3 tools/build_tag.py          # tight-aggressive sheet for 6, 7 and 8 players, about a minute and a half
 python3 tools/build_spin.py         # spin tables (3 players and heads-up), about 7 minutes
 python3 tools/spin_sim.py           # whole spin games played with those tables, about 6 minutes
+python3 tools/build_guide.py        # the quick guide's tables (guide/data.js), about 40 minutes; after any change to the engine before the flop
 ```
