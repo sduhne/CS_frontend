@@ -275,7 +275,7 @@ class AHandFromDealToResult(ServerCase):
         before = view["rev"]
         view = self.do("award", hero="won")
         self.assertEqual((view["rev"], view["hand"]["needs"], view["hand"]["result"]["text"]),
-                         (before + 1, "next", "You win 1,450"))
+                         (before + 1, "next", "You (BTN) win 1,450"))
         stacks = {seat["seat"]: seat["stack"] for seat in view["table"]["seats"]}
         self.assertEqual(stacks, {1: 10925, 2: 9875, 3: 9775, 4: 9475, 5: 9975, 6: 9975})
         self.assertEqual(sum(stacks.values()), 60000)

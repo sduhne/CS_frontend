@@ -1378,7 +1378,7 @@ class Results(unittest.TestCase):
         s.do("set_cards", shown={2: "KhKd", 3: "QsQh"})
         view = s.do("award")
         self.assertEqual(view["hand"]["result"]["winners"], [{"seat": 2, "name": "", "pos": "SB", "amount": 900}])
-        self.assertEqual(view["hand"]["result"]["text"], "SB wins 900")
+        self.assertEqual(view["hand"]["result"]["text"], "Seat 2 (SB) wins 900")       # T4: by seat and position
 
     def test_history_and_what_the_coach_said(self):
         s = table_a()
@@ -1400,7 +1400,7 @@ class Results(unittest.TestCase):
         self.assertIn("Coach (preflop): RAISE | you: raise", entry["text"])
         self.assertIn("Coach (flop): BET | you: check | deviated", entry["text"])
         self.assertIn("Flop Ks 7d 2c", entry["text"])
-        self.assertIn("You win 3,300", entry["text"])
+        self.assertIn("Result: You (BTN) win 3,300", entry["text"])
         deltas = {x["seat"]: x["delta"] for x in view["table"]["seats"]}
         self.assertEqual((deltas[1], deltas[LJ], deltas[SB]), (1800, -1500, -100))
         self.assertEqual(view["hand"]["needs"], "next")
@@ -3293,6 +3293,49 @@ class T3TheBigBlindFirst(unittest.TestCase):
         s.do("set_cards", board="Ks7d2c5h9c")
         play(s, "2 check, 3 check, 6 check")
         self.assertIn("no turn now", refused(s, "act", seat=2, kind="bet", amount=500).message)
+
+
+class T4TheWinnerBySeatAndPosition(unittest.TestCase):
+    """T4: the result names the winner by seat number and that hand's position, in the coach's own words."""
+
+    def test_t4_the_result_text_on_screen_and_in_the_history(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("rename", seat=3, name="Carl")                         # a name does not change the line
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 3 call")
+        s.do("set_cards", board="Ks7d2c5h9c")
+        s.do("close_round")
+        view = s.do("award", winner=3)
+        self.assertEqual(view["hand"]["result"]["text"], "Seat 3 (BB) wins 1,250")
+        self.assertIn("Result: Seat 3 (BB) wins 1,250", view["history"][0]["text"])
+        self.assertEqual(view["table"]["seats"][2]["pos"], "SB")    # the table is the next hand's: he is the small blind now
+        self.assertEqual(view["hand"]["positions"]["3"], "BB")      # ... and the line names the seat of the hand played
+
+    def test_t4_hero_a_split_and_big_blinds(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "1 raise 500, 3 call")
+        s.do("set_cards", board="Ks7d2c5h9c")
+        s.do("close_round")
+        view = s.do("award", winners=[1, 3])
+        self.assertEqual(view["hand"]["result"]["text"], "You (BTN) win 625, seat 3 (BB) wins 625")
+        self.assertIn("Result: You (BTN) win 625, seat 3 (BB) wins 625", view["history"][0]["text"])
+        s = aof()                                                   # hero on the button
+        s.do("act", kind="allin")
+        view = s.do("close_round")                                  # everybody folds: the pot less the fee
+        self.assertEqual(view["hand"]["result"]["text"], "You (BTN) win 2.4bb")
+
+    def test_t4_the_same_words_as_the_coach(self):
+        from poker_coach.app import advice as A
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "1 raise 500, 3 call")
+        s.do("set_cards", board="Ks7d2c5h9c")
+        s.do("close_round")
+        for award in ({"winner": 3}, {"winners": [1, 3]}, {"winner": 1}):
+            view = s.do("award", **award)
+            self.assertTrue(A.advise(s)["spot"].startswith(view["hand"]["result"]["text"] + ". "), award)
+            s.do("undo")
 
 
 class SeenInPassing(unittest.TestCase):

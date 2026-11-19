@@ -2958,8 +2958,7 @@ class Session:
         elif skipped:
             lines.append("Result: not recorded")
         elif state.result:
-            parts = [self._wins_text(s, w, state) for s, w in state.result["won"].items() if w > 0]
-            lines.append("Result: " + ", ".join(parts))
+            lines.append("Result: " + self._result_text([(s, w) for s, w in state.result["won"].items() if w > 0], state))
             if HERO in state.order:
                 lines.append(f"You: {'+' if state.net(HERO) > 0 else ''}{fmt(state.net(HERO))}")
         for d in self._decisions(hand, state):
@@ -2968,11 +2967,22 @@ class Session:
                              + (" | deviated" if d["deviated"] else ""))
         return "\n".join(lines)
 
-    def _wins_text(self, seat: int, amount, state: HandState) -> str:
+    def _wins_text(self, seat: int, amount, state: HandState, first: bool = True) -> str:
+        """One winner, by seat number and that hand's position: "Seat 4 (BB) wins 81,000", "You (CO) win 5,650".
+
+        The same words as the coach's line for a finished hand (``advice.result_line``); a player's
+        name can change or go with him, the seat and the position of that hand cannot.
+        """
         won = fmt(amount) + ("bb" if self.mode == "aof" else "")       # All-In or Fold counts in big blinds
+        position = state.labels.get(seat, "")
+        where = f" ({position})" if position else ""
         if seat == HERO:
-            return f"You win {won}"
-        return f"{self._who(seat, state.labels)} wins {won}"
+            return f"{'You' if first else 'you'}{where} win {won}"
+        return f"{'Seat' if first else 'seat'} {seat}{where} wins {won}"
+
+    def _result_text(self, winners, state: HandState) -> str:
+        """Every winner of the hand in one line: "You (CO) win 2,825, seat 5 (BB) wins 2,825"."""
+        return ", ".join(self._wins_text(seat, amount, state, first=k == 0) for k, (seat, amount) in enumerate(winners))
 
     def _act_text(self, entry: dict, state: HandState, bb) -> str:
         who = self._who(entry["seat"], state.labels)
@@ -3210,7 +3220,7 @@ class Session:
                        for s, w in state.result["won"].items() if w > 0]
             result = {"winners": winners, "pots": state.result["pots"], "fee": state.result["fee"],
                       "net": {str(s): state.net(s) for s in state.order}, "busted": hand.get("busted", []),
-                      "text": ", ".join(self._wins_text(w["seat"], w["amount"], state) for w in winners)}
+                      "text": self._result_text([(w["seat"], w["amount"]) for w in winners], state)}
         return {
             "no": hand["no"], "phase": state.phase, "needs": needs,
             # the seat names and the button this hand was dealt with: they stay on the pods after the
