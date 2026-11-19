@@ -467,7 +467,7 @@ class ThePackagedProgram(FolderCase):
             for console in (False, True):
                 code, opened, printed, told = self.start_again(argv, console)
                 self.assertEqual((code, opened, told), (0, [address], []), (argv, console))
-                self.assertEqual(f"Poker Coach is already running at {address}" in printed, console, (argv, console))
+                self.assertEqual(f"Menlo Coach is already running at {address}" in printed, console, (argv, console))
         os.environ["POKER_COACH_APP"] = folder          # without --folder: the usual folder is the one being served
         for console in (False, True):
             code, opened, printed, told = self.start_again(["--port", str(elsewhere)], console)
@@ -497,6 +497,21 @@ class ThePackagedProgram(FolderCase):
     def test_t9_the_older_check_of_its_own_is_gone(self):
         self.assertFalse(hasattr(coach_app, "coach_is_at"))     # one place decides: server.start_server
 
+    def test_d5_the_window_and_its_message_boxes_say_menlo_coach(self):
+        """One name wherever the program speaks: the window's title and "could not start" are the server's name."""
+        self.assertEqual(coach_app.TITLE, server.PROGRAM)
+        self.assertEqual(coach_app.TITLE, "Menlo Coach")
+        told = []
+        with mock.patch.object(coach_app, "tell", told.append), \
+                mock.patch.object(coach_app, "has_console", return_value=False), \
+                mock.patch.object(server, "start_server", side_effect=OSError("no free port from 8765 to 8784")):
+            self.assertEqual(coach_app.run(["--no-browser"]), 2)
+        self.assertEqual(told, ["Menlo Coach could not start.\n\nno free port from 8765 to 8784"])
+        with open(os.path.join(REPO, "tools", "coach_app.py"), encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotIn("Poker Coach", text)           # (PokerCoach.exe and the PokerCoach folder are file names: they stay)
+        self.assertIn("PokerCoach.exe", text)
+
     def test_the_stop_window(self):
         """The real window, where this Python has tkinter and a screen: Stop closes it."""
         try:
@@ -525,7 +540,7 @@ class ThePackagedProgram(FolderCase):
         with mock.patch.object(tkinter.Tk, "mainloop", press_stop):
             coach_app.stop_window("http://127.0.0.1:8765/", os.path.join(self.tmp, "tables"))
         text = " ".join(shown["labels"])
-        self.assertEqual((shown["title"], shown["buttons"]), ("Poker Coach", ["Open the page", "Stop"]))
+        self.assertEqual((shown["title"], shown["buttons"]), ("Menlo Coach", ["Open the page", "Stop"]))
         self.assertEqual(shown["opened"], "http://127.0.0.1:8765/")
         for words in ("http://127.0.0.1:8765/", os.path.join(self.tmp, "tables"), "Stop", coach_app.NOTICE):
             self.assertIn(words, text)

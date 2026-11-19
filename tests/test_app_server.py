@@ -820,6 +820,33 @@ class Starting(unittest.TestCase):
         self.assertIn(f"port {port} was taken", printed)
         self.assertIn(f"http://127.0.0.1:{srv.server_port}/", printed)
 
+    def test_d5_one_name_on_a_first_start_and_on_a_second(self):
+        """The program calls itself Menlo Coach whenever it speaks: started once, started twice, refusing a stranger."""
+        self.assertEqual(server.PROGRAM, "Menlo Coach")
+        with open(os.path.join(server.STATIC_FOLDER, "index.html"), encoding="utf-8") as fh:
+            self.assertIn(f"<title>{server.PROGRAM}</title>", fh.read())                # the page's title is the same name
+        code, first, srv = self.run_main(port=0, open_browser=False)
+        self.assertTrue(first.startswith("Menlo Coach is running at http://127.0.0.1:"), first)
+        running = server.start_server(0, folder=self.folder)
+        self.addCleanup(running.server_close)
+        thread = threading.Thread(target=running.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(running.shutdown)
+        with redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(server.main(port=0, open_browser=False, folder=self.folder), 0)
+        second = printed.getvalue().strip()
+        self.assertEqual(second, f"Menlo Coach is already running at http://127.0.0.1:{running.server_port}/")
+        # a request addressed to another host is told whose address this is, by the same name
+        link = http.client.HTTPConnection("127.0.0.1", running.server_port, timeout=20)
+        self.addCleanup(link.close)
+        link.request("GET", "/api/view", headers={"Host": "example.com"})
+        answer = link.getresponse()
+        self.assertEqual(answer.status, 403)
+        self.assertIn("this is Menlo Coach on", answer.read().decode("utf-8"))
+        with open(server.__file__, encoding="utf-8") as fh:
+            self.assertNotIn("Poker Coach", fh.read())                                  # the old name is in no sentence of the server
+
     def test_the_command(self):
         parse = cli.build_parser().parse_args
         args = parse(["app"])
@@ -959,7 +986,7 @@ class Rob3OneCopyPerFolder(ServerCase):
                     redirect_stdout(io.StringIO()) as printed:
                 code = server.main(port=self.port, open_browser=open_browser, folder=self.folder)
             self.assertEqual(code, 0)
-            self.assertEqual(printed.getvalue().strip(), f"Poker Coach is already running at {address}")
+            self.assertEqual(printed.getvalue().strip(), f"Menlo Coach is already running at {address}")
             self.assertEqual(opened.call_count, 1 if open_browser else 0)
             if open_browser:
                 opened.assert_called_once_with(address)

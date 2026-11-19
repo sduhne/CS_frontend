@@ -60,7 +60,8 @@ MAX_BODY = 1_000_000                    # bytes: the biggest intent accepted (a 
 MAX_DROPPED = 8_000_000                 # bytes of a body that is too big which are still read (and thrown away)
 IDLE_SECONDS = 30                       # a connection that sends nothing is dropped after this long
 
-APP_NAME = "Poker Coach table app"      # what /api/ping answers: how a second start knows its own kind
+PROGRAM = "Menlo Coach"                 # the one name the program calls itself by when it speaks (the page's title too)
+APP_NAME = PROGRAM + " table app"       # what /api/ping answers: how a second start knows its own kind
 LOCK_NAME = "app.lock"                  # in the session folder while a copy of the program serves it
 PING_SECONDS = 1                        # how long a start waits for an answer from a copy that may be running
 
@@ -437,7 +438,7 @@ class Handler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").strip().lower()
         if host in self._own_names():
             return True
-        self._send(403, TEXT_TYPE, f"Refused: this is the poker coach on http://{self._own_names()[0]}/ "
+        self._send(403, TEXT_TYPE, f"Refused: this is {PROGRAM} on http://{self._own_names()[0]}/ "
                                    "and the request was addressed to another host.\n".encode())
         return False
 
@@ -544,7 +545,7 @@ class AlreadyRunning(OSError):
     """A copy of the program already serves this folder of tables.  ``address`` is its page."""
 
     def __init__(self, address: str):
-        super().__init__(f"Poker Coach is already running at {address}")
+        super().__init__(f"{PROGRAM} is already running at {address}")
         self.address = address
 
 
@@ -679,13 +680,13 @@ def main(port: int = DEFAULT_PORT, open_browser: bool = True, verbose: bool = Fa
     try:
         server = start_server(port, folder, verbose)
     except AlreadyRunning as running:
-        print(f"Poker Coach is already running at {running.address}", flush=True)
+        print(f"{PROGRAM} is already running at {running.address}", flush=True)
         if open_browser:
             webbrowser.open(running.address)
         return 0
     address = f"http://127.0.0.1:{server.server_port}/"
     moved = f"port {port} was taken; " if port and server.server_port != port else ""
-    print(f"Menlo Coach is running at {address}  ({moved}Ctrl+C stops it)", flush=True)
+    print(f"{PROGRAM} is running at {address}  ({moved}Ctrl+C stops it)", flush=True)
     if open_browser:
         # in a thread of its own: some systems take a moment to hand the address to the browser
         threading.Thread(target=webbrowser.open, args=(address,), daemon=True).start()

@@ -28,7 +28,7 @@ import webbrowser
 if not getattr(sys, "frozen", False):       # run as "python tools/coach_app.py": the package is one folder up
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TITLE = "Poker Coach"
+TITLE = "Menlo Coach"                       # the program's name wherever it speaks: as server.PROGRAM and the page's title
 NOTICE = "For study and play money. Real-money sites ban real-time help."
 
 
@@ -89,7 +89,7 @@ def table_app_with_a_window(options) -> int:
             webbrowser.open(running.address)
         return 0
     except (OSError, ValueError) as err:    # no free port, or a folder that cannot be used
-        tell(f"Poker Coach could not start.\n\n{err}")
+        tell(f"{TITLE} could not start.\n\n{err}")
         return 2
     address = f"http://127.0.0.1:{table.server_port}/"
     threading.Thread(target=table.serve_forever, daemon=True).start()
