@@ -1140,6 +1140,82 @@ class StateAndCli(unittest.TestCase):
         self.assertEqual(S.build_prizes(st).itm_bonus, 0)   # the bonus is only for getting there
         self.assertEqual(rfi_range(2)[HAND_INDEX["AA"]], 1.0)
 
+    def test_g_e4_a_decision_in_a_very_large_field_is_answered_while_the_clock_runs(self):
+        # Found at the gate: `quick --hand A8s --stack 9 --pos BTN` took 8 seconds with 60,000 entrants (9,300
+        # left, 9,000 paid) and 34 seconds with 150,000 (22,500 left, 22,000 paid): the integral of the prize
+        # model grows with the paid places that can still be reached.  The table app had its closed form for
+        # that (advice.thinned_prizes); quick, advise and icm now use it under the same condition.
+        import time
+        from poker_coach import cli
+        from poker_coach.app import advice as A
+        self.assertEqual(cli.PRIZE_PLACES, A.PRIZE_PLACES)
+        for entrants, paid, left, table in ((500, 75, 78, 9), (5000, 750, 800, 9), (8000, 1200, 1300, 9),
+                                            (8000, 1200, 900, 9), (150000, 22000, 22500, 7), (150000, 22000, 600, 9)):
+            pays = default_payouts(entrants, paid)
+            prizes = Prizes(pays, left - table, 20.0, itm_bonus=pays[-1], label="x")
+            mine, theirs = cli._large_field(prizes, table), A.thinned_prizes(prizes, table)
+            where = (entrants, paid, left)
+            self.assertEqual(mine.large, theirs.large, where)              # the app's condition, case by case
+            self.assertEqual(mine.large, min(paid, left) > 1000, where)    # more than 1,000 paid places to reach
+            self.assertEqual((mine.raw_payouts, mine.field_n, mine.field_stack, mine.itm_bonus, mine.label),
+                             (prizes.raw_payouts, prizes.field_n, prizes.field_stack, prizes.itm_bonus, "x"), where)
+            self.assertIs(cli._large_field(mine, table), mine)
+            others = cli._field_prizes(mine)                               # the opponents: the same model, no bonus
+            self.assertEqual((others.large, others.itm_bonus, others.raw_payouts), (mine.large, 0.0, pays), where)
+        self.assertTrue(cli._large_field(Prizes(), 9).chip_ev)
+        self.assertTrue(cli._field_prizes(Prizes()).chip_ev)
+
+        def timed(*args):
+            start = time.time()
+            code, out, err = self.run_cli(*args)
+            self.assertEqual(code, 0, err)
+            self.assertLess(time.time() - start, 5.0, args)                # (a third of a second; it was 34)
+            return out
+
+        big = ("--remaining", "22500", "--paid", "22000", "--entrants", "150000")
+        out = timed("quick", "--hand", "A8s", "--stack", "9", "--pos", "BTN", *big)
+        self.assertIn(">>> ALL-IN   [clear]", out)
+        self.assertIn("ICM (22500 left, 22000 paid, ITM-first)", out)
+        # ... the answer did not move: these are the lines the integral printed for the four fields of the gate
+        for field, lines in (
+                (("--remaining", "1300", "--paid", "1200", "--entrants", "8000"),
+                 ("16% risk premium against SB", "shove EV +0.64bb vs folding", "equilibrium shoves 34% of hands here",
+                  "everyone folds 73%; when called you have 42%")),
+                (("--remaining", "3100", "--paid", "3000", "--entrants", "20000"),
+                 ("16% risk premium against SB", "shove EV +0.61bb vs folding", "equilibrium shoves 32% of hands here",
+                  "everyone folds 74%; when called you have 41%")),
+                (big, ("15% risk premium against SB", "shove EV +0.66bb vs folding", "equilibrium shoves 32% of hands here",
+                       "everyone folds 73%; when called you have 42%"))):
+            out = timed("quick", "--hand", "A8s", "--stack", "9", "--pos", "BTN", *field)
+            for line in lines:
+                self.assertIn(line, out, field)
+        # ... and against the integral itself, asked here for the smallest of them: the same answer, line for line
+        hand, cards = parse_hand("A8s")
+        pays = default_payouts(8000, 1200)
+        exact = Prizes(pays, 1300 - 9, 9.0, itm_bonus=pays[-1], label="ICM (1300 left, 1200 paid, ITM-first)")
+        spot = quick_spot(hand, cards, 9.0, 9, "BTN", "", None, exact, True, {"label": "100 from the money", "to_money": 100})
+        spot.field_prizes = Prizes(pays, 1300 - 9, 9.0)
+        self.assertFalse(exact.large)
+        out = timed("quick", "--hand", "A8s", "--stack", "9", "--pos", "BTN", "--remaining", "1300", "--paid", "1200",
+                    "--entrants", "8000")
+        self.assertEqual(out.split("ctx:")[0].strip(), advise(spot).render().strip())
+        # a field under the cap is still the integral: nothing changes for it
+        self.assertIn("shove EV +0.52bb vs folding (ICM (78 left, 75 paid, ITM-first))",
+                      timed("quick", "--hand", "A8s", "--stack", "9", "--pos", "BTN", "--remaining", "78", "--paid", "75",
+                            "--entrants", "500"))
+        # the tracked table: advise (before and after the flop) and icm
+        self.run_cli("new", "--name", "big", "--buyin", "11", "--entrants", "150000", "--paid", "22000", "--start-stack", "10000")
+        self.run_cli("sync", '{"blinds":[300,600,75],"button":1,"hero":5,"remaining":22500,"seats":{"1":["Bob",21000],'
+                             '"2":["Ann",9500],"3":["Carl",48000],"4":["Gus",30000],"5":["HERO",5400],"6":["Fox",8000],'
+                             '"7":["Dee",15000]}}')
+        self.assertIn(">>> ALL-IN", timed("advise", "--hand", "A8s"))
+        self.assertIn(">>> FOLD", timed("advise", "--hand", "KTs", "--facing", "Fox allin"))
+        self.assertIn("ICM risk premium", timed("advise", "--hand", "AhKd", "--board", "Ks7d2c", "--pot", "4500", "--to-call",
+                                                "1500", "--vs", "open:UTG", "--villain", "Gus", "--oop"))
+        table = timed("icm")
+        self.assertIn("ICM (22500 left, 22000 paid, ITM-first)", table)
+        self.assertEqual(len(re.findall(r"bubble factor \d", table)), 6)       # hero's premium against each of the six
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -2435,6 +2511,36 @@ class TagSheet(unittest.TestCase):
                 self.assertTrue(self.has(three_callers, name), name)
         self.assertFalse(self.answer(8, 0, 40, four, HAND_INDEX["55"]).startswith("RAISE"))    # (55 is raised behind three)
         self.assertTrue(self.has(three_callers, "55"))
+
+    def test_g_e2_the_big_blinds_calls_say_the_ante_they_are_priced_with(self):
+        # Found at the gate: the sheet says "each row is what the coach answers with 60bb", and at six and seven
+        # players `quick` called 27 hands in the big blind that the rows fold (six players, a hijack raise: Q9o,
+        # J9o, T9o, K7o, K6o).  The rows are asked with an ante of an eighth of a big blind a player (0.75bb at
+        # six players, what a tracked table with 300/600/75 has); `quick` always posts a 1bb big-blind ante, and
+        # the big blind calls by the price.  At eight players the two are the same bet.  The sheet says the ante.
+        T = self.T
+        hand = HAND_INDEX["Q9o"]
+        row = T.table(6)["vs_raise"]["middle|bb"]                          # six players, the hijack raises
+        self.assertEqual([name for name in self.RAISE_LISTS if self.has(row.get(name, ""), "Q9o")], [])
+        self.assertEqual(self.answer(6, 0, 60, [(4, "raise", 2.3)], hand), "FOLD")             # the sheet's ante
+        each = HandSetup([60.0] * 6, 0.5, 1.0, 0.125, 0.0)                 # ... also when every player posts it
+        spot = quick_spot(hand, None, 60, 6, "BB", "HJ raise 2.3bb")
+        self.assertEqual(spot.setup.antes, [0.0] * 5 + [1.0])              # what `quick` posts at every table size
+        self.assertEqual(advise(spot).action, "CALL")
+        spot.setup = each
+        self.assertEqual(advise(spot).action, "FOLD")
+        for players, ante in ((6, "0.75bb"), (7, "0.875bb"), (8, "1bb")):
+            text = T.sheet_text(players)
+            self.assertIn("The big blind calls by the price", text)
+            self.assertIn(f"The price counts an ante of an eighth of a big blind from each player ({ante} in all at "
+                          "this table); with a bigger ante it calls a few more hands.", text)
+        # eight players: the same ante, the same answers (the hands on either side of the row's last calls)
+        row = T.table(8)["vs_raise"]["middle|bb"]
+        for name in ("Q9o", "Q8o", "K6o", "K5o", "T9o", "T8o"):
+            on = any(self.has(row.get(key, ""), name) for key in self.RAISE_LISTS)
+            quick = advise(quick_spot(HAND_INDEX[name], None, 60, 8, "BB", "HJ raise 2.3bb")).action
+            self.assertEqual(quick != "FOLD", on, name)
+            self.assertEqual(quick, self.answer(8, 0, 60, [(4, "raise", 2.3)], HAND_INDEX[name]), name)
 
     def test_e2_the_second_re_raise_is_said_the_way_the_engine_makes_it(self):
         # The sheet's own sentences disagreed: "Second re-raise ... with more than 60bb" (the sizes) and "more

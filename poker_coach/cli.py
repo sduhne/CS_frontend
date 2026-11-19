@@ -349,6 +349,35 @@ def cmd_log(a) -> int:
 # decisions
 # ----------------------------------------------------------------------------
 
+# Up to this many paid places still to reach, an ICM value is worked out by the integral.  With more it takes
+# seconds (quick, 9bb on the button: 8 s an answer at 60,000 entrants, 34 s at 150,000), and a decision has a
+# clock running.  It is the table app's cap (``app.advice.PRIZE_PLACES``; a test keeps the two equal).
+PRIZE_PLACES = 1000
+
+
+def _large_field(prizes: Prizes, table: int) -> Prizes:
+    """The prize model for a decision: in closed form when the field is very large.
+
+    The condition is the table app's (``app.advice.thinned_prizes``): more than ``PRIZE_PLACES`` paid places
+    that somebody can still finish in.  ``table`` is the number of players at hero's table, who are not part
+    of ``prizes.field_n``.  The model is the same (``icm.large_field_equity``: the real ladder, field and
+    places to go), so the answers of a smaller field do not move, and those of a larger one by the last
+    printed digit at most.
+    """
+    reachable = min(len(prizes.raw_payouts), table + prizes.field_n)
+    if prizes.chip_ev or prizes.large or reachable <= PRIZE_PLACES:
+        return prizes
+    return Prizes(prizes.raw_payouts, field_n=prizes.field_n, field_stack=prizes.field_stack,
+                  itm_bonus=prizes.itm_bonus, label=prizes.label, large=True)
+
+
+def _field_prizes(prizes: Prizes) -> Prizes:
+    """What the opponents play for: the real prizes, without hero's bonus for cashing, by the same model."""
+    if prizes.chip_ev:
+        return Prizes()
+    return Prizes(prizes.raw_payouts, prizes.field_n, prizes.field_stack, large=prizes.large)
+
+
 def _state_spot(st: dict, a) -> tuple[Spot, list[int]]:
     setup, order = S.hand_setup(st)
     hero_seat = st["table"].get("hero")
@@ -357,8 +386,8 @@ def _state_spot(st: dict, a) -> tuple[Spot, list[int]]:
     hero = order.index(hero_seat)
     hand, cards = parse_hand(a.hand)
     seats = [S.seats(st)[str(s)] for s in order]
-    prizes = S.build_prizes(st, a.goal)
-    field = Prizes(prizes.raw_payouts, prizes.field_n, prizes.field_stack) if not prizes.chip_ev else Prizes()
+    prizes = _large_field(S.build_prizes(st, a.goal), len(S.occupied(st)))
+    field = _field_prizes(prizes)
     stage = S.stage(st)
     fc = S.fold_clock(st)
     hero_bb = setup.start[hero] / setup.bb
@@ -438,7 +467,7 @@ def cmd_advise(a) -> int:
             setup, order = S.hand_setup(st)
             hero_seat = st["table"].get("hero")
             hero = order.index(hero_seat) if hero_seat in order else None
-            prizes = S.build_prizes(st, a.goal)
+            prizes = _large_field(S.build_prizes(st, a.goal), len(S.occupied(st)))
 
             def rp_fn() -> float:
                 if prizes.chip_ev or hero is None:
@@ -497,9 +526,9 @@ def cmd_quick(a) -> int:
             avg = (a.avg_bb if a.avg_bb else a.stack)
             bonus = pays[-1] if (a.goal == "itm" and a.remaining > len(pays)) else 0.0
             if a.goal != "chips":
-                prizes = Prizes(pays, field_n, avg, itm_bonus=bonus,
-                                label=f"ICM ({a.remaining} left, {len(pays)} paid"
-                                      + (", ITM-first" if bonus else "") + ")")
+                prizes = _large_field(Prizes(pays, field_n, avg, itm_bonus=bonus,
+                                             label=f"ICM ({a.remaining} left, {len(pays)} paid"
+                                                   + (", ITM-first" if bonus else "") + ")"), a.players)
             to_money = a.remaining - len(pays)
             stage = {"label": f"{to_money} from the money" if to_money > 0 else "in the money",
                      "to_money": to_money}
@@ -524,7 +553,7 @@ def cmd_quick(a) -> int:
         spot = quick_spot(hand, cards, a.stack, a.players, a.pos, a.facing or "",
                           a.villain_stack_bb, prizes, not a.no_ante, stage)
         if not prizes.chip_ev:
-            spot.field_prizes = Prizes(prizes.raw_payouts, prizes.field_n, prizes.field_stack)
+            spot.field_prizes = _field_prizes(prizes)
         if a.villain_type:
             # tag the first player mentioned in --facing, else everyone behind
             acted = [act.idx for act in spot.acts if act.idx != spot.hero]
@@ -613,7 +642,7 @@ def cmd_icm(a) -> int:
         setup, order = S.hand_setup(st)
     except ValueError as exc:
         return _fail(str(exc))
-    prizes = S.build_prizes(st, a.goal)
+    prizes = _large_field(S.build_prizes(st, a.goal), len(S.occupied(st)))
     if prizes.chip_ev:
         _out("No ICM yet: I need players remaining and places paid (or entrants).")
         return 0

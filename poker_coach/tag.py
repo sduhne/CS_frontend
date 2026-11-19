@@ -252,8 +252,12 @@ def sheet_text(players: int = 8) -> str:
                "re-raise list move all-in where that clearly earns; otherwise they call (in the small blind the "
                "weaker ones fold). A hand on a bluff list folds; in the big blind it calls.")
     out.append("  More than 45bb: every hand on a re-raise list re-raises small.")
+    # The price holds the ante, and the rows are asked with the ante of ``binary.PLAYER_ANTE``.  ``quick`` always
+    # posts a 1bb big-blind ante: at six and seven players that is more than these rows count, and it calls a
+    # few hands in the big blind that they fold (27 cells in all).  So the ante is said where the price is.
     out.append("  The big blind calls by the price: against a smaller raise a few more hands, against a bigger one "
-               "fewer.")
+               "fewer. The price counts an ante of an eighth of a big blind from each player "
+               f"({_bb(players * B.PLAYER_ANTE)} in all at this table); with a bigger ante it calls a few more hands.")
     out.append("")
 
     out.append("4. A RAISE BEFORE YOU, 24BB OR LESS: ALL-IN OR FOLD")
