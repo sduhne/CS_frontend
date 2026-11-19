@@ -1559,6 +1559,19 @@ class AfterTheFlopFindings(unittest.TestCase):
         self.assertGreater(engine.spot.villain_stack, 50000)            # was 0: "0.0bb behind", and ALL-IN 55bb
         self.assertEqual(a["headline"]["follow"]["kind"], "bet")
 
+    def test_post_1_a_bettor_with_chips_is_not_all_in_because_hero_is_the_short_one(self):
+        # hero has 4bb left and faces a bet from a player with 50bb behind: for the engine that is a bet, not
+        # an all-in (the villain's chips are what he has beyond hero's call)
+        s, seat = six_handed([60, 60, 60, 60, 60, 6.325], 5, "AhKd", acts=[(3, "raise", 2.2)])
+        s.do("act", seat=1, kind="call")
+        flop(s, "Ks7d2c", (1, "check"), (seat(3), "bet", 6000))
+        with postflop_says() as engine:
+            a = A.advise(s)
+        self.assertEqual(s.view()["hand"]["to_call"], 4000)             # all hero has
+        self.assertGreater(engine.spot.villain_stack, 40000)
+        self.assertIsNone(engine.spot.facing)
+        self.assertEqual((verb(a), a["headline"]["follow"]), ("CALL", {"kind": "call"}))
+
     def test_post_1_an_all_in_meant_for_a_smaller_stack_is_a_bet_while_a_deeper_player_is_in(self):
         s, seat = self.three_way("AhKd", [30, 30, 30, 30, 10, 60, 30, 60], [(CO, "raise", 2.2)])
         s.do("act", seat=1, kind="call")
@@ -1692,6 +1705,16 @@ class AfterTheFlopFindings(unittest.TestCase):
             self.assertLess(pct(weights), 8)                            # was 33% and 26%
             self.assertEqual(weights[queens], 1.0)
             self.assertFalse(any(weights[h] for h in junk))
+        # blind against blind is not an isolation raise: the big blind raises the small blind's call wide
+        s = tournament([40] * 8, SB, "KhTh")
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat_of(BB, SB, 8), kind="raise", amount=3000)
+        s.do("act", seat=1, kind="call")
+        flop(s, "Ks7d2c", (1, "check"), (seat_of(BB, SB, 8), "bet", 3000))
+        with postflop_says() as engine:
+            A.advise(s)
+        self.assertEqual(labels(engine.spot), {"BB": "raised over the small blind's call"})
+        self.assertEqual(engine.spot.villains[0].weights, A.villain_open_range(1, "unknown"))
         usual, loose = (pct(parse_range(A.CONTINUE_VS_RERAISE[k])) for k in ("usual", "loose"))
         self.assertGreater(loose, usual)                                # wider for players who call too much
         # (4) the button moves all-in for 12bb, the small blind calls, hero calls in the big blind

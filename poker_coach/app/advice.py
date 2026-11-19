@@ -2360,7 +2360,7 @@ def after_the_flop(seen: Seen, money: Money | None) -> Play:
     # players a short or all-in bettor leaves a deeper player to play against.
     can_lose = matchable(seen, opponents)
     spot = PostflopSpot(hero=seen.cards, board=board, pot=pot, to_call=to_call, hero_stack=state.stack[HERO],
-                        villain_stack=max(0, can_lose - to_call), villains=villains, in_position=in_position,
+                        villain_stack=chips_beyond_the_call(seen, opponents), villains=villains, in_position=in_position,
                         hero_pfr=entered.last_raiser == HERO, facing=facing, bb=seen.bb, risk_premium=risk,
                         iters=POSTFLOP_ITERS)
     adv = advise_postflop(spot)
@@ -2419,19 +2419,25 @@ def bet_into_absent_players(seen: Seen, made: dict, absent: list) -> Play:
                 source="after the flop: nobody is there to call")
 
 
-def matchable(seen: Seen, opponents: list) -> float:
-    """The chips hero can still put in on this street and have matched.
+def chips_beyond_the_call(seen: Seen, opponents: list) -> float:
+    """What the deepest opponent who still has chips could put in beyond hero's call: the engine's "villain stack".
 
-    The smaller of his stack and what the deepest opponent who still has
-    chips can reach above hero's chips in front.  When nobody has chips left
-    it is what hero must call.
+    Not capped by hero's own stack (the engine does that): a player who bet
+    and has chips left is not all-in because hero is the short one.  Zero
+    when nobody has chips left.
     """
     state = seen.state
     with_chips = [seat for seat in opponents if state.stack[seat] > 0]
     if not with_chips:
-        return min(state.stack[HERO], seen.to_call)
+        return 0
     deepest = max(state.in_front[seat] + state.stack[seat] for seat in with_chips)
-    return max(seen.to_call, min(state.stack[HERO], deepest - state.in_front[HERO]))
+    return max(0, deepest - state.in_front[HERO] - seen.to_call)
+
+
+def matchable(seen: Seen, opponents: list) -> float:
+    """The chips hero can still put in on this street and have matched: the smaller of his stack and what the
+    deepest opponent who still has chips can reach.  When nobody has chips left it is what hero must call."""
+    return min(seen.state.stack[HERO], seen.to_call + chips_beyond_the_call(seen, opponents))
 
 
 def pots_behind_at_street_start(seen: Seen, main: int) -> float:
@@ -2459,7 +2465,7 @@ class Entered:
     roles: dict = field(default_factory=dict)       # {seat: role}, see ``preflop_roles``
     opener_behind: int | None = None                # players behind the first raiser
     last_raiser: int | None = None                  # the seat of the last raise (a short all-in is not one)
-    callers_in_front: dict = field(default_factory=dict)    # {seat: callers in the pot when he raised over them}
+    callers_in_front: dict = field(default_factory=dict)    # {seat: the callers in the pot when he raised over them}
     answered: dict = field(default_factory=dict)    # {seat: (seat, total)}: the raise or all-in he called or raised over
 
 
@@ -2486,7 +2492,7 @@ def preflop_roles(seen: Seen) -> Entered:
     roles = entered.roles
     level, full_raise = state.bb, state.bb      # the bet to match, and the size of a full raise over it
     raises: list = []                           # (seat, total, all-in) of every real raise, hero's included
-    short_pushes, limpers = [], 0
+    short_pushes, limpers = [], []
     for entry in state.log:
         if entry["street"] != "preflop":
             continue
@@ -2501,7 +2507,7 @@ def preflop_roles(seen: Seen) -> Entered:
                 if not raises:
                     roles[seat] = "push" if entry["allin"] else "iso" if limpers else \
                         "iso_short" if short_pushes else "open"
-                    entered.callers_in_front[seat] = limpers
+                    entered.callers_in_front[seat] = list(limpers)
                 elif not small:                 # only all-ins so far: he plays against the all-in player's range
                     roles[seat] = "callpush" if entry["allin"] else "iso_push"
                     entered.answered[seat] = raises[-1][:2]
@@ -2525,7 +2531,7 @@ def preflop_roles(seen: Seen) -> Entered:
                 roles.setdefault(seat, "call")
             else:
                 roles.setdefault(seat, "limp")
-                limpers += 1
+                limpers.append(seat)
         elif kind == "check":
             roles.setdefault(seat, "check")
     for seat in seen.order[-2:]:                # a blind that went all-in by posting holds any two cards
@@ -2558,7 +2564,11 @@ def range_for(seen: Seen, seat: int, entered: Entered) -> tuple[list, str]:
     if role == "iso_short":
         return villain_open_range(behind, ptype), "raised over a short all-in"
     if role == "iso":
-        return isolation_range(behind, ptype, entered.callers_in_front.get(seat, 1)), "raised over the callers"
+        callers = entered.callers_in_front.get(seat) or [None]
+        if behind == 0 and callers == [seen.order[-2]]:
+            # blind against blind (heads-up too): the big blind raises the small blind's call with a wide range
+            return villain_open_range(1, ptype), "raised over the small blind's call"
+        return isolation_range(behind, ptype, len(callers)), "raised over the callers"
     if role == "push":
         return push_range(seen, index), "moved all-in"
     if role == "reshove":

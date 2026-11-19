@@ -290,7 +290,7 @@ button.pod:hover{border-color:var(--grey)}
 .chip.won{background:#1C392B;color:var(--win)}       /* the win and loss tints on Panel, made solid */
 .chip.lost{background:#3F2224;color:var(--loss)}
 .deal{position:absolute;width:var(--deal);height:var(--deal);border-radius:50%;background:var(--white);color:var(--ink);
-  display:grid;place-items:center;font:800 calc(var(--deal)*.62)/1 var(--display);box-shadow:0 0 0 2px var(--ink);z-index:2}
+  display:grid;place-items:center;font:800 max(12px,calc(var(--deal)*.62))/1 var(--display);box-shadow:0 0 0 2px var(--ink);z-index:2}
 .centre{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:6px}
 .pot{display:flex;align-items:baseline;gap:8px;height:26px;white-space:nowrap}
 .pot .num{font-size:var(--pot);line-height:26px}
@@ -442,6 +442,15 @@ button.pod:hover{border-color:var(--grey)}
 .choice{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
 .choice > span{font-size:14px;color:var(--soft)}
 .choice .tabs{flex:0 1 auto;min-width:0;flex-wrap:wrap;justify-content:flex-end;border-radius:22px}
+/* A choice whose options each carry a line of words: the label over the track, the options side by side. */
+.choice.stack{flex-direction:column;align-items:stretch;gap:6px}
+.choice.stack .tabs{flex-wrap:nowrap}
+.choice.stack .tab{flex:1 1 0;min-width:0;height:auto;min-height:48px;padding:6px 10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;white-space:normal}
+.choice.stack .tab b{font-weight:600}
+.choice.stack .tab small{font:500 12px/1.2 var(--body)}
+/* A field with its label on a line over it. */
+.over{display:flex;flex-direction:column;gap:4px;min-width:0}
+.over .eyebrow{overflow:hidden;text-overflow:ellipsis}
 .buttons{display:flex;flex-wrap:wrap;gap:8px}
 
 .keys{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 14px;align-items:center}

@@ -151,8 +151,8 @@
       {value: "maxev", label: "Max EV"},
     ],
     plan: [
-      {value: "full", label: "Full"},
-      {value: "allin", label: "All-in or fold"},
+      {value: "full", label: "All moves"},
+      {value: "allin", label: "All-in or fold only"},
     ],
     opponents: {
       tournament: [{value: "unknown", label: "Unknown"}, {value: "loose", label: "Loose"}, {value: "tight", label: "Tight"}],
@@ -165,7 +165,7 @@
       {value: "bb", label: "Big blind"},
     ],
     unit: [{value: "chips", label: "Chips"}, {value: "bb", label: "Big blinds"}],
-    deck: [{value: "one-ink", label: "One ink"}, {value: "four-colour", label: "Four colours"}],
+    deck: [{value: "one-ink", label: "Two colours"}, {value: "four-colour", label: "Four colours"}],
     button_rule: [{value: "dead", label: "Dead button"}, {value: "forward", label: "Forward-moving button"}],
     type: ["unknown", "nit", "tight", "tag", "lag", "loose", "station", "maniac"],
   };
@@ -402,7 +402,7 @@
     can = can || {};
     const undo = `<button class="tool" aria-label="Undo" title="Undo" data-fk="undo"${can.undo ? "" : " disabled"}${emit({op: "undo"})}>${icon("undo")}</button>`;
     const redo = `<button class="tool" aria-label="Redo" title="Redo" data-fk="redo"${can.redo ? "" : " disabled"}${emit({op: "redo"})}>${icon("redo")}</button>`;
-    const menu = `<button class="tool" aria-label="Menu and settings" title="Menu" data-fk="menu"${emit({ui: only({sheet: "settings"})})}>${icon("menu")}</button>`;
+    const menu = `<button class="tool" aria-label="Settings" title="Settings" data-fk="menu"${emit({ui: only({sheet: "settings"})})}>${icon("menu")}</button>`;
     return `<div class="tools">${view || can.undo || can.redo ? undo + redo : ""}${menu}</div>`;
   }
 
@@ -429,16 +429,18 @@
     return `<button class="value" aria-label="${esc(opts.label)}. Change" title="${esc(opts.label)}" data-fk="value-${name}"${emit({ui: only({edit: name})})}>
         <span class="eyebrow">${esc(opts.eyebrow)}</span>${opts.shown}</button>`;
   }
-  function unset() { return '<span class="unset">Set</span>'; }
+  function unset() { return '<span class="unset">Add</span>'; }
 
-  // Blinds are written the short way: 1,000 / 2,000 is "1k / 2k" and 1,500 "1.5k"; 300, 1,250 and 12.5k stay as they are.
+  // Blinds are written the short way once both are in thousands: 1,000 / 2,000 is "1k / 2k", 1,500 / 3,000
+  // "1.5k / 3k". 800 / 1,600, 1,250 / 2,500 and 12.5k / 25k stay as they are.
   function fmtBlind(n) {
     if (n != null && n >= 1000 && n < 10000 && n % 100 === 0) return dropZeros((n / 1000).toFixed(1)) + "k";
     return fmtShort(n);
   }
   function blindsText(level) {
     if (!level || level.bb == null) return "?";
-    return `${fmtBlind(level.sb)} / ${fmtBlind(level.bb)}`;
+    const short = level.sb >= 1000 && level.sb % 100 === 0 && level.bb % 100 === 0 ? fmtBlind : fmtShort;
+    return `${short(level.sb)} / ${short(level.bb)}`;
   }
   function anteText(level) {
     if (!level || !level.ante || level.ante_kind === "none") return "no ante";
@@ -589,7 +591,7 @@
     if (heroOutOfChips(view)) {
       const again = view.mode === "tournament" ? "tournament" : "game";
       return {verb: "You are out", own: true,
-              text: `${result}Type a new stack on your seat to re-enter (S), or start a new ${again} from the menu.`};
+              text: `${result}Type a new stack on your seat to re-enter (S), or start a new ${again} from the settings.`};
     }
     if (!hand) return {verb: "New hand", text: "Press N, then type your two cards: A K S."};
     if (hand.needs === "cards") return {verb: "Your cards", text: "Type your two cards: A K S, or A H K D."};
@@ -663,12 +665,13 @@
     const filled = SURE_BARS[sure];
     if (!filled) return "";
     const bars = [1, 2, 3].map((n) => `<i${n <= filled ? ' class="on"' : ""}></i>`).join("");
-    return `<span class="sure eyebrow"><span class="pips" aria-hidden="true">${bars}</span>${esc(sure)}</span>`;
+    // ("close" alone at the top right of a box reads as a close button)
+    return `<span class="sure eyebrow"><span class="pips" aria-hidden="true">${bars}</span>${esc(sure === "close" ? "close spot" : sure)}</span>`;
   }
 
   // What the answers depend on besides the table: the style and the moves, and re-entry and bounty while
   // they are on. In sight at every width, at the head of the slab; a click opens the settings.
-  const MOVES_WORDS = {full: "All moves", allin: "All-in or fold only"};
+  const MOVES_WORDS = {full: "All moves", allin: "All-in or fold only"};      // (the labels of CHOICES.plan)
   function coachMode(view) {
     if (view.mode !== "tournament") return "";
     const strip = view.strip || {};
@@ -935,7 +938,7 @@
     if (seat.empty) {
       const on = ui.seatMenu === seat.seat ? " target" : "";
       return `<button class="pod empty${on}" style="${place}" data-seat="${seat.seat}" data-arrow tabindex="-1"
-        aria-label="Seat ${seat.seat}, empty. Add a player"${emit(seatClick(view, seat))}>+ Seat</button>`;
+        aria-label="Seat ${seat.seat}, empty. Add a player"${emit(seatClick(view, seat))}>+ Player</button>`;
     }
     const state = podState(view, ui, seat);
     const words = podWords(view, seat, state);
@@ -1060,7 +1063,7 @@
     if (!hand) return lastHandHtml(view);
     if (ui.amount) return amountRowHtml(view, ui);
     const events = hand.line || [];
-    if (!events.length) return `<span class="hint">The hand will be written here, one chip per step.</span>`;
+    if (!events.length) return `<span class="hint">The hand is written here, step by step.</span>`;
     const last = events.length - 1;
     const chips = list(events, (event, at) => {
       const selected = ui.selected === event.i;
@@ -1448,12 +1451,17 @@
   }
 
   // A labelled field that sends its text on Enter, and when it is left after a change
-  // (`enterOnly`: on Enter only, so a click elsewhere never saves it; `bad`: the server refused its value).
+  // (`enterOnly`: on Enter only, so a click elsewhere never saves it; `bad`: the server refused its value;
+  //  `over`: the label stands on a line over the field, for labels of two words in a narrow column).
   function fieldHtml(opts) {
-    return `<label class="field${opts.bad ? " bad" : ""}"><span class="eyebrow">${esc(opts.label)}</span>
-      <input class="${opts.words ? "words" : ""}" value="${esc(opts.value == null ? "" : opts.value)}" data-name="${opts.name || "text"}" data-fk="${esc(opts.fk)}"
+    const input = `<input class="${opts.words ? "words" : ""}" value="${esc(opts.value == null ? "" : opts.value)}" data-name="${opts.name || "text"}" data-fk="${esc(opts.fk)}"
         ${opts.focus ? "data-autofocus" : ""} ${opts.enterOnly ? "data-enter-only" : ""} ${opts.bad ? 'aria-invalid="true"' : ""}
-        ${opts.placeholder ? `placeholder="${esc(opts.placeholder)}"` : ""} autocomplete="off" spellcheck="false"${opts.unit || ""}${emit(opts.send)}>${opts.mark || ""}</label>`;
+        ${opts.placeholder ? `placeholder="${esc(opts.placeholder)}"` : ""} autocomplete="off" spellcheck="false"${opts.unit || ""}${emit(opts.send)}>${opts.mark || ""}`;
+    if (opts.over) {
+      return `<label class="over"><span class="eyebrow">${esc(opts.label)}</span><span class="field${opts.bad ? " bad" : ""}">${input}</span></label>`;
+    }
+    return `<label class="field${opts.bad ? " bad" : ""}"><span class="eyebrow">${esc(opts.label)}</span>
+      ${input}</label>`;
   }
 
   // A hand is being played (a settled one, waiting for the next deal, is not).
@@ -1533,7 +1541,7 @@
       ${popHead("Table", "", closed)}
       <div class="row">
         <button class="menu-btn" data-autofocus${emit({op: "button_step", step: -1})}>${keycap("[")} Button back</button>
-        <button class="menu-btn"${emit({op: "button_step", step: 1})}>Button on ${keycap("]")}</button>
+        <button class="menu-btn"${emit({op: "button_step", step: 1})}>Button forward ${keycap("]")}</button>
       </div>
       ${sizeRow}
       <div class="row">
@@ -1753,7 +1761,7 @@
   function overlayHtml(view, advice, ui, mode) {
     if (!view) {
       if (ui.sheet === "keys") return sheetHtml("Keys", keysBody());
-      if (ui.sheet === "settings") return sheetHtml("Menu", firstRunMenu(), true);
+      if (ui.sheet === "settings") return sheetHtml("Settings", firstRunMenu(), true);
       // (from the screen that says the table cannot be shown: a way to start again)
       if (ui.sheet === "new") return sheetHtml(mode === "tournament" ? "New tournament" : "New game", setupForm(mode, null));
       return "";
@@ -1793,16 +1801,36 @@
   function choiceRow(label, choices, current, send) {
     return `<div class="choice"><span>${esc(label)}</span>${choiceHtml(label, choices, current, send)}</div>`;
   }
+  // A choice between things that need a line of explanation each ("Turbo (5 to 6 minute levels)"): the
+  // label stands over the track, and each choice shows its name with the words in brackets under it.
+  function choiceStack(label, choices, current, send) {
+    const buttons = list(choices, (choice) => {
+      const parts = /^(.*?)\s*\((.*)\)\s*$/.exec(choice.label);
+      const words = parts ? `<b>${esc(parts[1])}</b><small>${esc(parts[2])}</small>` : `<b>${esc(choice.label)}</b>`;
+      return `<button class="tab" role="radio" aria-checked="${choice.value === current}" aria-label="${esc(choice.label)}"${emit(send(choice.value))}>${words}</button>`;
+    });
+    return `<div class="choice stack"><span>${esc(label)}</span><div class="tabs" role="radiogroup" aria-label="${esc(label)}">${buttons}</div></div>`;
+  }
   function checkHtml(label, on, send) {
     return `<label class="check"><input type="checkbox"${on ? " checked" : ""} data-name="value"${emit(send)}><span>${esc(label)}</span></label>`;
   }
 
-  const ICM_WORDS = {
-    off: "ICM is off: the coach counts chips. Enter players left and places paid.",
-    estimated: "ICM is estimated from typical payouts. Enter the smallest prize and the final-table prizes for the exact ladder.",
-    on: "ICM is on, with typical payouts.",
-    exact: "ICM is exact: the real prize ladder is in.",
-  };
+  /* What the coach counts with, in a sentence: chips only, or prize money (ICM) and from which prizes.
+     strip.icm is off | estimated | on | exact; it is exact only when a prize is typed for every paid
+     place, so with fewer the sentence says how many of the places have one (strip.prizes_typed). */
+  function prizeWords(strip) {
+    const level = strip.icm;
+    if (!level || level === "off") return "The coach counts chips only. With players left and places paid it counts prize money (ICM).";
+    const typed = strip.prizes_typed != null ? strip.prizes_typed : Array.isArray(strip.payouts) ? strip.payouts.length : 0;
+    const paid = strip.paid;
+    const rough = level === "estimated" ? " The size of the field is estimated from this table: add the entrants and the start stack." : "";
+    if (typed && paid && typed >= paid) return `The coach counts prize money (ICM) from the prizes you typed: one for each of the ${fmtChips(paid)} paid places.` + rough;
+    if (typed) {
+      const places = paid ? `${fmtChips(typed)} of the ${fmtChips(paid)} paid places` : `${fmtChips(typed)} place${typed === 1 ? "" : "s"}`;
+      return `The coach counts prize money (ICM). A prize is typed for ${places}; the places below take the last one typed.` + rough;
+    }
+    return "The coach counts prize money (ICM) from typical payouts. Type the prizes for the real ones: 1:1000 2:600 4-6:200." + rough;
+  }
 
   // Prizes from first place down, written the way they are typed: [1000, 600, 200, 200] -> "1:1000 2:600 3-4:200".
   function payoutsText(strip) {
@@ -1823,25 +1851,25 @@
     const strip = view.strip || {};
     const config = (key) => (value) => ({op: "set_config", key: key, value: value});
     const tourney = (label, field, value, opts) => fieldHtml(Object.assign(
-      {label: label, value: value, fk: "set-" + field, bad: isBad(ui, "set-" + field), send: {op: "set_tournament", field: field}}, opts || {}));
+      {label: label, value: value, over: true, fk: "set-" + field, bad: isBad(ui, "set-" + field), send: {op: "set_tournament", field: field}}, opts || {}));
     let html = `<p class="notice">${NOTICE}</p>`;
 
     if (view.mode === "tournament") {
       html += section("Tournament", `<div class="cols">
-          ${fieldHtml({label: "Left", value: strip.remaining, fk: "set-remaining", bad: isBad(ui, "set-remaining"), send: {op: "remaining"}})}
-          ${tourney("Paid", "paid", strip.paid)}
+          ${fieldHtml({label: "Players left", value: strip.remaining, over: true, fk: "set-remaining", bad: isBad(ui, "set-remaining"), send: {op: "remaining"}})}
+          ${tourney("Places paid", "paid", strip.paid)}
           ${tourney("Entrants", "entrants", strip.entrants)}
           ${tourney("Start stack", "start_stack", strip.start_stack)}
-          ${tourney("Average", "avg_stack", strip.avg_stack)}
+          ${tourney("Average stack", "avg_stack", strip.avg_stack)}
           ${tourney("Buy-in", "buyin", strip.buyin)}
         </div>
         ${tourney("Payouts", "payouts", payoutsText(strip), {words: true, placeholder: "auto, or 1:1000 2:600 4-6:200"})}
-        <p class="hint">${esc(ICM_WORDS[strip.icm] || "")}</p>
+        <p class="hint" data-fk="prize-words">${esc(prizeWords(strip))}</p>
         ${checkHtml("Re-entry is still open", strip.reentry_open, {op: "set_tournament", field: "reentry_open"})}
         ${checkHtml("Bounty tournament", strip.bounty, {op: "set_tournament", field: "bounty"})}`);
       html += section("Coach",
         choiceRow("Style", CHOICES.style, strip.style, config("style")) +
-        choiceRow("Plan", CHOICES.plan, strip.plan, config("plan")) +
+        choiceRow("Moves", CHOICES.plan, strip.plan, config("plan")) +
         choiceRow("Opponents", CHOICES.opponents.tournament, strip.opponents, config("opponents")));
     } else {
       html += section("Coach", choiceRow("Opponents", CHOICES.opponents[view.mode], strip.opponents, config("opponents")));
@@ -1852,15 +1880,15 @@
       const settings = view.settings || {};
       // The ladders the server knows, as an either-or; the levels of the one in use, ready to be edited.
       const ladders = (settings.ladders || []).map((ladder) => ({value: ladder.name, label: ladder.label || ladder.name}));
-      const presets = ladders.length ? choiceRow("Ladder", ladders, settings.ladder, (name) => ({op: "set_ladder", name: name})) : "";
+      const presets = ladders.length > 1 ? choiceStack("Blind levels", ladders, settings.ladder, (name) => ({op: "set_ladder", name: name})) : "";
       const levels = settings.ladder_text != null ? settings.ladder_text
         : (settings.levels || []).map((level) => level.filter((part, at) => at < 2 || part).join("/")).join("\n");
       html += section("Blinds",
         choiceRow("Ante", CHOICES.ante_kind, level.ante_kind || "none", (kind) => ({op: "set_ante_kind", kind: kind})) +
         presets +
-        `<form class="stacked"${emit({op: "set_ladder"})}><textarea class="in" name="text" aria-label="Blind ladder, one level per line"
-            placeholder="A ladder of your own, one level per line:&#10;100/200/25&#10;150/300/40">${esc(levels)}</textarea>
-          <div class="buttons"><button type="submit" class="btn compact">Use this ladder</button></div></form>`);
+        `<form class="stacked"${emit({op: "set_ladder"})}><textarea class="in" name="text" aria-label="Blind levels, one level per line: small blind / big blind / ante"
+            placeholder="Levels of your own, one per line:&#10;100/200/25&#10;150/300/40">${esc(levels)}</textarea>
+          <div class="buttons"><button type="submit" class="btn compact">Use these levels</button></div></form>`);
     }
 
     if (view.mode !== "aof") {
@@ -1873,7 +1901,8 @@
     }
     html += section("Screen",
       (view.mode === "aof" ? "" : choiceRow("Numbers in", CHOICES.unit, view.unit, config("unit"))) +
-      choiceRow("Cards", CHOICES.deck, view.deck || "one-ink", config("deck")));
+      choiceRow("Deck", CHOICES.deck, view.deck || "one-ink", config("deck")) +
+      `<p class="hint">Two colours: black suits on white cards, with hearts and diamonds drawn as outlines. Four colours: red hearts, blue diamonds, green clubs.</p>`);
     html += section("Session", `<div class="buttons">
         <button class="btn compact"${emit({ui: only({sheet: "new"})})}>${view.mode === "tournament" ? "New tournament" : "New game"}</button>
         <button class="btn compact"${emit({ui: only({sheet: "history"})})}>Hand history ${keycap("Y")}</button>
@@ -1907,6 +1936,9 @@
 
   // What hero did, as a word: the server writes "allin".
   function didWord(did) { return did === "allin" ? "all-in" : did || "none"; }
+  // The same in a sentence about a finished hand: "you raised".
+  const DID_PAST = {fold: "folded", check: "checked", call: "called", bet: "bet", raise: "raised", allin: "moved all-in"};
+  function didPast(did) { return DID_PAST[did] || (did ? String(did) : "did nothing"); }
 
   // A row is a button: it opens that hand's text, with its own Copy.
   function historyBody(view, ui) {
@@ -1919,7 +1951,7 @@
       const open = ui.handOpen === hand.no;
       const row = `<button class="hrow" aria-expanded="${open}" data-fk="hand-${esc(hand.no)}"${emit({ui: {handOpen: open ? null : hand.no}})}>
         <span class="num">${esc(hand.no)}</span><b>${cards}</b><span>${esc(hand.pos || "")}</span>
-        <span>${hand.skipped ? "not recorded" : `coach <b>${esc(hand.advice || "none")}</b>, you <b>${esc(didWord(hand.did))}</b>`}${hand.deviated ? ' <span class="pill near">deviated</span>' : ""}</span>
+        <span>${hand.skipped ? "not recorded" : `${hand.advice ? `coach <b>${esc(String(hand.advice).toLowerCase())}</b>` : "no advice"}, you <b>${esc(didPast(hand.did))}</b>`}${hand.deviated ? ' <span class="pill near">deviated</span>' : ""}</span>
         <span class="num${look}">${net}</span></button>`;
       if (!open) return row;
       return row + `<div class="htext"><pre>${esc(hand.text || "Nothing was recorded for this hand.")}</pre>
@@ -1953,7 +1985,8 @@
 
   // The likeliest values. The server may send its own under view.setup.
   const SETUP_DEFAULTS = {
-    tournament: {size: "8", start_stack: "10000", level: "50/100", hero_stack: "", entrants: "", remaining: "", paid: "", buyin: ""},
+    // (the level as it will be played: the first level of the blind levels has an ante of 12)
+    tournament: {size: "8", start_stack: "10000", level: "50/100/12", hero_stack: "", entrants: "", remaining: "", paid: "", buyin: ""},
     spin: {start_stack: "300", level: "10/20"},
     aof: {},
   };
@@ -1978,7 +2011,7 @@
           ${setupSelect("Stacks", "start_stack", d.start_stack, [{value: "300", label: "300 chips (x2, x3)"}, {value: "500", label: "500 chips (x4 and up)"}])}
           ${setupField("Blinds", "level", d.level)}
         </div>
-        <p class="hint">Three players, winner takes all. Hero is seat 1.</p>`;
+        <p class="hint">Three players, winner takes all. You are seat 1.</p>`;
     } else if (mode === "aof") {
       fields = `<p class="hint">Four seats, 8 big blinds each, blinds 0.5 and 1. Everything is counted in big blinds.
         Clear a seat at the table when fewer than four play.</p>`;
@@ -1986,15 +2019,16 @@
       const sizes = [2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({value: String(n), label: `${n} seats`}));
       fields = `<div class="cols">
           ${setupSelect("Table", "size", d.size, sizes)}
-          ${setupField("Blinds", "level", d.level, {focus: true})}
+          ${setupField("Blinds / ante", "level", d.level, {focus: true})}
           ${setupField("Start stack", "start_stack", d.start_stack)}
           ${setupField("Your stack", "hero_stack", d.hero_stack, {placeholder: "same"})}
           ${setupField("Entrants", "entrants", d.entrants, {placeholder: "optional"})}
-          ${setupField("Left", "remaining", d.remaining, {placeholder: "optional"})}
-          ${setupField("Paid", "paid", d.paid, {placeholder: "optional"})}
+          ${setupField("Players left", "remaining", d.remaining, {placeholder: "optional"})}
+          ${setupField("Places paid", "paid", d.paid, {placeholder: "optional"})}
           ${setupField("Buy-in", "buyin", d.buyin, {placeholder: "optional"})}
         </div>
-        <p class="hint">Every field can be changed later. Players left and places paid switch ICM on.</p>`;
+        <p class="hint">Blinds / ante: 50/100/12 is small blind, big blind, ante; 50/100/0 plays without an ante.
+          Every field can be changed later. With players left and places paid the coach counts prize money, not only chips.</p>`;
     }
     return `<form class="stacked" data-hold${emit({op: "new_session", mode: mode, ui: {sheet: null}})}>${fields}
       <button type="submit" class="btn primary start">Start ${keycap("Enter")}</button></form>`;
@@ -2033,9 +2067,11 @@
     const text = typeof toast === "string" ? toast : toast.text || toast.message;
     const fix = toast.fix ? `<small>${esc(toast.fix)}</small>` : "";
     const undo = toast.undo ? `<button class="link" data-fk="toast-undo"${emit({op: "undo", ui: {toast: null}})}>Undo</button>` : "";
+    // After an undo the button beside "Undone" makes the step again (it does not undo one more).
+    const redo = toast.redo ? `<button class="link" data-fk="toast-redo"${emit({op: "redo", ui: {toast: null}})}>Redo</button>` : "";
     // A refusal may offer the way round it as a button ("Clear seat 8 and remove it").
     const action = toast.action ? `<button class="link" data-fk="toast-action"${emit(Object.assign({ui: {toast: null}}, toast.action.send))}>${esc(toast.action.label)}</button>` : "";
-    return `<div class="toast${toast.error ? " refusal" : ""}"><span class="text">${esc(text)}${fix}</span>${action}${undo}
+    return `<div class="toast${toast.error ? " refusal" : ""}"><span class="text">${esc(text)}${fix}</span>${action}${undo}${redo}
       <button class="tool" aria-label="Dismiss" title="Dismiss"${emit({ui: {toast: null}})}>${icon("close")}</button></div>`;
   }
 

@@ -70,7 +70,7 @@
   function readJson(response) { return response.json(); }
 
   const NO_ANSWER = {error: {message: "The program is not answering.",
-                             fix: "Is it still running? Start it again (python -m poker_coach app) and reload this page."}};
+                             fix: "Is it still running? Start it again (double-click Start Poker Coach) and reload this page."}};
   const DROPPED = {dropped: true};        // an intent that was not sent: the table had changed under the keys before it
   let epoch = 0;                          // goes up each time the table turns out to have changed elsewhere
   let traffic = 0;                        // goes up with every intent sent and every answer taken
@@ -715,7 +715,7 @@
       else if (UI.heroOutOfChips(state.view)) {
         // No chips: a hand dealt now would be dealt without hero.
         toast("You have no chips.", "S: type a new stack to re-enter. Or start a new " +
-              (state.view.mode === "tournament" ? "tournament" : "game") + " from the menu.");
+              (state.view.mode === "tournament" ? "tournament" : "game") + " from the settings.");
       }
       else apply({op: "deal", ui: UI.only({})}, {});
     },
@@ -812,7 +812,7 @@
     my_stack() { apply({ui: UI.only({seatMenu: HERO, menuByKey: true})}, {field: "seat-stack"}); },
     my_seat_out() { apply({op: "set_status", seat: HERO}, {}); },
     tournament() {
-      // Players left is the number that changes all the time: it is typed in place. The rest is in the menu.
+      // Players left is the number that changes all the time: it is typed in place. The rest is in the settings.
       if (state.view.mode === "tournament") apply({ui: UI.only({edit: "remaining"})}, {field: "edit-remaining"});
       else apply({ui: UI.only({sheet: "settings"})}, {});
     },
