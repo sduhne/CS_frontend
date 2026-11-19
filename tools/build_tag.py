@@ -24,12 +24,16 @@ from poker_coach import tag as T                                              # 
 from poker_coach.cards import format_range, parse_range                       # noqa: E402
 from poker_coach.equity import eq_vs_range                                    # noqa: E402
 from poker_coach.icm import Prizes                                            # noqa: E402
-from poker_coach.preflop import (Act, Spot, _REALIZE, _call_numbers, _hand_kind, _scaled_range,   # noqa: E402
-                                 _shover_solution, advise)
+from poker_coach.preflop import (Act, Spot, _call_numbers, _hand_kind, _scaled_range,   # noqa: E402
+                                 _shover_solution, advise, bb_call_points)
 from poker_coach.pushfold import HandSetup                                    # noqa: E402
 from poker_coach.ranges import open_size_bb, rfi_range, villain_open_range    # noqa: E402
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "poker_coach", "data", "tag.json")
+
+# The hands the engine is asked about.  All of them for the build; the sheet's test narrows it to a sample,
+# so that it can go through every cell with this file's own code in seconds.
+HANDS_ASKED: list[int] = list(range(169))
 
 
 def setup(players: int, stack: float, stacks: dict[int, float] | None = None) -> HandSetup:
@@ -50,7 +54,7 @@ def spot(players: int, hero_nb: int, stack: float, acts, hand: int, stacks=None)
 def ask(players: int, hero_nb: int, stack: float, acts, stacks=None) -> dict[str, list[float]]:
     """What the engine does with every hand: {action: range}."""
     out: dict[str, list[float]] = {}
-    for h in range(169):
+    for h in HANDS_ASKED:
         action = advise(spot(players, hero_nb, stack, acts, h, stacks)).action
         if "semi-bluff" in action:
             key = "bluff"
@@ -137,7 +141,12 @@ def raiser_groups(players: int) -> list[tuple[str, int]]:
 
 
 def vs_raise(players: int) -> dict:
-    """25bb or more: re-raise, call or fold, by where the raise came from and where hero sits."""
+    """25bb or more: re-raise, call or fold, by where the raise came from and where hero sits.
+
+    ``value`` is what the engine re-raises or moves all-in with at 30bb.  A hand of it never turns up in a
+    calling row as well: with 26 to 45bb the engine moves all-in with hands such as AQ and calls with them a
+    little deeper, and "the calls at 40bb that are not calls at 30bb" would list those all-in hands as hands
+    to play for a set with."""
     out = {}
     for group, r_nb in raiser_groups(players):
         heroes = [("bb", 0)] if group == "sb" else [("ip", 2), ("sb", 1), ("bb", 0)]
@@ -150,8 +159,8 @@ def vs_raise(players: int) -> dict:
             core = low.get("call") if where != "bb" else deep.get("call")       # the big blind calls by the price
             row = {"value": text(value), "bluff": text(deep.get("bluff")), "call": text(core)}
             if where == "ip":
-                row["setmine"] = text(minus(mid.get("call"), low.get("call")))
-                row["button"] = text(minus(deep.get("call"), mid.get("call")))
+                row["setmine"] = text(minus(minus(mid.get("call"), low.get("call")), value))
+                row["button"] = text(minus(minus(deep.get("call"), mid.get("call")), value))
             out[f"{group}|{where}"] = row
     return out
 
@@ -159,9 +168,10 @@ def vs_raise(players: int) -> dict:
 def bb_call_short(players: int) -> dict:
     """Big blind, 9 to 24bb, a raise to 2bb: the hands that get the price to call.
 
-    One entry per row of the all-in table over a raise.  It is the engine's own test (equity
-    against the opening range, times how much of it the hand realises out of position, against
-    the pot odds), without the hands that move all-in at 20bb."""
+    One entry per row of the all-in table over a raise.  It is the engine's own test
+    (``preflop.vs_open``: equity against the opening range, against the pot odds plus the points
+    for the kind of hand, ``preflop.bb_call_points``), on chips, without the hands that move
+    all-in at 20bb."""
     out = {}
     for key, _label, r_nb in B.raisers(players):
         open_rng = villain_open_range(r_nb, "unknown", 20.0)
@@ -169,8 +179,9 @@ def bb_call_short(players: int) -> dict:
         pot = players * B.PLAYER_ANTE + 0.5 + 1.0 + raise_to
         need = to_call / (pot + to_call)
         shove = parse_range(B.reshove("before", key, 20.0, players))
-        rng = [1.0 if eq_vs_range(h, open_rng)[0] * _REALIZE[_hand_kind(h)] >= need + 0.01 and shove[h] < 0.5 else 0.0
-               for h in range(169)]
+        acts_last = r_nb == 1 and players > 2           # a small blind's raise: the big blind acts last after the flop
+        rng = [1.0 if eq_vs_range(h, open_rng)[0] - need - bb_call_points(_hand_kind(h), 0.0, 0, acts_last) >= 0
+               and shove[h] < 0.5 else 0.0 for h in range(169)]
         out[key] = text(rng)
     return out
 
@@ -195,7 +206,12 @@ def cold(players: int) -> dict:
 # --------------------------------------------------------------------------
 
 def reraised(players: int) -> dict:
-    """Hero opened and was re-raised (not all-in): {hero's group: {allin, fourbet, call}}."""
+    """Hero opened and was re-raised (not all-in): {hero's group: {allin, fourbet, call}}.
+
+    The engine is asked with the big blind as the player who re-raised.  So hero acts last after
+    the flop ("in position") in every row but the small blind's, where he acts first; against a
+    re-raise from a seat behind him other than the blinds, hero is out of position and the engine
+    calls less than the "call" lists (deeper than 45bb) say."""
     out = {}
     for group, h_nb in raiser_groups(players):
         open_to, three = (3.0, 9.0) if group == "sb" else (2.2, 8.4)

@@ -116,7 +116,10 @@
      view.strip.payouts              prizes from first place down (a list), shown the way they are typed
      view.strip.game.over            Spin: "won" or "lost" once the game is over: the bar offers a new game
      view.strip.level.due            true: the "+" of the blinds turns yellow and blinks
-     view.hand.result.text           one line for the slab once the hand is settled
+     view.hand.result.text           who won ("Seat 4 (BB) wins 81,000"): the slab's line for a settled hand until
+                                     the coach's own sentence (advice.spot, which begins with it) is there
+     advice.provisional              "" or what the answer takes for granted ("if BB and CO check"): Follow stays
+                                     armed and says it in its second line
      view.hand.positions, .button    {seat: name} and the button seat of the hand on screen: a finished hand
                                      keeps them on the pods until the next deal
      view.hand.want_suits            {hand: "AKs", options: [["Ah","Kh"], ...]}: the exact holdings to pick from
@@ -584,19 +587,31 @@
   }
 
   // What the slab says when there is nothing to advise: what the table is waiting for.
+  // Three of these lines are also the coach's (advice.py what_is_awaited), word for word: who won, hero
+  // after a fold, hero without chips. The coach's sentence is drawn once its answer is there (it adds
+  // where the button goes next); until then the page's own says the same, so the line does not change its mind.
+  const FOLDED_LINE = "You have folded: nothing left to decide. Press N for the next hand.";
+  function noChipsLine(view) {
+    return view.mode === "tournament"
+      ? "You have no chips left: type a new stack on your seat to re-enter, or start a new tournament."
+      : "You have no chips left: type a new stack on your seat to sit down again.";
+  }
+  function heroFolded(view) {
+    const hero = heroSeat(view);
+    return !!view.hand && !!hero && !!hero.in_hand && !!hero.folded;
+  }
   function waitingFor(view) {
     const hand = view.hand;
     const result = hand && hand.result && hand.result.text ? hand.result.text + ". " : "";
     if (spinOver(view) && (!hand || hand.needs === "next")) {
-      return {verb: view.strip.game.over === "won" ? "Game won" : "Game over", text: result + "Press N for a new game."};
+      // (the coach's own line for a game that is over leaves out who won the last hand: the page's stays)
+      return {verb: view.strip.game.over === "won" ? "Game won" : "Game over", own: true, text: result + "Press N for a new game."};
     }
     // No chips on hero's seat: what he can do stays on the slab (a hand dealt now would be dealt without him).
-    if (heroOutOfChips(view)) {
-      const again = view.mode === "tournament" ? "tournament" : "game";
-      return {verb: "You are out", own: true,
-              text: `${result}Type a new stack on your seat to re-enter (S), or start a new ${again} from the settings.`};
-    }
+    if (heroOutOfChips(view)) return {verb: "You are out", text: result + noChipsLine(view)};
     if (!hand) return {verb: "New hand", text: "Press N, then type your two cards: A K S."};
+    // Hero has folded and the others play on: nothing of his is wanted, whatever the table waits for.
+    if (heroFolded(view) && hand.needs !== "next" && hand.needs !== "result") return {verb: "Folded", text: FOLDED_LINE};
     if (hand.needs === "cards") return {verb: "Your cards", text: "Type your two cards: A K S, or A H K D."};
     if (hand.needs === "board") {
       const count = (hand.board || []).length;
@@ -634,9 +649,9 @@
       const then = waiting.verb === "Wait" ? "" : " " + waiting.text;
       return {tone: "wait", eyebrow: "Coach", verb: "Sitting out", spot: "You are sitting out: press O to sit back in." + then, live: false};
     }
-    // Once the hand is settled the slab says who won what; otherwise the coach's own line on what it waits for.
-    const settled = !!(view.hand && view.hand.needs === "next");
-    const spot = settled || waiting.own ? waiting.text : (fresh && advice.spot) || waiting.text;
+    // The coach's own line on what the table waits for, once its answer for this table is there; the
+    // page's line until then (for a settled hand, after hero's fold and without chips: the same words).
+    const spot = waiting.own ? waiting.text : (fresh && advice.spot) || waiting.text;
     return {tone: "wait", eyebrow: "Coach", verb: waiting.verb, spot: spot, live: false};
   }
 
@@ -1135,9 +1150,11 @@
   function barButton(opts) {
     const cls = "btn" + (opts.primary ? " primary" : "") + (opts.wide ? " wide" : "");
     const key = opts.key ? keycap(opts.key) : "";
-    const sub = opts.sub ? `<span class="sub">${opts.sub}</span>` : "";
+    // (`subClass`: "assumed" lets the second line take two lines; `title`: the tooltip, where the button says less than there is)
+    const sub = opts.sub ? `<span class="sub${opts.subClass ? " " + opts.subClass : ""}">${opts.sub}</span>` : "";
     const place = opts.slot ? ` style="grid-column:${opts.slot}"` : "";
-    return `<button class="${cls}"${place}${opts.fk ? ` data-fk="${opts.fk}"` : ""}${opts.off ? " disabled" : ""}${emit(opts.send)}>` +
+    const title = opts.title ? ` title="${esc(opts.title)}"` : "";
+    return `<button class="${cls}"${place}${opts.fk ? ` data-fk="${opts.fk}"` : ""}${title}${opts.off ? " disabled" : ""}${emit(opts.send)}>` +
            `<span class="label">${esc(opts.label)}${key}</span>${sub}</button>`;
   }
   // The first row: a word in small capitals, who or what, and a note.
@@ -1339,8 +1356,14 @@
       first = nextHandButton("1");
     } else {
       const follow = isHero && known && isCurrent(view, advice) ? advice.headline.follow : null;
+      // A provisional answer ("if BB and CO check": players in front of hero have not acted) can be
+      // followed, and the button says what it takes for granted: following records their checks too.
+      // Recording one of them first brings a fresh answer.
+      const assumed = follow && advice.provisional ? String(advice.provisional) : "";
+      const does = followText(view, follow);
       first = barButton({label: "Follow", key: "Space", primary: true, slot: "1", fk: "follow", off: !follow,
-                         sub: esc(followText(view, follow)),
+                         sub: esc(assumed || does), subClass: assumed ? "assumed" : "",
+                         title: assumed ? `${does}, ${assumed}` : "",
                          send: follow ? Object.assign({op: "act", seat: seat, via: "follow", ui: AFTER_ACT}, follow) : {}});
     }
 
@@ -1805,8 +1828,10 @@
 
   function whyBody(view, advice) {
     const live = isCurrent(view, advice);
-    // (the spot in full: the narrow slab shows one line of it)
-    const spot = live && advice.spot ? `<p class="spot-full" data-fk="why-spot">${prose(advice.spot)}</p>` : "";
+    // (the spot in full: the narrow slab shows one line of it. Also the coach's line on what the table
+    //  waits for: who won and where the button goes, what to do without chips)
+    const waits = !!advice && advice.rev === view.rev && advice.status === "none";
+    const spot = (live || waits) && advice.spot ? `<p class="spot-full" data-fk="why-spot">${prose(advice.spot)}</p>` : "";
     const body = whyHtml(advice, live) + (live ? chartHtml(advice.chart) : "") + contextHtml(advice);
     return body ? spot + body : `<p class="empty-note">Nothing to explain yet.</p>`;
   }

@@ -188,7 +188,8 @@ button.value:hover{background:var(--line)}
 /* The pill shares the verb's row. It may take two lines; with a pill the size keeps its first unit only
    (the Follow button says the other), so the row never needs a second one. */
 .slab .pill{align-self:flex-end;flex:0 1 auto;min-width:0;height:auto;min-height:22px;max-height:36px;padding:4px 10px;border-radius:11px;
-  white-space:normal;line-height:14px;overflow:hidden}
+  white-space:normal;line-height:14px;overflow:hidden;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}    /* a third line ("..., if BB, HJ and CO check") ends in dots; the tooltip has it all */
 .slab.has-pill .size .also{display:none}
 .slab.attack .pill{background:var(--ink);color:var(--white)}
 .spot{font-size:13px;line-height:19px;font-weight:500;color:var(--soft);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -391,6 +392,9 @@ button.pod:hover{border-color:var(--grey)}
 .btn .label{display:inline-flex;align-items:center;gap:6px}
 .btn .sub{font:700 13px/1 var(--display);letter-spacing:.01em;text-transform:none;color:var(--soft);font-variant-numeric:tabular-nums lining-nums;
   max-width:100%;overflow:hidden;text-overflow:ellipsis}
+/* What a provisional answer takes for granted ("if BB and CO check"), under Follow: up to two lines, inside the button's 48px. */
+.btn .sub.assumed{white-space:normal;text-align:center;line-height:13px;max-height:26px;margin-top:-2px;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
 .btn:hover{border-color:var(--white)}
 .btn:active{background:var(--line)}
 .btn.primary{background:var(--yellow);border-color:var(--yellow);color:var(--ink)}
@@ -607,7 +611,8 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .verb.xlong{font-size:calc(var(--verb)*.48)}
   .verb.xlong.two{font-size:calc(var(--verb)*.75);white-space:normal}
   .verb.two > span{display:block}
-  .slab .pill{align-self:flex-start;margin-top:2px;max-height:none;white-space:nowrap;height:22px;padding:0 10px;line-height:1;border-radius:var(--r-pill)}
+  /* (one line is the 22px pill it always was; a pill longer than the slab is wide takes a second line, never leaves the slab) */
+  .slab .pill{align-self:flex-start;margin-top:2px;max-width:100%;max-height:none;-webkit-line-clamp:3}
   .slab.has-pill .size .also{display:inline}
   .spot{white-space:normal;overflow:visible}
   .pod{padding:6px 9px}

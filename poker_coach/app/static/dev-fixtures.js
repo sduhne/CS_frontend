@@ -435,9 +435,10 @@
   }));
   add("hand-done", "The hand is settled: stacks moved, a player is out", () => ({
     view: tournament({size: 7, button: 5, players: showdownPlayers(true), strip: {remaining: 95},
-                      hand: showdownHand({phase: "done", needs: "next", result: {text: "You win 13,100: the main pot and the side pot."}}),
+                      hand: showdownHand({phase: "done", needs: "next", result: {text: "You (LJ) win 13,100"}}),
                       toast: {text: "Dee is out. 95 players left.", undo: true}}),
-    advice: none("You win 13,100: the main pot and the side pot."),
+    // (the coach's line begins with the model's result text and adds where the button goes)
+    advice: none("You (LJ) win 13,100. The button is now on seat 6 and you are in the big blind: press N for the next hand."),
   }));
 
   // Every pod state on one table.
@@ -712,6 +713,37 @@
     }),
     advice: none("You have folded: nothing left to decide. Press N for the next hand."),
   }));
+  // Hero on the button after the flop; the big blind and the cutoff are in front of him and have not acted.
+  function provisionalView(more) {
+    return tournament(Object.assign({
+      size: 6, button: 1,
+      players: [["You", 13200, {is_target: true}], ["", 5640, FOLD], ["", 16200], ["", 24180, FOLD], ["", 18600, FOLD], ["", 10620]],
+      hand: hand({
+        phase: "flop", hero_cards: ["Qh", "Jh"], hero_class: "QJs", board: ["Th", "9h", "2c"],
+        pot: 4410, pot_bb: 7.4, to_call: 0, to_call_bb: 0, before_target: [3, 6],
+        legal: {fold: true, check: true, call: null, bet: {min: 600, max: 13200, default: 2200}, raise: null, allin: 13200},
+        presets: [{label: "Min", to: 600}, {label: "33%", to: 1470}, {label: "50%", to: 2205}, {label: "Pot", to: 4410}, {label: "All-in", to: 13200}],
+        line: line([cards("QhJh"), autoFold(4, "LJ", ""), autoFold(5, "HJ", ""), act(6, "CO", "", "raise", "raise 2.2bb", {to: 1320}),
+                    act(1, "BTN", "You", "call", "call"), autoFold(2, "SB", ""), act(3, "BB", "", "call", "call"), board("Th 9h 2c")]),
+        pots: [{amount: 4410, eligible: [1, 3, 6]}],
+      }),
+    }, more || {}));
+  }
+  function provisionalAdvice(qualifier, provisional) {
+    return Object.assign({}, FLOP_ADVICE, {
+      headline: {verb: "BET", size_text: "2.5BB \u00b7 1,475", qualifier: qualifier, tone: "attack", sure: "standard", follow: {kind: "bet", to: 1475}},
+      spot: "QhJh on Th9h2c on the button, " + provisional, provisional: provisional,
+    });
+  }
+  add("provisional", "Players in front of hero have not acted: the answer holds if they check, Follow says so", () => ({
+    view: provisionalView(), advice: provisionalAdvice("semi-bluff, if BB and CO check", "if BB and CO check"),
+  }));
+  add("provisional-long", "The same with three players in front and a long name: the pill and the button keep their place", () => {
+    const view = provisionalView();
+    view.table.seats[4] = Object.assign({}, view.table.seats[4], {folded: false, name: "Bartholomew the Third"});
+    view.hand.before_target = [3, 5, 6];
+    return {view: view, advice: provisionalAdvice("close: lower variance, if BB, HJ and CO check", "if BB, Bartholomew the Third and CO check")};
+  });
   add("want-suits", "The flop is out and hero's hand is a class: only its exact holdings are offered", () => ({
     view: openView({hand: {phase: "flop", needs: "cards", hero_cards: [], hero_class: "AKs", target: null, target_is_hero: false,
                            want_suits: {hand: "AKs", options: [["As", "Ks"], ["Ah", "Kh"], ["Ad", "Kd"], ["Ac", "Kc"]]},
@@ -732,14 +764,16 @@
     example.view.hand.positions = {1: "UTG", 2: "LJ", 3: "HJ", 5: "BTN", 6: "SB", 7: "BB"};
     example.view.hand.button = 5;
     example.view.table.button = 6;
+    example.view.hand.result = {text: "You (UTG) win 13,100"};
+    example.advice = none("You (UTG) win 13,100. The button is now on seat 6 and you are in the big blind: press N for the next hand.");
     return example;
   });
   add("hero-out", "Hero has no chips: re-enter or start anew, not Next hand", () => {
     const view = tournament({size: 7, button: 5, players: showdownPlayers(true), strip: {remaining: 95},
-                             hand: showdownHand({phase: "done", needs: "next", result: {text: "Fox wins 13,100"}})});
+                             hand: showdownHand({phase: "done", needs: "next", result: {text: "Seat 6 (SB) wins 13,100"}})});
     Object.assign(view.table.seats[0], {stack: 0, stack_bb: 0, status: "busted", delta: -13850});
     view.hero_out = true;
-    return {view: view, advice: none("Fox wins 13,100")};
+    return {view: view, advice: none("Seat 6 (SB) wins 13,100. You have no chips left: type a new stack on your seat to re-enter, or start a new tournament.")};
   });
   add("sitting-out", "Hero is sitting out: the slab says so and names the key", () => ({
     view: tournament({size: 8, button: 1, players: eight({1: {status: "away"}})}),

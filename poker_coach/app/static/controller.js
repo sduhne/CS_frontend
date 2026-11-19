@@ -966,8 +966,8 @@
         return tableKey(key);
       }
     }
-    // The amount of a bet takes digits and the letters amounts are written with; another letter is not typed into it.
-    if ((fk === "amount" || fk === "event-amount") && key.name.length === 1 && !AMOUNT_KEYS.test(key.name)) return true;
+    // (Every key is typed into an amount, also a letter no amount is written with: the whole text is sent,
+    // and a text that is no amount is refused by name, "Cannot read 'banana' as an amount", under the field.)
     // Up and Down in the amount of a bet walk through the sizes offered as buttons.
     if (fk === "amount" && (key.name === "ArrowUp" || key.name === "ArrowDown")) {
       stepPreset(field, key.name === "ArrowUp" ? 1 : -1);

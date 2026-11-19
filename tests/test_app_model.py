@@ -3361,6 +3361,13 @@ class T8TheKeysSheet(unittest.TestCase):
         self.assertIn("In a field: the old value comes back", self.text_of("table", "cancel"))
         self.assertIn("an empty seat too", self.text_of("seat", "button"))
 
+    def test_t8_the_words_of_the_page_are_the_words_of_the_sheet(self):
+        """The page says Button forward and shows the hand as steps (the second page agent's two word items)."""
+        self.assertEqual((self.text_of("table", "line_back"), self.text_of("table", "line_on")),
+                         ("Previous step of the hand", "Next step of the hand"))
+        self.assertEqual((self.text_of("table", "button_back"), self.text_of("table", "button_on")),
+                         ("Dealer button one seat back", "Dealer button one seat forward"))
+
     def test_t8_the_keys_named_in_the_sentences_are_the_keys_of_the_map(self):
         keys = {row[1]: row[0] for row in D.KEYS_TABLE}
         self.assertEqual((keys["edit"][0], keys["accept"][0], keys["split"][0], keys["cancel"][0]),

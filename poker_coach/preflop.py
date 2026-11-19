@@ -70,6 +70,10 @@ class Spot:
     stage: dict = field(default_factory=dict)
     desperate: bool = False
     notes: list[str] = field(default_factory=list)
+    # Who was sitting out when the hand was dealt.  ``away`` may also hold players who have folded
+    # since hero raised (the table app marks them so); hero's own opening range is rebuilt from the
+    # players who were there when he raised.  Left empty it is the same as ``away``.
+    sitting_out: list[bool] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         n = self.setup.n
@@ -79,6 +83,8 @@ class Spot:
             self.types = ["unknown"] * n
         if not self.away:
             self.away = [False] * n
+        if not self.sitting_out:
+            self.sitting_out = list(self.away)
         self.types = [norm_type(t) for t in self.types]
 
     # helpers -------------------------------------------------------------
@@ -180,8 +186,42 @@ def _chart_shift(spot: Spot, behind: list[int]) -> tuple[int, list[str]]:
     return shift, notes
 
 
-def _reshove_plan(spot: Spot, open_to: float, hero_range: list[float]) -> list[str]:
-    """What to do if a player behind moves all-in over hero's open."""
+def _open_row(nb_eff: int, own_nb: int, eff: float, shift: int) -> list[float]:
+    """The opening row for the active players behind, never tighter than this seat's own row."""
+    # the small blind's row is tighter than the button's because it plays out of position:
+    # it is for the small blind only, not for a later seat with one active player behind
+    row = rfi_range(nb_eff if nb_eff != 1 or own_nb == 1 else 2, eff, shift)
+    if nb_eff < own_nb:
+        own = rfi_range(own_nb, eff, shift)
+        if range_pct(own) > range_pct(row):
+            row = own
+    return row
+
+
+def hero_open_range(spot: Spot) -> list[float]:
+    """Hero's opening range when he raises first in, exactly as ``first_in`` builds it.
+
+    The plan under a raise ("if BB shoves: FOLD") and the answer to that all-in when it has come
+    (``vs_shove(hero_open=...)``) both price the all-in against this one range, so the two answers
+    of a hand cannot disagree.  The players behind are those who were there when hero raised
+    (``spot.sitting_out``, not ``spot.away``: a player who folded since was still to act then)."""
+    setup, hero = spot.setup, spot.hero
+    live = setup.live
+    if setup.n == 2:
+        return list(_ladder(-1))                # heads-up the small blind is the button: the widest row
+    behind = [j for j in range(hero + 1, setup.n) if not spot.sitting_out[j] and live[j] > 0]
+    if not behind:
+        return rfi_range(max(1, spot.nb(hero)), live[hero] / spot.bb)
+    eff = min(live[hero], max(live[j] for j in behind)) / spot.bb
+    return _open_row(len(behind), spot.nb(hero), eff, _chart_shift(spot, behind)[0])
+
+
+def reshove_plan(spot: Spot, open_to: float, hero_range: list[float]) -> list[dict]:
+    """What to do if a player behind moves all-in over hero's open, as numbers.
+
+    One entry for the big blind and one for the biggest stack of 30bb or less behind hero:
+    ``idx``, ``pos``, ``stack_bb``, ``need``, ``eq``, ``edge`` (unrounded: the answer to the
+    all-in itself is made from the same three), ``pct`` (his range) and ``call``."""
     out = []
     setup, hero = spot.setup, spot.hero
     behind = [j for j in range(hero + 1, setup.n) if not spot.away[j] and setup.live[j] > 0]
@@ -198,10 +238,19 @@ def _reshove_plan(spot: Spot, open_to: float, hero_range: list[float]) -> list[s
             cands.append(j)
     for j in cands[:2]:
         res = _call_vs_reshove(spot, j, open_to, hero_range)
-        verdict = "CALL" if res["edge"] >= 0 else "FOLD"
-        out.append(f"if {spot.pos(j)} ({spot.bbs(setup.live[j]):.0f}bb) shoves: {verdict} "
-                   f"(need {_pct(res['need'])}, have {_pct(res['eq'])} vs ~{res['pct']:.0f}% range)")
+        out.append({"idx": j, "pos": spot.pos(j), "stack_bb": spot.bbs(setup.live[j]), "need": res["need"],
+                    "eq": res["eq"], "edge": res["edge"], "pct": res["pct"], "call": res["edge"] >= 0})
     return out
+
+
+def _plan_line(entry: dict) -> str:
+    return (f"if {entry['pos']} ({entry['stack_bb']:.0f}bb) shoves: {'CALL' if entry['call'] else 'FOLD'} "
+            f"(need {_pct(entry['need'])}, have {_pct(entry['eq'])} vs ~{entry['pct']:.0f}% range)")
+
+
+def _reshove_plan(spot: Spot, open_to: float, hero_range: list[float]) -> list[str]:
+    """What to do if a player behind moves all-in over hero's open, as sentences."""
+    return [_plan_line(entry) for entry in reshove_plan(spot, open_to, hero_range)]
 
 
 def first_in(spot: Spot) -> Advice:
@@ -253,11 +302,18 @@ def first_in(spot: Spot) -> Advice:
     mix_zone = 20.0 if (is_sb or heads_up) else 16.0
     if sol is not None and eff <= pf_zone:
         ev = sol.ev_bb(hand)
+        # under one big blind "0bb effective is push-or-fold territory" says nothing true: say who is that short
+        if eff >= 1.0:
+            depth = f"{eff:.0f}bb effective is push-or-fold territory and"
+        elif live[hero] < spot.bb:
+            depth = "with less than one big blind you are all-in or nearly, and"
+        else:
+            depth = "the players behind you hold less than one big blind, so they are all-in or nearly, and"
         if ev > 0.0:
             adv.action = "ALL-IN"
-            adv.why.append(f"{eff:.0f}bb effective is push-or-fold territory and this shove makes money")
+            adv.why.append(f"{depth} this shove makes money")
         else:
-            adv.why.append(f"{eff:.0f}bb effective is push-or-fold territory and this hand loses as a shove")
+            adv.why.append(f"{depth} this hand loses as a shove")
         adv.confidence = _conf(ev, 0.35, 0.08)
         return _finish_first_in(spot, adv, behind)
 
@@ -283,16 +339,9 @@ def first_in(spot: Spot) -> Advice:
     own_nb = spot.nb(hero)
 
     def open_row(sh: int) -> list[float]:
-        """The opening row for the active players behind, never tighter than this seat's own row."""
-        # the small blind's row is tighter than the button's because it plays out of position:
-        # it is for the small blind only, not for a later seat with one active player behind
-        row = rfi_range(nb_eff if nb_eff != 1 or own_nb == 1 else 2, eff, sh)
-        if nb_eff < own_nb:
-            own = rfi_range(own_nb, eff, sh)
-            if range_pct(own) > range_pct(row):
-                row = own
-        return row
+        return _open_row(nb_eff, own_nb, eff, sh)
 
+    behind_txt = f"{nb_eff} player{'' if nb_eff == 1 else 's'} behind"
     rfi = open_row(shift) if not heads_up else list(_ladder(-1))
     wider = open_row(shift - 1) if not heads_up else rfi
     size = open_size_bb(eff, spot.nb(hero), spot.has_ante)
@@ -308,9 +357,11 @@ def first_in(spot: Spot) -> Advice:
     elif rfi[hand] >= 0.5:
         adv.action = f"RAISE to {size:.1f}bb"
         adv.confidence = "clear" if open_row(shift + 2)[hand] >= 0.5 else "standard"
-        adv.why.append(f"inside the TAG opening range for {spot.pos(hero)} with {nb_eff} players behind")
+        adv.why.append(f"inside the TAG opening range for {spot.pos(hero)} with {behind_txt}")
         if eff <= 40:
-            adv.numbers += _reshove_plan(spot, size * spot.bb, rfi)
+            plan = reshove_plan(spot, size * spot.bb, rfi)
+            adv.numbers += [_plan_line(entry) for entry in plan]
+            adv.data.update(plan=plan)          # the same lines as numbers, unrounded
     elif sol is not None and sol.ev_bb(hand) > 0.25 and _SHOVE_SHAPED[hand] and eff <= 20:
         adv.action = "ALL-IN"
         adv.confidence = "close"
@@ -319,7 +370,7 @@ def first_in(spot: Spot) -> Advice:
         if wider[hand] >= 0.5:
             adv.confidence = "close"
             adv.alt.append("a raise is fine if the players behind are tight or sitting out")
-        adv.why.append(f"outside the TAG opening range for {spot.pos(hero)} with {nb_eff} players behind")
+        adv.why.append(f"outside the TAG opening range for {spot.pos(hero)} with {behind_txt}")
     reshovers = [j for j in behind if 8 <= spot.bbs(live[j]) <= 22]
     if adv.action.startswith("RAISE") and len(reshovers) >= 2 and eff > 25:
         adv.warnings.append(f"{len(reshovers)} re-shove stacks (8-22bb) behind you: decide now which shoves you call")
@@ -566,8 +617,8 @@ def vs_shove(spot: Spot, shover: int, *, raiser: int | None = None, raise_to: fl
         sit = _situation(spot, f"you re-raised to {spot.bbs(hero_open):.1f}bb, {spot.who(shover)} moved all-in "
                                f"for {shove_bb:.1f}bb")
     elif hero_open:
-        hero_range = rfi_range(max(1, spot.nb(hero)), min(live[hero], live[shover]) / spot.bb)
-        sol = _shover_solution(spot, shover, hero, hero_open, hero_range)
+        # the range the plan line under that raise was priced with (``first_in``): one range for both
+        sol = _shover_solution(spot, shover, hero, hero_open, hero_open_range(spot))
         sit = _situation(spot, f"you opened, {spot.who(shover)} moved all-in for {shove_bb:.1f}bb")
     elif raiser is not None:
         orange = villain_open_range(spot.nb(raiser), spot.types[raiser])
@@ -783,9 +834,6 @@ def multi_allin(spot: Spot, allins: list[int], raiser: int | None = None, raise_
 # Facing an open raise
 # --------------------------------------------------------------------------
 
-# share of its equity a hand realises out of position (tools/build_tag.py reads it for the sheet)
-_REALIZE = {"pair": 0.92, "suited_conn": 0.95, "suited": 0.86, "broadway_off": 0.80, "off": 0.64}
-
 # Big blind closing the action against one raise: how far above the pot odds a hand's equity must
 # be to call, by how badly that kind of hand plays after the flop (pairs least, then suited hands,
 # then two offsuit cards ten or higher, then the other offsuit hands).  Half of the ICM risk
@@ -938,6 +986,9 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
                 adv.action = f"3-BET to {size:.1f}bb"
                 adv.why.append("3-bet for value: you are ahead of the range that continues")
                 adv.numbers.append(plan_line)
+                adv.data.update(plan=[{"idx": opener, "pos": spot.pos(opener), "stack_bb": spot.bbs(live[opener]),
+                                       "need": plan["need"], "eq": plan["eq"], "edge": plan["edge"],
+                                       "pct": plan["pct"], "call": calls}])
                 if calls:
                     adv.why.append("do not fold to a 4-bet at this depth")
                 elif _PREMIUM[hand]:
@@ -1024,6 +1075,22 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
 # Hero opened and got re-raised (not all-in), or a raise and a re-raise in front
 # --------------------------------------------------------------------------
 
+def _acts_after(spot: Spot, a: int, b: int) -> bool:
+    """After the flop, does player ``a`` act after player ``b``?  (Then ``a`` is in position.)
+
+    The small blind acts first, then the big blind, then the others in their order before the
+    flop, the button last.  Heads-up the button is the small blind and acts last."""
+    n = spot.setup.n
+
+    def turn(i: int) -> int:
+        nb = spot.nb(i)
+        if n == 2:
+            return nb                    # the big blind (0 behind) first, the button last
+        return 1 - nb if nb <= 1 else 1 + n - nb
+
+    return turn(a) > turn(b)
+
+
 def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
             reraised: int | None = None) -> Advice:
     """Hero raised and ``villain`` re-raised, not all-in.  ``reraised``: hero's raise was itself
@@ -1052,8 +1119,10 @@ def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
     pot = sum(setup.antes) + sum(inv)
     to_call = three_to - hero_open
     need = to_call / (pot + to_call)
-    villain_in_blinds = spot.nb(villain) <= 1
-    ip = villain_in_blinds
+    # In position: the re-raise came from the blinds and hero acts after that player once the flop
+    # is out.  The small blind who raised and is re-raised by the big blind acts first there, so he
+    # is out of position (except heads-up, where the small blind is the button).
+    ip = spot.nb(villain) <= 1 and _acts_after(spot, hero, villain)
     sit = _situation(spot, f"you opened {hero_open / bb:.1f}bb, {spot.who(villain)} 3-bet to {three_to / bb:.1f}bb")
     adv = Advice("FOLD", "standard", sit)
     adv.numbers.append(f"their 3-bet range ~{range_pct(rng):.1f}% [{format_range(rng, 0.5)}]; "

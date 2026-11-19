@@ -33,6 +33,17 @@ _FULL_SAFETY_CALL = 0.50
 _FULL_ICM_CALL = 0.30
 
 
+# With nothing to call: a value bet of this share of the chips behind (or more) is made as the
+# all-in.  What would be left could not be folded, and a bet of 87% of the stack that is not
+# called "all-in" reads as if it could.
+_VALUE_BET_IS_ALL_IN = 2.0 / 3.0
+# A strong made hand (top pair with a strong kicker or better) that also holds a draw of 8 outs
+# bets for value from this equity, heads-up and against several players; the plain value bet
+# asks for 62% and 72%.
+_DRAW_VALUE = 0.50
+_DRAW_VALUE_MULTIWAY = 0.55
+
+
 def _price_scale(share: float, full: float) -> float:
     """0 for a call of a tenth of the pot or less, rising to 1 at ``full``."""
     return min(1.0, max(0.0, (share - _SMALL_CALL) / (full - _SMALL_CALL)))
@@ -441,9 +452,16 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
     value_ok = eq >= (0.72 if multiway else 0.62) and strength >= 4
     if street == "river":
         value_ok = eq >= (0.75 if multiway else 0.64) and strength >= 4
+    # the preflop raiser heads-up on a dry, high flop: the spot for a small continuation bet
+    cbet_spot = spot.hero_pfr and street == "flop" and not multiway and wet <= 1 \
+        and (tex["high"] >= 10 or tex.get("paired")) and vt != "station" and not icm_tight
 
     def bet(frac: float) -> float:
         return min(eff_behind, frac * pot)
+
+    def all_in(amount: float) -> bool:
+        """A value bet of this share of what is behind leaves too little to fold: it is the all-in."""
+        return eff_behind > 0 and amount >= _VALUE_BET_IS_ALL_IN * eff_behind
 
     if strength >= 7 or (value_ok and strength >= 5):
         frac = 0.33 if (wet == 0 and street == "flop") else 0.66 if wet >= 1 else 0.5
@@ -463,9 +481,39 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
             adv.alt.append("checking once to trap is fine on this dry board")
     elif value_ok and strength == 4:
         amt = bet(0.33 if street == "flop" else 0.5)
-        adv.action = f"BET {_size_txt(amt, pot, spot.bb)}"
-        adv.why.append("thin value / protection with top pair: bet small and re-evaluate if raised")
-        adv.warnings.append("fold to a raise unless this player is aggressive")
+        if all_in(amt):
+            adv.action = "BET ALL-IN"
+            adv.why.append("value bet with top pair; with so little behind the hand goes to showdown anyway: "
+                           "put it all in")
+        else:
+            adv.action = f"BET {_size_txt(amt, pot, spot.bb)}"
+            adv.why.append("thin value / protection with top pair: bet small and re-evaluate if raised")
+            adv.warnings.append("fold to a raise unless this player is aggressive")
+    elif strength >= 5:
+        # A strong made hand (top pair with a strong kicker, an overpair, two pair or better on a
+        # dangerous board) that is not far enough ahead for the plain value bet above.  It is
+        # never played as a bluff or as "nothing": it bets for value, or it checks to call.
+        ranges = "these ranges" if multiway else "this range"
+        initiative = not multiway and (spot.hero_pfr or spot.in_position) and not icm_tight
+        if any_draw and (eq >= (_DRAW_VALUE_MULTIWAY if multiway else _DRAW_VALUE) or initiative):
+            # with a draw on top it needs less: it has outs when a better hand calls
+            amt = bet(0.66 if wet >= 1 or street == "turn" else 0.5)
+            if spr <= 1.3 or all_in(amt):
+                adv.action = "BET ALL-IN"
+                adv.why.append("a strong hand with a draw to a better one, and little behind: put it all in")
+            else:
+                adv.action = f"BET {_size_txt(amt, pot, spot.bb)}"
+                adv.why.append(f"a strong hand with a draw to a better one (~{d['outs']} outs): bet for value "
+                               "and protection; you have outs when a better hand calls")
+        elif cbet_spot:
+            amt = bet(0.33)
+            adv.action = "BET ALL-IN" if all_in(amt) else f"BET {_size_txt(amt, pot, spot.bb)}"
+            adv.why.append("a good hand as the preflop raiser on a dry board: bet small for value and protection")
+        else:
+            adv.action = "CHECK"
+            adv.why.append(f"a good hand, but with {_pct(eq)} against {ranges} it is not far enough ahead to bet "
+                           "for value: check, and call one reasonable bet"
+                           + (" (you have outs as well)" if any_draw else ""))
     elif any_draw and not multiway and (spot.hero_pfr or spot.in_position) and not icm_tight:
         amt = bet(0.6)
         if spr <= 1.5 and strong_draw:
@@ -474,8 +522,19 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
             adv.action = f"BET {_size_txt(amt, pot, spot.bb)} (semi-bluff)"
         adv.why.append(f"a draw with ~{d['outs']} outs: betting wins the pot now or builds it for when you hit")
         adv.alt.append("checking to take a free card is fine in position against a station")
-    elif spot.hero_pfr and street == "flop" and not multiway and wet <= 1 \
-            and (tex["high"] >= 10 or tex.get("paired")) and vt != "station" and not icm_tight:
+    elif cbet_spot and strength == 4:
+        # top pair is a made hand: the same small bet, but for value, and without the bluff's label
+        amt = bet(0.33)
+        if all_in(amt):
+            adv.action = "BET ALL-IN"
+            adv.why.append("value bet with top pair; with so little behind the hand goes to showdown anyway: "
+                           "put it all in")
+        else:
+            adv.action = f"BET {_size_txt(amt, pot, spot.bb)}"
+            adv.why.append("top pair as the preflop raiser on a dry board: bet small for value and protection, "
+                           "and re-evaluate if raised")
+            adv.warnings.append("fold to a raise unless this player is aggressive")
+    elif cbet_spot:
         amt = bet(0.33)
         adv.action = f"BET {_size_txt(amt, pot, spot.bb)} (c-bet)"
         adv.confidence = "standard"

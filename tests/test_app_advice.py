@@ -15,6 +15,7 @@ typed), so the tests clear the starting stack too: that is ICM "estimated".
 
 import json
 import random
+import re
 import time
 import unittest
 
@@ -208,14 +209,15 @@ class TournamentFullPlan(unittest.TestCase):
         self.assertEqual(a["guard"], "agrees")
 
     def test_T5_bubble_survival_fold_and_max_ev(self):
-        # the strict guard of "Cash first" folds what the table folds ...
-        a = A.advise(tournament(STACKS_A, BTN, "A8o", left=152, style="cash"))
-        self.assertEqual((verb(a), a["guard"]), ("FOLD", "survival"))
-        self.assertIn("twice your stack", a["reason"])
-        # ... the default style a thin edge only (under +0.20bb, L1): A7o is worth +0.09bb here
+        # two places from the money the chart folds; the default style follows it for a thin edge (under
+        # +0.20bb, L1): A7o is worth +0.09bb here
         a = A.advise(tournament(STACKS_A, BTN, "A7o", left=152))
         self.assertEqual((verb(a), a["guard"]), ("FOLD", "survival"))
-        self.assertIn("twice your stack", a["reason"])
+        self.assertIn("counts double", a["reason"])
+        # A8o is worth exactly +0.20bb, which is the line: a clear edge, played
+        a = A.advise(tournament(STACKS_A, BTN, "A8o", left=152))
+        self.assertEqual((verb(a), a["guard"]), ("ALL-IN", "edge"))
+        self.assertIn("CLEAR EDGE (engine +0.20bb)", a["source"])
         a = A.advise(tournament(STACKS_A, BTN, "A8o", left=152, style="maxev"))
         self.assertEqual((verb(a), a["guard"]), ("ALL-IN", "off"))
         self.assertEqual(a["tiles"][0]["value"], "+0.20bb")
@@ -225,7 +227,7 @@ class TournamentFullPlan(unittest.TestCase):
         a = A.advise(tournament(STACKS_A, BTN, "A5o", left=260, style="cash"))
         self.assertEqual((verb(a), a["guard"]), ("FOLD", "survival"))
         self.assertIn("up to 15bb", a["reason"])
-        self.assertIn("twice your stack", a["reason"])
+        self.assertIn("counts double", a["reason"])
         self.assertIn("ALL-IN +0.44bb", a["also"])
         # ... the default style only when the engine's edge is thin, and +0.55bb is not (PRE-7)
         a = A.advise(tournament(STACKS_A, BTN, "A5o", left=260))
@@ -266,7 +268,7 @@ class TournamentFullPlan(unittest.TestCase):
         bubble = A.advise(tournament(stacks, BB, "99", acts=shove, left=152))
         self.assertEqual((verb(bubble), bubble["guard"]), ("CALL", "edge"))
         self.assertIn("CLEAR EDGE (60% against 53%): played although the all-in table folds", bubble["source"])
-        self.assertEqual(bubble["tiles"][-1], {"label": "The table says", "value": "FOLD", "note": "TT+, AQs+, AKo",
+        self.assertEqual(bubble["tiles"][-1], {"label": "The chart says", "value": "FOLD", "note": "TT+, AQs+, AKo",
                                                "sign": 0})
         read = A.advise(tournament(stacks, BB, "99", acts=shove, left=152, types={CO: "maniac"}))
         self.assertEqual((verb(read), read["guard"]), ("CALL", "off"))
@@ -331,7 +333,7 @@ class TournamentAllInPlan(unittest.TestCase):
         self.assertEqual(verb(a), "ALL-IN")
         self.assertIn("66+, ATs+, AJo+", a["reason"])
         self.assertIn("all-in or fold table", a["source"])
-        self.assertIn("The full engine", a["also"])        # the second line, always
+        self.assertIn("With all moves, on these stacks:", a["also"])       # the second line, always
 
     def test_B2_call_two_all_ins(self):
         a = A.advise(tournament([30, 25, 18, 12, 11, 10, 15, 20], BTN, "TT",
@@ -358,7 +360,7 @@ class TournamentAllInPlan(unittest.TestCase):
         self.assertIn("55+, A6s+, KJs+, A8o+, KQo", a["reason"])
         b = A.advise(tournament(stacks, BTN, "K9s", left=165, avg_bb=30, plan="allin"))
         self.assertEqual(verb(b), "FOLD")
-        self.assertIn("31% of the sit-out line", a["context"]["fold_clock"])
+        self.assertIn("You hold 31% of what it takes to fold into the money (the sit-out line)", a["context"]["fold_clock"])
 
 
 def six_handed(stacks_bb, hero, cards, **more):
@@ -422,7 +424,7 @@ class AfterTheFlop(unittest.TestCase):
         a = self.river_bet_from_the_big_blind("station")
         self.assertEqual(verb(a), "FOLD")
         self.assertEqual(a["headline"]["qualifier"], "playbook check")
-        self.assertIn("The engine alone: CALL", a["also"])  # the engine calls there
+        self.assertIn("By the numbers alone: CALL", a["also"])  # the engine calls there
         self.assertEqual(a["spot"], "AsTd on Tc7h4s2dKh, BB bets 12bb into 18bb")
         # the rule holds for a player without a tag as well (POST-7); only lag and maniac get the engine's call
         self.assertEqual(verb(self.river_bet_from_the_big_blind(None)), "FOLD")
@@ -449,7 +451,7 @@ class AfterTheFlop(unittest.TestCase):
         s.do("set_config", style="survive")
         a = A.advise(s)
         self.assertEqual((verb(a), a["headline"]["qualifier"], a["guard"]), ("FOLD", "close: lower variance", "close"))
-        self.assertIn("The engine alone: CALL", a["also"])
+        self.assertIn("By the numbers alone: CALL", a["also"])
 
 
 class Spin(unittest.TestCase):
@@ -598,7 +600,7 @@ class TournamentNumbers(unittest.TestCase):
         a = A.advise(tournament(STACKS_A, BTN, "A8o", left=260))
         self.assertIn("110 from the money", a["context"]["stage"])
         self.assertTrue(a["context"]["gear"].startswith("12 to 16bb"))
-        self.assertIn("orbits of blinds", a["context"]["fold_clock"])
+        self.assertIn("The blinds take 35 minutes to eat your stack.", a["context"]["fold_clock"])
         self.assertEqual(A.advise(all_in_or_fold([8, 8, 8, 8], 1, "A5s", movers=[0]))["context"],
                          {"stage": "", "gear": "", "fold_clock": ""})
 
@@ -659,7 +661,7 @@ class EngineTraps(unittest.TestCase):
         finally:
             A.bubble_sheet = real
         self.assertEqual(verb(a), "ALL-IN")                 # A9o from the button is an all-in up to 20bb
-        self.assertIn("twice your stack", a["reason"])
+        self.assertIn("counts double", a["reason"])
         self.assertIn("charts_loading", codes(a))
 
     def test_a_note_on_a_player_in_the_pot_is_shown(self):
@@ -810,7 +812,13 @@ class NeverRaises(unittest.TestCase):
         self.assertEqual(verb(answer), "NO ADVICE")
         self.assertEqual(answer["headline"]["tone"], "wait")
         self.assertIsNone(answer["headline"]["follow"])
-        self.assertIn("KeyError", answer["reason"])
+        # the page gets plain words; the Python error is kept for the log and nowhere in the answer
+        self.assertEqual(answer["reason"], "The coach cannot read this spot. Play it from the sheet; the next one is "
+                                           "advised as usual.")
+        self.assertNotIn("KeyError", json.dumps(answer))
+        self.assertNotIn("UTG+3", json.dumps(answer))
+        self.assertIn("KeyError: 'UTG+3'", A.last_fault)
+        self.assertIn("Traceback", A.last_fault)
         self.assertTrue(answer["spot"].startswith("A8o on the button"))     # what was known stays
         self.assertTrue(answer["context"]["gear"])
 
@@ -1040,7 +1048,7 @@ class SurvivalGuardFindings(unittest.TestCase):
         # neither a good price nor a clear edge: the table still decides (72o, 32% against 29%)
         a = short_big_blind("72o", 5, SB, 3, None)
         self.assertEqual((verb(a), a["guard"]), ("FOLD", "survival"))
-        self.assertIn("The edge is thin (32% against 29%)", a["reason"])
+        self.assertIn("A thin edge (32% against 29%)", a["reason"])
 
     def test_pre_5_no_call_gets_tighter_at_41_big_blinds(self):
         # the table itself: every row of the call tables holds at 41bb (and deeper) what it holds at 40bb
@@ -1110,7 +1118,7 @@ class SurvivalGuardFindings(unittest.TestCase):
             a = A.advise(tournament(STACKS_B, CO, "K9s", style=style))
             self.assertEqual((verb(a), a["guard"]), ("FOLD", "survival"), style)
         thin = A.advise(tournament(STACKS_B, CO, "K9s"))
-        self.assertIn("The edge is thin (+0.15bb)", thin["reason"])
+        self.assertIn("A thin edge (+0.15bb)", thin["reason"])
         self.assertIn("with a clear edge", thin["flip"])
         # a clear edge far from the money: A8o on the button with 12bb at 300 left was a survival fold (+1.06bb)
         clear = A.advise(tournament(STACKS_A, BTN, "A8o", left=300))
@@ -1118,26 +1126,29 @@ class SurvivalGuardFindings(unittest.TestCase):
         self.assertIn(clear["guard"], ("edge", "agrees"))
 
     def test_pre_7_seventeen_big_blinds_or_more_the_sheets_small_raise_not_a_fold(self):
-        # 44 in the cutoff with 18bb: the engine moves all-in for +0.26bb, the table folds (all-in up to 16bb),
-        # and the sheet raises 44 from the cutoff: the headline is that raise, with the plan against an all-in
-        # (in "Cash first": since L1 the default style plays an edge of +0.20bb or more, and +0.26bb is one)
-        s = tournament([18] * 8, CO, "44", style="cash")
+        # 22 on the button with 18bb in "Cash first": the engine moves all-in for +0.35bb, the chart folds (22 is
+        # an all-in up to 15bb there), and the sheet raises 22 from the button: the headline is that raise, with
+        # the plan against an all-in.  (Cash first: since L1 the default style plays an edge of +0.20bb or more,
+        # and the engine's all-ins with 17bb or more are all worth that.)
+        s = tournament([18] * 8, BTN, "22", style="cash")
         a = A.advise(s)
         self.assertEqual((verb(a), a["guard"]), ("RAISE", "survival"))
-        default = A.advise(tournament([18] * 8, CO, "44"))
-        self.assertEqual((verb(default), default["guard"]), ("ALL-IN", "edge"))
         self.assertEqual(a["headline"]["qualifier"], "survival raise")
         self.assertEqual(a["headline"]["follow"], {"kind": "raise", "to": 2000})
-        self.assertIn("SURVIVAL RAISE (engine: ALL-IN +0.26bb): the sheet's small raise", a["source"])
+        self.assertIn("SURVIVAL RAISE (engine: ALL-IN +0.35bb): the sheet's small raise", a["source"])
         self.assertIn("raise, and fold to an all-in", a["reason"])
         self.assertTrue(a["plans"] and all(": FOLD" in line for line in a["plans"]), a["plans"])
         self.assertEqual(hero_cell(a["chart"]), "r")
         # the next answer keeps that plan
         s.do("act", seat=1, kind="raise", amount=2000)
-        s.do("act", seat=seat_of(BB, CO, 8), kind="allin")
+        s.do("act", seat=seat_of(BB, BTN, 8), kind="allin")
         self.assertEqual(verb(A.advise(s)), "FOLD")
-        # a hand the sheet does not raise from that seat is still a fold: K2s in the small blind
-        fold = A.advise(tournament([18] * 8, SB, "K2s"))
+        # the default style plays the same kind of edge: 44 in the cutoff with 18bb, +0.26bb
+        default = A.advise(tournament([18] * 8, CO, "44"))
+        self.assertEqual((verb(default), default["guard"]), ("ALL-IN", "edge"))
+        self.assertIn("CLEAR EDGE (engine +0.26bb)", default["source"])
+        # a hand the sheet does not raise from that seat is still a fold: K5o in the small blind (+0.07bb)
+        fold = A.advise(tournament([18] * 8, SB, "K5o"))
         self.assertEqual((verb(fold), fold["guard"]), ("FOLD", "survival"))
 
     def test_pre_8_a_read_lifts_the_guard_only_when_it_makes_the_play_safer(self):
@@ -1214,7 +1225,7 @@ class SurvivalGuardFindings(unittest.TestCase):
                     self.assertEqual(a["headline"]["follow"], {"kind": "fold"})
                     self.assertIn("CLOSE: before the money the lower-variance side leads (engine: CALL, 33% against 18%)",
                                   source(a))
-                    self.assertIn("The engine alone: CALL, 33% against 18%", a["also"])
+                    self.assertIn("By the numbers alone: CALL, 33% against 18%", a["also"])
                     self.assertIn("K9o+, Q9o+, J9o+ and T9o", a["reason"])
                     told = " ".join(w["text"] for w in a["warnings"])
                     self.assertNotIn("fit-or-fold", told)           # a warning about a call beside a fold
@@ -1227,12 +1238,14 @@ class SurvivalGuardFindings(unittest.TestCase):
                 close = next(w["text"] for w in a["warnings"] if w["code"] == "close")
                 self.assertTrue(close.endswith("The sheet calls this hand in the big blind."), close)
                 self.assertNotIn("lower-variance side leads", close)
-            # with 25bb or more the sheet's own row for the big blind is read (against the button: K8o+, not K5o),
-            # so one more big blind of stack never turns a call into a fold; against a bigger raise the fold leads
+            # with 25bb or more the sheet's own row for the big blind is read (against the button: K3o+ and
+            # Q8o+ since the sheet was rebuilt in L8, not K2o), so one more big blind of stack never turns a
+            # call into a fold; against a bigger raise the fold leads
             self.assertEqual(verb(A.advise(tournament([24] * 8, BB, "T2s", acts=small_raise))), "CALL")
             self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "T2s", acts=small_raise))), "CALL")
             self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "A3s", acts=small_raise))), "CALL")
-            deep = A.advise(tournament([30] * 8, BB, "K5o", acts=small_raise))
+            self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "K5o", acts=small_raise))), "CALL")
+            deep = A.advise(tournament([30] * 8, BB, "K2o", acts=small_raise))
             self.assertEqual((verb(deep), deep["guard"]), ("FOLD", "close"))
             self.assertIn("25bb or more against a raise from BTN", deep["reason"])
             self.assertEqual(verb(A.advise(tournament([18] * 8, BB, "T2s", acts=[(BTN, "raise", 3)]))), "FOLD")
@@ -1330,6 +1343,382 @@ class SurvivalGuardFindings(unittest.TestCase):
         self.assertEqual(seen.engine_away[:CO + 1], [False] * (CO + 1))
 
 
+    def test_l2_the_plan_line_and_the_next_answer_agree(self):
+        plan = re.compile(r"If (.+?) \((\d+)bb\) moves all-in: (CALL|FOLD) \(need (\d+)%, have (\d+)%")
+        # the review's example: the plan said FOLD (need 53%, have 49%) and the next answer CALL (57%)
+        stacks = [27.3, 27.3, 12, 24, 9.5, 27.3]
+        s = tournament(stacks, 3, "AJo", left=300, style="cash")
+        first = A.advise(s)
+        self.assertEqual(first["plans"], ["If BB (27bb) moves all-in: FOLD (need 53%, have 49%)"])
+        s.do("act", seat=1, **first["headline"]["follow"])
+        s.do("act", seat=seat_of(5, 3, 6), kind="allin")
+        second = A.advise(s)
+        self.assertEqual(verb(second), "FOLD")
+        self.assertEqual(second["tiles"][0]["value"], "53% / 49%")
+        # followed lines: every plan line under a raise, then that player's all-in
+        followed, verdicts = 0, set()
+        spots = [(stacks, 3, 300, None, ("AJo", "KQo", "99")),
+                 ([30] * 8, CO, 160, None, ("AJo", "ATs", "88")),
+                 ([35, 28, 22, 40, 18, 30, 14, 26], BTN, 185, "cash", ("AJo", "A8s", "66", "QJs")),
+                 ([40, 22, 35, 28, 30, 25, 12, 38], HJ, 400, None, ("AQo", "TT", "KQs")),
+                 ([38, 30, 26, 30], 1, 152, "maxev", ("ATs", "88", "KQo"))]
+        for stacks, hero, left, style, hands in spots:
+            n = len(stacks)
+            for hand in hands:
+                table = tournament(stacks, hero, hand, left=left, style=style)
+                first = A.advise(table)
+                if first["headline"]["follow"]["kind"] != "raise":
+                    continue
+                seen = A.read_table(table, table.view())
+                for line in first["plans"]:
+                    found = plan.match(line)
+                    if not found:
+                        continue
+                    who = next(i for i in range(n) if i != hero and seen.who(i) == found.group(1))
+                    again = tournament(stacks, hero, hand, left=left, style=style)
+                    again.do("act", seat=1, **first["headline"]["follow"])
+                    again.do("act", seat=seat_of(who, hero, n), kind="allin")
+                    second = A.advise(again)
+                    key = (stacks, hero, hand, left, style, line, verb(second), second["source"])
+                    self.assertEqual(verb(second) == "FOLD", found.group(3) == "FOLD", key)
+                    numbers = next(one["value"] for one in second["tiles"] if one["label"] == "Need / have")
+                    self.assertEqual(numbers, f"{found.group(4)}% / {found.group(5)}%", key)
+                    followed += 1
+                    verdicts.add(found.group(3))
+        self.assertGreaterEqual(followed, 12)
+        self.assertEqual(verdicts, {"CALL", "FOLD"})
+
+    def test_l2_the_plan_lines_close_is_judged_by_the_unrounded_numbers(self):
+        # hero (60bb) raises to 2.2bb on the button and the big blind (10bb) moves all-in: a cheap call, which
+        # the next answer folds only when the engine marks it close: less than 2 points apart, unrounded
+        s = tournament([60, 60, 60, 60, 60, 60, 60, 10], BTN, "A9o")
+        seen, money = A.read_table(s, s.view()), A.read_money(s)
+
+        def folds(points, exact=None):
+            return A.call_after_my_raise_folds(seen, money, BB, 2200, points, False, False, exact)
+
+        self.assertEqual(folds((40, 42)), "")                       # no exact numbers: by the line's own points
+        self.assertEqual(folds((40, 41)), "close")
+        self.assertEqual(folds((40, 42), (0.4040, 0.4239)), "close")    # 1.99 points: the engine says close
+        self.assertEqual(folds((40, 41), (0.3951, 0.4149)), "close")
+        self.assertEqual(folds((40, 42), (0.3951, 0.4249)), "")         # 2.98 points
+        self.assertEqual(folds((39, 41), (0.3949, 0.4149)), "")         # 2.00 points: not close
+        self.assertEqual(folds((40, 41), (0.3951, 0.4151)), "")         # reads 1 point, is 2.00: not close
+        # the numbers come from the engine's plan, by the name the line uses
+        self.assertEqual(A.plan_numbers(seen, [{"idx": BB, "need": 0.4, "eq": 0.42}, {"idx": 99, "need": 0, "eq": 0}]),
+                         {"BB": (0.4, 0.42)})
+        s = tournament([35, 35, 35, 35, 35, 35, 35, 10], BTN, "A9o")
+        seen, money = A.read_table(s, s.view()), A.read_money(s)
+        play = A.full_plan_play(seen, money)
+        exact = A.plan_numbers(seen, play.facts["plan"])
+        self.assertTrue(play.plans and len(exact) == len(play.plans), (play.plans, exact))
+        for line in play.plans:
+            who, _stack, _verdict, need, have = A.PLAN_LINE.match(line).groups()
+            self.assertEqual((f"{100 * exact[who][0]:.0f}", f"{100 * exact[who][1]:.0f}"), (need, have), line)
+
+    def test_l3_an_all_in_and_a_caller_with_chips_is_one_all_in_for_the_guard(self):
+        # the button is all-in for 10bb, the small blind (40bb) calls, hero is the big blind with 20bb.  The
+        # engine's CALL is a call of the 10bb all-in with a caller in the pot: the guard reads the row for one
+        # all-in from the button (KQs is on it), not the row for two all-ins (77+, AJs+, AQo+)
+        stacks = [30, 30, 30, 30, 30, 10, 40, 20]
+        acts = [(BTN, "allin", None), (SB, "call", None)]
+        for style in (None, "cash"):
+            a = A.advise(tournament(stacks, BB, "KQs", acts=acts, style=style))
+            self.assertEqual((verb(a), a["guard"]), ("CALL", "agrees"), style)
+            self.assertEqual(a["headline"]["size_text"], "8.9BB \u00b7 8,875")     # what is still to pay
+        s = tournament(stacks, BB, "KQs", acts=acts)
+        seen, money = A.read_table(s, s.view()), A.read_money(s)
+        before = A.what_happened(seen)
+        call = A.table_answer(seen, money, before, at_risk=20.0, calling=True)
+        self.assertEqual(call.action, "CALL")
+        self.assertIn("an all-in of 10bb from BTN", call.why)
+        self.assertIn("a caller is in the pot", call.why)
+        self.assertIn("an all-in from BTN with a caller in the pot", call.chart["title"])
+        self.assertTrue(A.in_range(call.short, HANDS.index("KQs")))
+        # a re-raise over the two of them plays for the caller's chips too: still the row for two all-ins,
+        # and so does the all-in plan, which has one decision for the hand
+        for says in (A.table_answer(seen, money, before, at_risk=20.0), A.table_answer(seen, money, before)):
+            self.assertEqual(says.action, "FOLD")
+            self.assertIn("two all-ins", says.why)
+        plan = A.advise(tournament(stacks, BB, "KQs", acts=acts, plan="allin"))
+        self.assertEqual(verb(plan), "FOLD")
+        self.assertIn("two all-ins", plan["reason"])
+        tens = A.advise(tournament(stacks, BB, "TT", acts=acts, left=185, style="cash"))
+        self.assertEqual((verb(tens), tens["guard"]), ("FOLD", "survival"))
+        self.assertIn("two all-ins", tens["reason"])
+        # a caller who is all-in himself is a second all-in, whatever the play
+        short = [30, 30, 30, 30, 30, 10, 9, 20]
+        s = tournament(short, BB, "KQs", acts=acts)
+        seen, money = A.read_table(s, s.view()), A.read_money(s)
+        says = A.table_answer(seen, money, A.what_happened(seen), at_risk=20.0, calling=True)
+        self.assertIn("two all-ins", says.why)
+
+
+class VeryLargeFields(unittest.TestCase):
+    """L6 (ROB-10): the prize model is thinned above ``PRIZE_PLACES`` paid places, so the answer stays quick."""
+
+    @staticmethod
+    def field(entrants, left, paid, bb=600, stacks=None, style=None, cards="AJs"):
+        s = Session(save=False)
+        s.do("new_session", mode="tournament", size=8, start_stack=20000, level=f"{bb // 2}/{bb}/{bb // 8}",
+             entrants=entrants, remaining=left, paid=paid, button=2)
+        if stacks:
+            s.do("set_stacks", values=[x * bb for x in stacks])
+        if style:
+            s.do("set_config", style=style)
+        if cards:
+            s.do("deal", hero_cards=cards)
+        return s
+
+    @staticmethod
+    def models(s):
+        from poker_coach import state as S
+        from poker_coach.app.model import goal_for
+        state = s.engine_state()
+        exact = S.build_prizes(state, goal_for(s.data))
+        return exact, A.thinned_prizes(exact, len(S.occupied(state)))
+
+    def test_l6_150_000_entrants_are_answered_quickly(self):
+        s = self.field(150000, 30000, 22000)
+        started = time.perf_counter()
+        a = A.advise(s)
+        took = time.perf_counter() - started
+        self.assertEqual((a["status"], a["icm"]), ("ready", "on"))
+        self.assertLess(took, 3.0, "12 seconds before the cap; about 0.2 s with it")
+        exact, thin = self.models(s)
+        self.assertEqual(len(exact.raw_payouts), 22000)
+        self.assertLessEqual(len(thin.raw_payouts), A.PRIZE_PLACES + 8)      # the 8 players at the table stay as they are
+        self.assertLessEqual(thin.field_n, 30000 // 22 + 2)
+        self.assertEqual((thin.field_stack, thin.itm_bonus), (exact.field_stack, exact.itm_bonus))
+        # the stage, the fold clock and the source line still read the real numbers
+        self.assertIn("ICM", a["source"])
+        self.assertEqual(A.read_money(s).stage["remaining"], 30000)
+
+    def test_l6_a_5_000_entrant_field_is_not_touched(self):
+        for left in (1200, 800, 755, 700, 40):
+            exact, thin = self.models(self.field(5000, left, 750))
+            self.assertIs(thin, exact, left)                       # 750 paid places: under the cap, the same object
+        # and late in a huge field, with fewer players left than the cap, it is the exact ladder again
+        exact, thin = self.models(self.field(150000, 900, 22000))
+        self.assertIs(thin, exact)
+        self.assertGreater(A.PRIZE_PLACES, 750)
+
+    def test_l6_the_thinned_ladder_keeps_the_money_line_and_the_prizes(self):
+        # before the money at least one place stays unpaid; in the money everybody left is paid
+        for left, unpaid in ((30000, None), (22100, None), (22003, 1), (22001, 1), (22000, 0), (21000, 0), (5000, 0)):
+            exact, thin = self.models(self.field(150000, left, 22000))
+            places = 8 + thin.field_n
+            key = (left, places, len(thin.raw_payouts))
+            if left > 22000:
+                self.assertLess(len(thin.raw_payouts), places, key)
+                self.assertAlmostEqual((places - len(thin.raw_payouts)) / places, (left - 22000) / left, delta=0.002,
+                                       msg=key)
+            else:
+                self.assertEqual(len(thin.raw_payouts), places, key)
+            if unpaid is not None:
+                self.assertEqual(places - len(thin.raw_payouts), unpaid, key)
+            # the ladder still falls, top to bottom, ends on the smallest prize, and pays the same per player
+            pays = thin.raw_payouts
+            self.assertTrue(all(a >= b for a, b in zip(pays, pays[1:])), key)
+            reachable = exact.raw_payouts[:min(22000, left)]
+            self.assertAlmostEqual(pays[-1], reachable[-1], places=9, msg=key)
+            self.assertAlmostEqual(sum(pays) / len(pays), sum(reachable) / len(reachable), delta=1e-6 * pays[0],
+                                   msg=key)
+            self.assertLess(len(set(pays)), 120, key)              # bands that pay one prize stay one pay jump
+
+    def test_l6_the_thinned_model_prices_risk_like_the_exact_one(self):
+        # 20,000 entrants and 3,000 paid, stacks around the average: far from the money, near it, on the
+        # bubble and in the money.  The risk premium (points of equity) is the number the answers are made of
+        stacks = [10, 60, 33, 33, 20, 45, 15, 80]
+        for left, tolerance, styles in ((4000, 0.3, (None,)), (3010, 0.6, (None, "cash")), (3001, 1.5, ("cash",)),
+                                        (2900, 0.3, (None,))):
+            bb = max(100, int(20000 * 20000 / left / 30 / 100) * 100)
+            for style in styles:
+                exact, thin = self.models(self.field(20000, left, 3000, bb=bb, stacks=stacks, style=style, cards=""))
+                self.assertIsNot(thin, exact)
+                chips = [float(x * bb) for x in stacks]
+                for hero, villain in ((0, 1), (1, 0), (3, 7)):
+                    want, got = exact.risk_premium(chips, hero, villain), thin.risk_premium(chips, hero, villain)
+                    self.assertAlmostEqual(100 * got, 100 * want, delta=tolerance, msg=(left, style, hero, villain))
+
+
+class Words(unittest.TestCase):
+    """L7 (VIS-17): plain words in every sentence the user reads; the source line alone keeps the manual's."""
+
+    FORBIDDEN = ("engine", "guard", "all-in table", "table says", "table read", "spin table", "solved table",
+                 "bubble table", "the tables", "table's", "traceback", "error", "exception")
+
+    @staticmethod
+    def sentences(answer):
+        """Every string of an answer the page shows, except the source line."""
+        out = [answer[key] for key in ("spot", "reason", "flip", "also", "provisional")]
+        out += list(answer["plans"]) + [w["text"] for w in answer["warnings"]] + list(answer["context"].values())
+        for one in answer["tiles"]:
+            out += [one["label"], one["value"], one["note"]]
+        if answer["headline"]:
+            out += [answer["headline"]["qualifier"], answer["headline"]["size_text"]]
+        if answer["chart"]:
+            out += [answer["chart"]["title"]] + [item["label"] for item in answer["chart"]["legend"]]
+        return [text for text in out if text]
+
+    def spots(self):
+        yield from ((name, session) for name, session, _code in Charts().spots())
+        yield "survival fold, cash", tournament(STACKS_A, BTN, "A5o", left=260, style="cash")
+        yield "survival fold, thin", tournament(STACKS_B, CO, "K9s")
+        yield "clear edge", tournament(STACKS_A, BTN, "A5o", left=260)
+        yield "survival raise", tournament([18] * 8, BTN, "22", style="cash")
+        yield "close fold", tournament([35, 25, 18, 22, 15, 25, 16, 18], HJ, "TT", acts=[(UTG, "raise", 2.2)])
+        yield "close call", tournament([30, 25, 18, 40, 22, 25, 15, 20], BB, "K9o", acts=[(BTN, "raise", 2)])
+        yield "clear edge call", tournament([30, 25, 18, 40, 15, 22, 16, 20], BB, "99", acts=[(CO, "allin", None)],
+                                            left=152)
+        yield "good price", tournament([30, 30, 30, 30, 30, 30, 3, 30], BB, "T7o", acts=[(SB, "allin", None)])
+        yield "final table", tournament([30, 25, 18, 40, 22, 12, 15, 40], SB, "A9s", left=8)
+        yield "final table, covered", tournament([30, 25, 18, 40, 22, 40, 15, 20], BB, "AJo",
+                                                 acts=[(BTN, "allin", None)], left=8)
+        yield "prizes unknown", tournament(STACKS_A, BTN, "A8o", left=None)
+        yield "heads-up", tournament([18, 30], 0, "K5o", left=2)
+        yield "big blind, close", tournament([30] * 8, BB, "K7o", acts=[(BTN, "raise", 2.2)])
+        yield "all-in plan, limped", tournament([15] * 8, BB, "T7o", acts=[(BTN, "call", None)], plan="allin")
+        yield "all-in plan, deep", tournament([41] * 8, BB, "QQ", acts=[(SB, "allin", None)], plan="allin")
+        yield "nine players", tournament([20] * 9, 6, "A8o", plan="allin")
+        yield "spin, no row", spin([20, 20, 20], 1, "A9o", acts=[(0, "call", None)])
+        yield "spin, stacks differ", spin([12, 9, 15], 0, "K7s")
+        yield "all-in or fold, loose", all_in_or_fold([8, 8, 8, 8], 2, "T5s", opponents="loose")
+        reentry = tournament(STACKS_A, BTN, "A8o")
+        reentry.data["tournament"]["reentry_open"] = True
+        yield "re-entry open", reentry
+
+    def test_l7_no_engine_and_no_guard_outside_the_source_line(self):
+        seen_sources = set()
+        for name, session in self.spots():
+            answer = A.advise(session)
+            self.assertEqual(answer["status"], "ready", name)
+            seen_sources.add(answer["source"].split(" \u00b7 ")[-1].split(" (")[0])
+            for text in self.sentences(answer):
+                low = text.lower()
+                for word in self.FORBIDDEN:
+                    self.assertNotIn(word, low, (name, text))
+        # the source line keeps the words the manual documents
+        self.assertTrue({"the engine decides", "the all-in table agrees", "SURVIVAL FOLD", "CLEAR EDGE",
+                         "GUARD OFF"} <= seen_sources, seen_sources)
+
+    def test_l7_the_second_line_says_by_the_numbers_alone(self):
+        fold = A.advise(tournament(STACKS_A, BTN, "A5o", left=260, style="cash"))
+        self.assertEqual(fold["also"], "By the numbers alone: ALL-IN +0.44bb (the Max EV style plays it).")
+        self.assertEqual(fold["tiles"][0]["note"], "by the numbers alone")
+        self.assertEqual(fold["tiles"][-1]["label"], "The chart says")
+        self.assertEqual(fold["flip"], "Played by the numbers again once in the money, or with a read that makes "
+                                       "it safer.")
+        self.assertIn("SURVIVAL FOLD (engine: ALL-IN +0.44bb)", fold["source"])     # the source line: as documented
+        self.assertEqual(A.by_the_numbers("CALL, 60% against 53%"), "By the numbers alone: CALL, 60% against 53%.")
+
+    def test_l7_the_survival_fold_reason_is_short(self):
+        # was: "Before the money the all-in table does not risk the stack here (A5o from BTN is an all-in only
+        # up to 15bb before the money (read at twice your stack this close to the money))."
+        strict = A.advise(tournament(STACKS_A, BTN, "A5o", left=260, style="cash"))
+        self.assertEqual(strict["reason"], "Fold before the money: A5o from the button is an all-in only up to 15bb, "
+                                           "and this close to the money your 12bb counts double.")
+        thin = A.advise(tournament(STACKS_B, CO, "K9s"))
+        self.assertEqual(thin["reason"], "A thin edge (+0.15bb): fold before the money. K9s from the cutoff is an "
+                                         "all-in only up to 8bb.")
+        small = A.advise(tournament([18] * 8, BTN, "22", style="cash"))
+        self.assertEqual(small["reason"], "No all-in before the money: 22 from the button is an all-in only up to "
+                                          "15bb. The sheet raises this hand small from this seat instead: raise, "
+                                          "and fold to an all-in.")
+        for answer in (strict, thin, small):
+            self.assertNotIn("((", answer["reason"])
+            self.assertNotIn("BTN", answer["reason"])
+        # the all-in plan reads the same chart in the same words
+        plan = A.advise(tournament(STACKS_A, BTN, "A5o", left=260, plan="allin"))
+        self.assertEqual(plan["reason"], "A5o from the button is an all-in only up to 15bb before the money, and "
+                                         "this close to the money your 12bb counts double.")
+        self.assertEqual(plan["tiles"][0]["label"], "The chart")
+        self.assertTrue(plan["also"].startswith("With all moves, on these stacks: "), plan["also"])
+
+    def test_l7_no_advice_never_shows_a_python_error(self):
+        import contextlib
+        import io
+        s = tournament(STACKS_A, BTN, "A8o")
+        real, verbose = A.engine_advise, A.VERBOSE
+
+        def broken(spot):
+            raise KeyError("UTG+3")
+
+        A.engine_advise = broken
+        try:
+            for setting, printed in ((False, False), (True, True)):
+                A.VERBOSE = setting
+                log = io.StringIO()
+                with contextlib.redirect_stderr(log):
+                    answer = A.advise(s)
+                self.assertEqual(verb(answer), "NO ADVICE")
+                self.assertEqual(answer["reason"], "The coach cannot read this spot. Play it from the sheet; the "
+                                                   "next one is advised as usual.")
+                whole = json.dumps(answer)
+                for word in ("KeyError", "UTG+3", "Traceback", "engine"):
+                    self.assertNotIn(word, whole)
+                self.assertEqual("KeyError: 'UTG+3'" in log.getvalue(), printed, setting)   # --verbose: the detail
+                self.assertIn("KeyError: 'UTG+3'", A.last_fault)
+        finally:
+            A.engine_advise, A.VERBOSE = real, verbose
+        self.assertIsNone(A.VERBOSE)                    # as shipped: on when the program was started with --verbose
+
+    def test_l7_one_player_is_not_one_players(self):
+        a = A.advise(tournament([30] * 8, SB, "A2o"))
+        self.assertEqual(a["reason"], "Outside the opening range for SB with 1 player behind.")
+        heads_up = A.advise(tournament([30, 30], 0, "A2o", left=2))
+        self.assertIn("with 1 player behind", heads_up["reason"])
+        self.assertIn("with 2 players behind", A.advise(tournament([30] * 8, BTN, "QJs"))["reason"])
+
+    def test_l7_the_fold_clock_line(self):
+        def with_clock(left, before, minutes):
+            s = tournament(STACKS_A, BTN, "K7s", left=left)
+            now = time.time()
+            if before:
+                s.data["tournament"]["history"] = [{"t": now - minutes * 60, "remaining": before},
+                                                   {"t": now, "remaining": left}]
+            return A.advise(s)
+
+        short = with_clock(190, 200, 10)["context"]["fold_clock"]
+        self.assertRegex(short, r"^You cannot fold into the money: the blinds take 35 minutes to eat your stack, "
+                                r"the bubble needs about \d+\. Find an all-in\.")
+        safe = with_clock(190, 230, 4)["context"]["fold_clock"]
+        self.assertRegex(safe, r"^You can fold into the money: the blinds take 35 minutes to eat your stack, "
+                               r"the bubble needs about \d+\.")
+        # near the bubble with nothing to time it by: the one fact, and the request is a warning, not the line
+        unknown = with_clock(190, None, 0)
+        self.assertTrue(unknown["context"]["fold_clock"].startswith("The blinds take 35 minutes to eat your stack."),
+                        unknown["context"]["fold_clock"])
+        s = tournament(STACKS_A, BTN, "K7s", left=190)
+        money = A.read_money(s)
+        self.assertTrue(A.no_bubble_estimate(money))
+        texts = [w["text"] for w in A.standing_warnings(s.data, money, time.time())]
+        self.assertIn("For the fold clock, change players left twice, a minute apart: then it can say whether you "
+                      "can fold into the money.", texts)
+        # far from the bubble the clock gives no verdict, so nothing is asked for
+        far = tournament(STACKS_A, BTN, "K7s", left=400)
+        self.assertFalse(A.no_bubble_estimate(A.read_money(far)))
+        for answer in (unknown, A.advise(far), with_clock(300, 310, 10)):
+            line = answer["context"]["fold_clock"]
+            self.assertNotIn("Change players left", line)
+            self.assertNotIn("orbits of blinds", line)
+        # the sit-out line, in plain words
+        a = A.advise(tournament([30, 25, 18, 40, 22, 8, 15, 20], BTN, "A9o", left=165, avg_bb=30, plan="allin"))
+        self.assertIn("You hold 31% of what it takes to fold into the money (the sit-out line).",
+                      a["context"]["fold_clock"])
+
+    def test_l7_under_one_big_blind_is_not_0bb_effective(self):
+        # the three players behind hero hold under one big blind each: they are all-in or nearly
+        a = A.advise(tournament([30, 30, 30, 30, 30, 0.5, 0.7, 0.6], CO, "K9o"))
+        self.assertEqual(verb(a), "ALL-IN")
+        self.assertEqual(a["reason"], "The players behind you hold less than one big blind, so they are all-in or "
+                                      "nearly, and this all-in makes money.")
+        self.assertNotIn("0bb effective", json.dumps(a))
+        self.assertNotIn("1bb effective", json.dumps(a))
+        self.assertEqual(a["headline"]["size_text"], "0.6BB \u00b7 575")      # what can be matched
+        ordinary = A.advise(tournament([8] * 8, BTN, "A8o"))
+        self.assertIn("8bb effective is all-in or fold territory", ordinary["reason"])
+
 
 class PlanAndTableFindings(unittest.TestCase):
     """The all-in plan, the spin rows, All-In or Fold, the stage and the numbers on one answer."""
@@ -1371,7 +1760,7 @@ class PlanAndTableFindings(unittest.TestCase):
         self.assertEqual(verb(a), "ALL-IN")
         self.assertEqual(a["headline"]["follow"], {"kind": "allin"})
         self.assertEqual(a["tiles"][0]["label"], "All-in against folding")
-        self.assertEqual(a["tiles"][1]["note"], "table read at 5bb")
+        self.assertEqual(a["tiles"][1]["note"], "chart read at 5bb")
         self.assertIn("move all-in yourself", a["reason"])
 
     def test_pre_15_spin_both_all_in_with_equal_stacks_uses_the_solved_row(self):
@@ -1440,7 +1829,7 @@ class PlanAndTableFindings(unittest.TestCase):
                     self.assertTrue(money.bubble and money.close)
                     plan = A.advise(small_field(left, plan="allin"))
                     self.assertEqual(verb(plan), "FOLD")
-                    self.assertIn("on the bubble the table calls with", plan["reason"])
+                    self.assertIn("on the bubble the chart calls with", plan["reason"])
                     self.assertEqual(verb(A.advise(small_field(left))), "FOLD")     # the two plans agree
             self.assertFalse(A.read_money(small_field(6)).bubble)
             away = A.advise(small_field(6, plan="allin"))
@@ -1472,7 +1861,7 @@ class PlanAndTableFindings(unittest.TestCase):
         self.assertEqual(A.engine_summary(A.Play("ALL-IN", "allin", tiles=number)), "ALL-IN +0.11bb")
         limped = A.advise(tournament([15] * 8, BB, "T7o", acts=[(BTN, "call", None)], plan="allin"))
         self.assertEqual(verb(limped), "CHECK")
-        self.assertRegex(limped["also"], r"^The full engine on these stacks: [A-Z-]+\.$")
+        self.assertRegex(limped["also"], r"^With all moves, on these stacks: [A-Z-]+\.$")
         # (4) nothing typed about the tournament: the stage line says so, like the strip
         blank = A.advise(tournament(STACKS_A, BTN, "A8o", left=None))
         self.assertEqual(blank["context"]["stage"], "Stage unknown: enter players left and places paid.")
@@ -1642,9 +2031,9 @@ class AfterTheFlopFindings(unittest.TestCase):
         flop(s, "Ks7d2c", (seat_of(SB, BB, 8), "allin"))
         with postflop_says("CALL", "close", numbers=CALL_58_56):       # a close call: "all moves" folds it
             a = A.advise(s)
-        self.assertEqual((verb(a), a["also"]), ("CALL", "The plan with all moves: FOLD."))
+        self.assertEqual((verb(a), a["also"]), ("CALL", "With all moves: FOLD."))
         with postflop_says("CALL", "clear", numbers=CALL_58_56):
-            self.assertEqual(A.advise(s)["also"], "The full engine: CALL, 58% against 56%.")
+            self.assertEqual(A.advise(s)["also"], "With all moves: CALL, 58% against 56%.")
         # (d) top pair with 4 pots or less behind against a player who covers: all-in, as before
         s = tournament([30, 30, 30, 30, 30, 30, 30, 10], BB, "AhKd", acts=[(UTG, "call", None)], plan="allin")
         s.do("act", seat=1, kind="check")
@@ -1757,8 +2146,8 @@ class AfterTheFlopFindings(unittest.TestCase):
         a = self.raised_on_the_turn(None)
         self.assertEqual((verb(a), a["headline"]["qualifier"]), ("FOLD", "playbook check"))
         self.assertEqual(a["reason"], "One pair facing a raise from BB: that is rarely a bluff, so the playbook folds.")
-        self.assertEqual(a["also"], "The engine alone: CALL, 63% against 31%.")
-        self.assertEqual(a["tiles"][1]["note"], "the engine alone")     # the numbers beside the fold are the engine's
+        self.assertEqual(a["also"], "By the numbers alone: CALL, 63% against 31%.")
+        self.assertEqual(a["tiles"][1]["note"], "by the numbers alone")     # the numbers beside the fold are the engine's
         self.assertIn("tagged tight", self.raised_on_the_turn("tight")["reason"])
         for aggressive in ("lag", "maniac"):                            # only against these the engine's call stays
             self.assertEqual(verb(self.raised_on_the_turn(aggressive)), "CALL")
@@ -1790,7 +2179,7 @@ class AfterTheFlopFindings(unittest.TestCase):
         self.assertIn(announced, [w["text"] for w in first["warnings"]])
         self.assertEqual((verb(second), second["headline"]["qualifier"]), ("FOLD", "playbook check"))
         self.assertIn("fold, as planned with the bet", second["reason"])
-        self.assertEqual(second["also"], "The engine alone: CALL, 34% against 31%.")
+        self.assertEqual(second["also"], "By the numbers alone: CALL, 34% against 31%.")
         # against a player tagged aggressive, or with the stack committed, the engine's call stays: then the
         # bet does not announce a fold either
         for more in ({"tag": "lag"}, {"tag": "maniac"}, {"stack": 9}):
@@ -1858,7 +2247,7 @@ class AfterTheFlopFindings(unittest.TestCase):
         self.assertEqual([v.pfr for v in spot.villains], [False])       # nobody raised: no continuation bet
         self.assertEqual(verb(a), "FOLD")
         self.assertIn("did not raise before the flop", a["reason"])
-        self.assertEqual(a["also"], "The engine alone: CALL, 34% against 33%.")
+        self.assertEqual(a["also"], "By the numbers alone: CALL, 34% against 33%.")
         self.assertEqual(verb(limped_pot("QhTd", 500)[0]), "CALL")      # a small bet: the engine's answer
         self.assertEqual(verb(limped_pot("Qh7d", 2125)[0]), "CALL")     # a pair
         self.assertEqual(verb(limped_pot("6h5h", 2125)[0]), "CALL")     # a draw of 8 outs or more
@@ -2046,7 +2435,7 @@ class AfterTheFlopFindings(unittest.TestCase):
                          ("FOLD", "close: lower variance", "close", "close"))
         self.assertEqual(a["reason"], "Close: the call and the fold are worth about the same. Before the money the "
                                       "lower-variance side leads: fold.")
-        self.assertEqual(a["also"], "The engine alone: CALL, 58% against 56%. The Max EV style plays it.")
+        self.assertEqual(a["also"], "By the numbers alone: CALL, 58% against 56% (the Max EV style plays it).")
         self.assertTrue(source(a).endswith("CLOSE: before the money the lower-variance side leads "
                                            "(engine: CALL, 58% against 56%)"), source(a))
         self.assertNotIn("close", codes(a))                             # the reason says it

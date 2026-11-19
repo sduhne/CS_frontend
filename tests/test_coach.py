@@ -272,8 +272,12 @@ class Preflop(unittest.TestCase):
     # ---- the review findings (PRE-n), one test each ---------------------------------------------
 
     @staticmethod
-    def table(stacks, hero, hand, acts=(), left=None, paid=150, entrants=1000, away=(), types=None, ante=0.125):
-        """A spot with real stacks (big blinds, in acting order); ``left`` players turns ICM on."""
+    def table(stacks, hero, hand, acts=(), left=None, paid=150, entrants=1000, away=(), types=None, ante=0.125,
+              folded=()):
+        """A spot with real stacks (big blinds, in acting order); ``left`` players turns ICM on.
+
+        ``away`` sat out when the hand was dealt; ``folded`` are players who folded after hero's raise (the
+        table app hands them to the engine as away, and says who really sat out)."""
         from poker_coach.preflop import Act, Spot
         setup = HandSetup([float(x) for x in stacks], 0.5, 1.0, ante, 0.0)
         n = len(stacks)
@@ -284,7 +288,8 @@ class Preflop(unittest.TestCase):
         acts = [Act(i, kind, setup.live[i] if kind == "allin" else min(float(amount), setup.live[i]))
                 for i, kind, amount in acts]
         return Spot(setup=setup, hero=hero, hand=HAND_INDEX[hand], prizes=prizes, field_prizes=field, acts=acts,
-                    away=[i in away for i in range(n)], types=list(types) if types else [])
+                    away=[i in away or i in folded for i in range(n)], types=list(types) if types else [],
+                    sitting_out=[i in away for i in range(n)])
 
     def play(self, *args, **kw):
         return advise(self.table(*args, **kw))
@@ -506,6 +511,80 @@ class Preflop(unittest.TestCase):
                 self.assertNotIn("3-BET to", adv.action, (stack, hand))
         self.assertEqual(self.play([40] * 8, 6, "TT", [(4, "raise", 2.2)], left=160).action, "CALL")
 
+    def test_l2_the_plan_under_a_raise_and_the_answer_to_the_all_in_use_one_range(self):
+        from poker_coach.preflop import _chart_shift, hero_open_range
+        size = re.compile(r"RAISE to ([\d.]+)bb$")
+        followed = shifted = closes = 0
+        verdicts = set()
+        spots = [([27.3, 27.3, 12, 24, 9.5, 27.3], 3, 160, ("AJo", "KQo", "99", "A9s", "KJs")),   # the review's table
+                 ([30] * 8, 4, 160, ("AJo", "ATs", "88", "KQs", "AQo", "77")),
+                 ([35, 28, 22, 40, 18, 30, 14, 26], 5, 185, ("AJo", "KQo", "A8s", "66", "QJs", "ATo")),
+                 ([40, 22, 35, 28, 30, 25, 12, 38], 3, 400, ("AQo", "TT", "KQs", "AJs")),
+                 ([30] * 6, 2, None, ("AJo", "99", "KQs")),                                 # chips only
+                 ([38, 30, 26, 30], 1, 152, ("ATs", "88", "KQo"))]
+        for stacks, hero, left, hands in spots:
+            n = len(stacks)
+            for hand in hands:
+                first = self.play(stacks, hero, hand, left=left)
+                found = size.match(first.action)
+                if not found or not first.data.get("plan"):
+                    continue
+                spot = self.table(stacks, hero, hand, left=left)
+                behind = list(range(hero + 1, n))
+                shifted += _chart_shift(spot, behind)[0] != 0
+                for entry in first.data["plan"]:
+                    who = entry["idx"]
+                    # hero raises, the players between fold, this player moves all-in, the rest fold
+                    line = [(hero, "raise", float(found.group(1))), (who, "allin", 0)]
+                    second = self.play(stacks, hero, hand, line, left=left, folded=range(hero + 1, who))
+                    key = (stacks, hero, hand, left, who, first.action, second.action)
+                    self.assertAlmostEqual(second.data["need"], entry["need"], places=9, msg=key)
+                    self.assertAlmostEqual(second.data["equity"], entry["eq"], places=9, msg=key)
+                    self.assertEqual(second.action == "CALL", entry["call"], key)
+                    self.assertEqual(second.confidence == "close", abs(entry["edge"]) < 0.02, key)
+                    text = next(t for t in first.numbers if t.startswith(f"if {entry['pos']} "))
+                    self.assertIn(" shoves: CALL " if entry["call"] else " shoves: FOLD ", text, key)
+                    followed += 1
+                    closes += second.confidence == "close"
+                    verdicts.add(second.action)
+        self.assertGreaterEqual(followed, 25)
+        self.assertGreaterEqual(shifted, 5)             # spots where ICM moves hero's opening row: the old mismatch
+        self.assertEqual(verdicts, {"CALL", "FOLD"})
+        # the one range: the row first_in opens with, shifted for ICM, by the players who were there at the raise
+        spot = self.table([27.3, 27.3, 12, 24, 9.5, 27.3], 3, "AJo", left=160)
+        shift = _chart_shift(spot, [4, 5])[0]
+        self.assertGreater(shift, 0)
+        self.assertEqual(hero_open_range(spot), rfi_range(2, 24.0 - 0.125, shift))
+        later = self.table([27.3, 27.3, 12, 24, 9.5, 27.3], 3, "AJo", [(3, "raise", 2.0), (5, "allin", 0)], left=160,
+                           folded=[4])
+        self.assertEqual(hero_open_range(later), hero_open_range(spot))     # the small blind folded since: no matter
+        self.assertNotEqual(hero_open_range(spot), rfi_range(2, 24.0 - 0.125))
+
+    def test_l4_the_small_blind_re_raised_by_the_big_blind_is_out_of_position(self):
+        from poker_coach.preflop import _acts_after
+        spot = self.table([60] * 8, 6, "QQ")
+        order = sorted(range(8), key=lambda i: sum(_acts_after(spot, i, j) for j in range(8) if j != i))
+        self.assertEqual([spot.pos(i) for i in order], ["SB", "BB", "UTG", "UTG+1", "LJ", "HJ", "CO", "BTN"])
+        heads_up = self.table([60, 60], 0, "QQ")
+        self.assertTrue(_acts_after(heads_up, 0, 1))                               # the button acts last
+        line = [(6, "raise", 3.0), (7, "raise", 9.0)]                              # small blind raises, big blind re-raises
+        for depth in (50, 60, 80, 100):
+            for hand in ("QQ", "AKs", "AKo", "99", "AJs", "KQs"):
+                adv = self.play([depth] * 8, 6, hand, line)
+                text = " ".join(adv.why)
+                self.assertNotIn("in position", text, (depth, hand))
+                if hand in ("QQ", "AKs", "AKo"):
+                    # never folded; all-in with 60bb or less when that earns, as from any seat out of position
+                    self.assertEqual(adv.action, "ALL-IN" if depth <= 60 else "CALL", (depth, hand))
+                    if adv.action == "CALL":
+                        self.assertIn("out of position", text, (depth, hand))
+        # the same hand from the button, and heads-up from the small blind, is in position
+        self.assertIn("in position", " ".join(self.play([80] * 8, 5, "QQ", [(5, "raise", 2.3), (7, "raise", 9.0)]).why))
+        self.assertIn("in position", " ".join(self.play([80, 80], 0, "QQ", [(0, "raise", 2.2), (1, "raise", 7.0)]).why))
+        # out of position the thin calls go: 99 called the re-raise "in position" before
+        self.assertEqual(self.play([100] * 8, 6, "99", line).action, "FOLD")
+        self.assertEqual(self.play([100] * 8, 5, "99", [(5, "raise", 2.3), (7, "raise", 9.0)]).action, "CALL")
+
     def test_pre_18_a_blind_sitting_out_never_tightens_the_opening_range(self):
         for players in (8, 6):
             button, small, big = players - 3, players - 2, players - 1
@@ -621,6 +700,95 @@ class Postflop(unittest.TestCase):
         # made hands still continue
         for hero in ("Ad5c", "7s7d"):
             self.assertNotEqual(facing(hero, "As7h4d", 1.0, False).action, "FOLD", hero)
+
+    # ---- L5: three oddities with nothing to call -------------------------------------------------
+
+    @staticmethod
+    def first_to_bet(hero, board, pot, stack, ranges, pfr=False, in_position=True, bb=1.0):
+        villains = []
+        for spec in ranges:
+            w, label = range_from_spec(spec, 9, "unknown", 3)
+            villains.append(Villain(w, "unknown", [], label))
+        return advise_postflop(PostflopSpot(tuple(parse_cards(hero)), parse_cards(board), pot, 0.0, stack, None,
+                                            villains, in_position, pfr, bb=bb))
+
+    def test_l5_a_strong_made_hand_bets_for_value_or_checks_to_call(self):
+        sets = "KK, TT, 77, 44, AKs, KTs, QJs, J9s, 98s"
+        # the review's hand: aces with the nut flush draw on 4sTsKh7s against two players was a check
+        # "multi-way with nothing strong".  It is a bet for value ...
+        adv = self.first_to_bet("AhAs", "4sTsKh7s", 20, 60, ["flat:BTN", "call:BB"])
+        self.assertTrue(adv.action.startswith("BET "), adv.action)
+        self.assertNotIn("semi-bluff", adv.action)
+        self.assertIn("bet for value", adv.why[0])
+        self.assertTrue(0.55 <= adv.data["equity"] < 0.72, adv.data)             # under the plain value bet's 72%
+        # ... and against two ranges it is behind, a check that says why and what comes next
+        adv = self.first_to_bet("AhAs", "4sTsKh7s", 20, 60, [sets, "KK, TT, 77, KQs, AKs"])
+        self.assertEqual(adv.action, "CHECK")
+        self.assertRegex(adv.why[0], r"^a good hand, but with \d+% against these ranges it is not far enough ahead")
+        self.assertLess(adv.data["equity"], 0.40)
+        self.assertIn("call one reasonable bet", adv.why[0])
+        # every hand of top pair with a strong kicker or better, whatever the ranges: never "nothing", never
+        # a bluff's label, and a check always says it is a check to call
+        seen = set()
+        for hero, board in (("AhAs", "4sTsKh7s"), ("QhQd", "JsTs9s"), ("AhKh", "Ks7h2h"), ("AhKd", "Ks7h2h"),
+                            ("JhJd", "9s5d2c"), ("KhTd", "KsTs4s7s"), ("AhKd", "Ks7d2c"), ("9h9d", "8s7s2c5d6h")):
+            for ranges in (["call:BB"], [sets], ["flat:BTN", "call:BB"], [sets, "TT+, 99, 55, AKs"]):
+                for pfr in (False, True):
+                    for in_position in (False, True):
+                        adv = self.first_to_bet(hero, board, 12, 60, ranges, pfr, in_position)
+                        if adv.data["strength"] < 5:
+                            continue
+                        key = (hero, board, ranges, pfr, in_position, adv.action)
+                        text = " ".join(adv.why)
+                        self.assertNotIn("nothing strong", text, key)
+                        self.assertNotIn("no value and no good bluff", text, key)
+                        self.assertNotIn("semi-bluff", adv.action, key)
+                        self.assertNotIn("c-bet", adv.action, key)
+                        self.assertFalse(any("give up on the turn" in w for w in adv.warnings), key)
+                        if adv.action == "CHECK":
+                            self.assertIn("call one reasonable bet", text, key)
+                        seen.add(adv.action.split()[0])
+        self.assertEqual(seen, {"BET", "CHECK"})
+        # weaker hands keep their lines: a draw is a semi-bluff, air on a dry board a continuation bet
+        self.assertIn("(semi-bluff)", self.first_to_bet("QhJh", "Th9h2c", 5.5, 40, ["call:BB"], pfr=True).action)
+        self.assertIn("(c-bet)", self.first_to_bet("AhQd", "Ks7d2c", 5.5, 40, ["call:BB"], pfr=True).action)
+        self.assertIn("nothing strong", self.first_to_bet("QhJd", "Ts7s4d", 12, 60, ["flat:BTN", "call:BB"]).why[0])
+
+    def test_l5_a_value_bet_of_two_thirds_of_the_stack_is_the_all_in(self):
+        # the review's hand: KJ on 3c4hKs3d with 7,313 behind was "BET 6,374", 87% of the stack
+        adv = self.first_to_bet("JdKc", "3c4hKs3d", 12748, 7313, ["call:BB"], bb=600)
+        self.assertEqual(adv.action, "BET ALL-IN")
+        self.assertFalse(any("fold to a raise" in w for w in adv.warnings), adv.warnings)   # nothing is left to fold
+        deep = self.first_to_bet("JdKc", "3c4hKs3d", 12748, 40000, ["call:BB"], bb=600)
+        self.assertEqual(deep.action, "BET 6,374 (10.6bb, 50% pot)")
+        self.assertTrue(any("fold to a raise unless" in w for w in deep.warnings))
+        # no sized bet with nothing to call is two thirds of what is behind, or more
+        for stack in (3, 4, 5, 6, 8, 10, 13, 20):
+            for hero, board in (("JdKc", "3c4hKs3d"), ("AhKd", "Ks7d2c"), ("AhAs", "4sTsKh7s"), ("Qh8s", "TdQc2s"),
+                                ("7h7d", "Ks7s2c"), ("AhKh", "Ks7h2h")):
+                for pfr in (False, True):
+                    adv = self.first_to_bet(hero, board, 10, stack, ["call:BB"], pfr)
+                    size = re.match(r"BET ([\d.]+)bb", adv.action)
+                    if size and "semi-bluff" not in adv.action and "c-bet" not in adv.action:
+                        self.assertLess(float(size.group(1)), 2 / 3 * stack + 0.051, (hero, board, stack, pfr, adv.action))
+
+    def test_l5_a_bet_with_top_pair_or_better_is_not_called_a_c_bet(self):
+        # the review's hand: Q8 on TdQc2s as the raiser.  Against a range it is not far ahead of, the small
+        # bet was labelled "c-bet", "whatever you hold", with "give up on the turn"
+        tight = "QQ, TT, 22, AQs, KQs, QJs, QTs, AQo, KQo, JJ, 99"
+        for ranges in (["call:BB"], [tight]):
+            adv = self.first_to_bet("Qh8s", "TdQc2s", 5.5, 40, ranges, pfr=True)
+            self.assertEqual(adv.action, "BET 1.8bb (33% pot)", ranges)
+            self.assertIn("top pair", adv.why[0])
+            self.assertIn("fold to a raise unless this player is aggressive", adv.warnings)
+            self.assertFalse(any("give up on the turn" in w for w in adv.warnings))
+        strong = self.first_to_bet("AhKd", "Ks7d2c", 5.5, 40, ["KK, 77, 22, AKs, AKo, KQs"], pfr=True)
+        self.assertEqual(strong.action, "BET 1.8bb (33% pot)")
+        self.assertIn("for value and protection", strong.why[0])
+        # with less than top pair it is still the continuation bet
+        for hero in ("AhQd", "9h9d", "7h6h"):
+            adv = self.first_to_bet(hero, "Ks8d2c", 5.5, 40, ["call:BB"], pfr=True)
+            self.assertTrue(adv.action.endswith("(c-bet)"), (hero, adv.action))
 
 
 class StateAndCli(unittest.TestCase):
@@ -1757,6 +1925,84 @@ class TagSheet(unittest.TestCase):
         for hand in ("KK", "QQ", "AKo", "JJ"):
             got = action(8, 0, 40, [(7, "raise", 2.2), (2, "raise", 6.6)], hand)   # a raise and a re-raise
             self.assertEqual("ALL-IN" in got, self.has(t["cold"]["early"][1], hand), (hand, got))
+
+    @staticmethod
+    def builder():
+        """tools/build_tag.py as a module: the test goes through the data with the builder's own code."""
+        import importlib.util
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        spec = importlib.util.spec_from_file_location("build_tag", os.path.join(root, "tools", "build_tag.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def same_for(self, hands, stored, built, where):
+        """Every range of ``stored`` (the data file) holds the same of ``hands`` as the freshly built one."""
+        self.assertEqual(type(stored), type(built), where)
+        if isinstance(stored, dict):
+            self.assertEqual(set(stored), set(built), where)
+            for key in stored:
+                self.same_for(hands, stored[key], built[key], where + (key,))
+        elif isinstance(stored, list):
+            self.assertEqual(len(stored), len(built), where)
+            for k, (a, b) in enumerate(zip(stored, built)):
+                self.same_for(hands, a, b, where + (k,))
+        elif isinstance(stored, str):
+            for hand in hands:
+                self.assertEqual(self.has(stored, HANDS[hand]), self.has(built, HANDS[hand]), where + (HANDS[hand],))
+        else:
+            self.assertEqual(stored, built, where)
+
+    def test_l8_every_cell_is_what_the_builder_gets_from_the_engine(self):
+        # tag.json against tools/build_tag.py, for 6, 7 and 8 players.  The cells that need no question to the
+        # engine are compared whole.  The others (players only called, a raise before you, a raise and a
+        # re-raise, you raised and were re-raised) ask the engine about every hand in the build; here each
+        # of them is asked about 13 hands, a different 13 for every part and table size, so that every cell
+        # is checked and every hand is checked somewhere.
+        T, B, build = self.T, self.B, self.builder()
+        asked = set()
+        try:
+            for players in T.TABLES:
+                t = T.table(players)
+                b = B.table(players)
+                self.assertEqual(t["first_in"], build.first_in(players), players)
+                self.assertEqual(t["bb_call"], build.bb_call_short(players), players)
+                self.assertEqual(t["shoved_on"], build.shoved_on(players), players)
+                self.assertEqual(t["reshove"], {k: v[:4] for k, v in b["reshove"]["before"].items()}, players)
+                self.assertEqual(t["call"], b["call"], players)
+                for k, part in enumerate(("limpers", "vs_raise", "cold", "reraised")):
+                    hands = [h for h in range(169) if h % 13 == (4 * (players - 6) + k) % 13]
+                    asked.update(hands)
+                    build.HANDS_ASKED = hands
+                    made = {"limpers": build.limpers, "vs_raise": build.vs_raise, "cold": build.cold,
+                            "reraised": build.reraised}[part](players)
+                    self.same_for(hands, t[part], made, (players, part))
+        finally:
+            build.HANDS_ASKED = list(range(169))
+        self.assertGreaterEqual(len(asked), 150)
+        # the builder's three rules (L8): the big blind's short calls use the engine's points, ...
+        from poker_coach.preflop import _hand_kind, bb_call_points
+        from poker_coach.ranges import villain_open_range
+        for players in T.TABLES:
+            t = T.table(players)
+            for key, _label, r_nb in B.raisers(players):
+                opened = villain_open_range(r_nb, "unknown", 20.0)
+                need = 1.0 / (players * B.PLAYER_ANTE + 0.5 + 1.0 + 2.0 + 1.0)
+                all_in = parse_range(B.reshove("before", key, 20.0, players))
+                calls = parse_range(t["bb_call"][key])
+                for h in range(169):
+                    price = eq_vs_range(h, opened)[0] - need - bb_call_points(_hand_kind(h)) >= 0
+                    self.assertEqual(calls[h] >= 0.5, price and all_in[h] < 0.5, (players, key, HANDS[h]))
+            # ... no hand the engine re-raises or moves all-in with at 30bb is also a hand to play for a set
+            # with, or a call for the button only ...
+            for key, row in t["vs_raise"].items():
+                value = parse_range(row["value"])
+                for name in ("setmine", "button"):
+                    if row.get(name):
+                        both = [HANDS[h] for h, w in enumerate(parse_range(row[name])) if w >= 0.5 and value[h] >= 0.5]
+                        self.assertEqual(both, [], (players, key, name))
+        # ... and the "you were re-raised" rows are asked with the big blind as the re-raiser
+        self.assertIn("big blind as the player who re-raised", build.reraised.__doc__)
 
     def test_sheet_cli_and_playbook(self):
         import io
