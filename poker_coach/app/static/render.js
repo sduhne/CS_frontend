@@ -37,15 +37,16 @@
      remaining       step: -1 | 1, or text                            players left
      set_tournament  field, and text or value (true / false)          paid, entrants, start_stack, avg_stack,
                                                                       buyin, payouts, reentry_open, bounty
-     set_config      key, value                                       style, plan, opponents, unit, deck
+     set_config      key, value                                       style, plan, opponents, unit, deck, button_rule
      set_ante_kind   kind: none | player | bb                         settings
      set_ladder      text (one level per line), or name               settings
-     set_size        size                                             table tools
+     set_size        size, clear: true to remove the players          table tools; the toast of a refused "- Seat"
+                     sitting on the seats that go
      button_step     step: -1 | 1                                     table tools
-     new_table                                                        table tools
-     set_button      seat                                             seat menu
+     new_table       size, button                                     table tools, New table
+     set_button      seat                                             seat menu (an empty seat too: Button here)
      seat_player     seat, stack (text), name                         an empty seat
-     set_stack       seat, text                                       seat menu
+     set_stack       seat, text                                       seat menu (hero without chips: his re-entry)
      set_stacks      stacks: {"2": "12.5k", "3": ""}                  the all-stacks sheet (blank keeps)
      rename          seat, name                                       seat menu
      set_type        seat, type                                       seat menu
@@ -59,9 +60,11 @@
                      to (a number from a preset or from Follow, text from the amount field),
                      via: "follow" when the Follow button sent it     the action bar
      close_round                                                      Rest fold, Skip the board
-     edit_event      index, to (text)                                 a selected event on the hand line
+     edit_event      index, to (text), or kind: call | raise          a selected event on the hand line (kind: a fold
+                                                                      nobody typed becomes the forgotten call or raise)
      remove_event    index                                            a selected event on the hand line
-     award           ranking: [[seat], [seat, seat]]                  the result bar, the seat menu
+     award           ranking: [[seat], [seat, seat]]                  the result bar (Split: the ticked players as one
+                                                                      tier), the seat menu
      skip_hand, discard_hand                                          the bars, table tools
      new_session     mode, and the fields of the form beside it:      first run, New tournament
                      size, level, start_stack, hero_stack, entrants,
@@ -72,7 +75,7 @@
      panel        "why" | "range"        which advice tab shows where only one fits
      sheet        null | "settings" | "why" | "keys" | "history" | "new" | "stacks"
      seatMenu     null | seat number      the seat whose menu is open
-     menu         null | "table"          the table tools menu
+     menu         null | "table" | "newtable"     the table tools menu; the New table menu
      picker       null | {slot, cards: [], rank: null, rank2: null, replace}    the card picker and how far it is;
                   replace: the user chose to change hero's cards (a click on them), so another hand may
                   take the place of the class on record (set_cards then carries replace: true)
@@ -92,6 +95,10 @@
      fieldError   {fk, text, fix, value} | null    a value the server refused: drawn under the open field
                                                    with that data-fk, and the field is marked
      menuByKey    true when the seat menu was opened by its digit (the controller keeps it)
+     newTable     {size, button}          what is chosen in the New table menu (ui.menu "newtable")
+     handOpen     hand number             the hand whose text is open in the history sheet
+     viewError    {message, fix, down}    the program could not show the table (or does not answer): drawn
+                                          in place of the table, never as the first-run form
 
    EXTRAS THE PAGE UNDERSTANDS (none is required; they are not in the SPEC's view)
      view.first_run                  true: draw the first-run form, not the table
@@ -104,6 +111,12 @@
      view.strip.game.over            Spin: "won" or "lost" once the game is over: the bar offers a new game
      view.strip.level.due            true: the "+" of the blinds turns yellow and blinks
      view.hand.result.text           one line for the slab once the hand is settled
+     view.hand.positions, .button    {seat: name} and the button seat of the hand on screen: a finished hand
+                                     keeps them on the pods until the next deal
+     view.hand.want_suits            {hand: "AKs", options: [["Ah","Kh"], ...]}: the exact holdings to pick from
+     view.hand.before_target         the seats in front of the target that have not acted, in order
+     view.hero_out                   true: hero has no chips and no hand of his is running
+     view.settings.button_rule       "dead" | "forward": how the dealer button moves after a hand
      seat.status "busted"            a seat with no chips: drawn grey with the word "Out"
    ========================================================================================== */
 (function () {
@@ -1098,7 +1111,8 @@
   }
   // The first row: a word in small capitals, who or what, and a note.
   function whoseHtml(eyebrow, text, note) {
-    return `<span class="eyebrow">${esc(eyebrow)}</span>${text ? `<b>${esc(text)}</b>` : ""}${note ? `<span class="note">${esc(note)}</span>` : ""}`;
+    // (the note is cut with an ellipsis where the bar is narrow: the full sentence is its tooltip)
+    return `<span class="eyebrow">${esc(eyebrow)}</span>${text ? `<b>${esc(text)}</b>` : ""}${note ? `<span class="note" title="${esc(note)}">${esc(note)}</span>` : ""}`;
   }
   function barHtml(whose, buttons, slots) {
     return `<div class="whose" data-fk="whose">${whose}</div><div class="${slots ? "slots" : "row"}">${buttons}</div>`;
@@ -1237,6 +1251,11 @@
   // What the Follow button will do, in words.
   function followText(view, follow) {
     if (!follow) return "";
+    // All-In or Fold: answering an all-in is a call, and the bar's own button says Call with its price.
+    const legal = (view.hand && view.hand.legal) || {};
+    if (isAof(view) && legal.call != null && (follow.kind === "allin" || follow.kind === "call")) {
+      return `call ${mainText(view, legal.call, view.hand.to_call_bb)}`;
+    }
     const kind = follow.kind === "allin" ? "all-in" : follow.kind;
     if (follow.to == null || follow.kind === "allin") return kind;
     return `${kind} ${chipsOnlyText(view, follow.to)}`;

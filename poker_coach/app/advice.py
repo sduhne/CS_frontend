@@ -1446,35 +1446,31 @@ def small_raise_plans(seen: Seen, money: Money, size: float, strict: bool) -> li
     return [plan_after_guard(seen, money, size, line, strict, near) for line in lines]
 
 
-def big_blind_small_raise(seen: Seen, before: Before) -> bool:
-    """The big blind against one raise of 2.5bb or less that costs him less than a third of what he has left."""
-    if before.kind != "raise" or seen.behind(seen.hero) != 0:
-        return False
-    small = before.raises[0].amount <= SMALL_RAISE_BB * seen.bb + 1e-9
-    return small and seen.to_call < COMMIT_SHARE * seen.state.stack[HERO]
-
-
 def big_blind_sheet_list(seen: Seen, before: Before) -> tuple[str, str] | None:
-    """(the hands the sheet lets the big blind continue with against one small raise, the same in words).
+    """(the hands the sheet lets the big blind continue with against one raise, the same in words).
 
-    With 9 to 24bb that is the sheet's short list (any pair, any suited
-    hand, any ace, K9o+, Q9o+, J9o+, T9o).  With 25bb or more it is the
-    sheet's row for the big blind against a raise from that seat.  ``None``
-    under 9bb, against a bigger raise, or in any other seat.
+    With 9 to 24bb, against a raise of 2.5bb or less, that is the sheet's
+    short list (any pair, any suited hand, any ace, K9o+, Q9o+, J9o+, T9o).
+    With 25bb or more it is the sheet's row for the big blind against a
+    raise from that seat.  ``None`` in any other seat, against two raises,
+    when the call costs a third of the stack, under 9bb, and with 9 to 24bb
+    against a bigger raise.
     """
-    if not big_blind_small_raise(seen, before):
+    if before.kind != "raise" or seen.behind(seen.hero) != 0 \
+            or seen.to_call >= COMMIT_SHARE * seen.state.stack[HERO]:
         return None
     eff = seen.bbs(effective_stack(seen))
-    if eff < BB_CALL_BB[0]:
-        return None
-    if eff < BB_CALL_BB[1] + 1:
+    if eff >= BB_CALL_BB[1] + 1:
+        group = seat_group(seen.behind(before.raises[0].idx))
+        row = TAG.table(table_players(seen.n))["vs_raise"].get(f"{group}|bb")
+        if row is not None:
+            hands = ", ".join(row[key] for key in ("value", "bluff", "call", "setmine") if row.get(key))
+            return hands, ("its list for the big blind with 25bb or more against a raise from "
+                           + seen.label(before.raises[0].idx))
+    small = before.raises[0].amount <= SMALL_RAISE_BB * seen.bb + 1e-9
+    if eff >= BB_CALL_BB[0] and small:
         return TAG.BB_CALL_SHORT, TAG.BB_CALL_WORDS
-    group = seat_group(seen.behind(before.raises[0].idx))
-    row = TAG.table(table_players(seen.n))["vs_raise"].get(f"{group}|bb")
-    if row is None:
-        return TAG.BB_CALL_SHORT, TAG.BB_CALL_WORDS
-    hands = ", ".join(row[key] for key in ("value", "bluff", "call", "setmine") if row.get(key))
-    return hands, f"its list for the big blind with 25bb or more against a raise from {seen.label(before.raises[0].idx)}"
+    return None
 
 
 def big_blind_sheet_call(seen: Seen, before: Before) -> bool:
@@ -1485,7 +1481,7 @@ def big_blind_sheet_call(seen: Seen, before: Before) -> bool:
 
 def big_blind_call_chart(seen: Seen, before: Before) -> dict:
     rows = big_blind_sheet_list(seen, before) or (TAG.BB_CALL_SHORT, "")
-    return range_chart("Sheet: the big blind against a small raise", seen.hand_name, {"c": parse_range(rows[0])},
+    return range_chart("Sheet: the big blind against a raise", seen.hand_name, {"c": parse_range(rows[0])},
                        legend=(("c", "Play"), ("f", "Fold")))
 
 
@@ -1493,17 +1489,20 @@ def lower_variance_side(seen: Seen, before: Before, adv, play: Play) -> None:
     """A close answer before the money that puts chips in: the quieter play leads.
 
     The headline is FOLD (CHECK when it is free) and the engine's play the
-    second line.  Two exceptions: the big blind against a small raise with 9
-    to 24bb keeps the call for the hands on the sheet's list, and a call of
-    an all-in at a good price is never folded.
+    second line.  Two exceptions.  The big blind keeps the call for the
+    hands on the sheet's list (``big_blind_sheet_list``: the short list
+    against a small raise with 9 to 24bb, the sheet's own row with 25bb or
+    more), and a close re-raise there gives way to that call, not to a fold:
+    a stronger hand never folds where a weaker one calls.  And a call of an
+    all-in at a good price is never folded.
     """
     if adv.confidence != "close" or play.kind not in ("call", "raise", "allin"):
         return
     if play.kind == "call" and "need" in play.facts and good_price(call_price(seen), edge_points(play.facts)):
         return
     sheet = None
-    if play.kind == "raise" and big_blind_small_raise(seen, before) and in_range(TAG.BB_CALL_SHORT, seen.hand_class) \
-            and seen.bbs(effective_stack(seen)) >= BB_CALL_BB[0]:
+    rows = big_blind_sheet_list(seen, before)
+    if play.kind == "raise" and rows is not None and in_range(rows[0], seen.hand_class):
         # A close re-raise in the big blind (a bluff with a small suited ace): the quieter play is the call the
         # big blind makes with weaker hands of the sheet's list, not a fold.
         engine = engine_summary(play)
@@ -1515,20 +1514,19 @@ def lower_variance_side(seen: Seen, before: Before, adv, play: Play) -> None:
         play.verb, play.kind, play.to = "CALL", "call", None
         play.qualifier, play.sure, play.guard, play.plans = "close: lower variance", "close", "close", []
         play.reason = "Close: the re-raise and the call are worth about the same. Before the money the " \
-                      "lower-variance side leads: call, as the big blind does with any suited hand."
+                      "lower-variance side leads: call, as the sheet has the big blind do with this hand."
         play.flip = "The engine's play again once in the money, or with a read that makes it safer."
         play.source = f"CLOSE: before the money the lower-variance side leads (engine: {engine})"
         play.chart = hero_cell_as_played(play.chart, seen.hand_class, play.kind)
         return
-    rows = big_blind_sheet_list(seen, before) if play.kind == "call" else None
-    if rows is not None:
+    if play.kind == "call" and rows is not None:
         if in_range(rows[0], seen.hand_class):
             play.source = "the engine's close call is on the sheet's big blind list"
             return
         short_list = rows[0] == TAG.BB_CALL_SHORT
         sheet = tile("The sheet says", "FOLD", ("it calls " if short_list else "not on ") + rows[1])
-        reason = f"Close, and not a hand the sheet calls a small raise with in the big blind ({rows[1]}): " \
-                 "before the money, fold."
+        reason = f"Close, and not a hand the sheet calls a {'small ' if short_list else ''}raise with in the big " \
+                 f"blind ({rows[1]}): before the money, fold."
     else:
         what = {"call": "call", "allin": "all-in"}.get(play.kind, "raise")
         quiet = "check" if seen.to_call <= 0 else "fold"

@@ -10,10 +10,25 @@
      ui       what is open on this screen only (the list is at the top of render.js)
 
    THE FOUR INPUT STATES (nothing stores them: they follow from what is on screen)
-     FIELD    the cursor is in a text field: keys are text, Enter accepts, Esc cancels
+     FIELD    the cursor is in a text field: keys are text, Enter accepts, Esc cancels (the field's
+              first value comes back and nothing is sent). A value the server refuses stays in its
+              open field, selected, with the reason under it (ui.fieldError).
      CARDS    the card picker is open: 2-9 t j q k a are ranks, s h d c suits, s and o suited and offsuit
      ACTION   a hand is being played and the cards are in: verbs, seat digits, management keys
      TABLE    between hands: seat digits, management keys
+
+   WHOSE ACTION A PLAIN KEY RECORDS is what the first row of the action bar says (UI.actingSeat):
+     hero, whenever he still owes a decision: the players in front of him then take the passive default;
+     the next player otherwise; and, once the user has recorded an opponent with a plain key in this
+     betting round (ui.turn), the next player in turn until the turn reaches hero.
+     A seat digit first aims one action at that seat, whatever the bar says.
+
+   NOTHING CHANGES WITHOUT A WORD: where the model has no toast of its own for a change (a stack, a
+   player sitting out, a one-key setting) sayWhatChanged makes one, with Undo.
+
+   THE TABLE MAY CHANGE ELSEWHERE (another window): every intent carries the revision of the view on
+   screen, the server refuses one for an older table (code "stale") and the page then shows the table
+   as it is; the view is read again when the tab gets the focus.
 
    WHICH KEY DOES WHAT is not written here: the server sends the key map of defaults.py with the
    view (view.settings.keys). COMMANDS and SEAT_COMMANDS below hold what each command does.
@@ -143,7 +158,7 @@
       if (intent.op === "award" && error.code === "side_pot") { state.ui.awardTiers = intent.ranking; state.ui.split = null; }
       // A smaller table with a player on the last seat: the toast offers to clear the seat and remove it.
       const offer = error && intent.op === "set_size" ? clearAndShrink(intent) : null;
-      if (offer) state.ui.toast.action = offer;
+      if (offer) state.ui.toast = {text: error.message, error: true, action: offer};       // (the button says what to do instead)
     } else {
       delete state.ui.toast;              // the toast that came with the new view shows
       state.ui.fieldError = null;
@@ -293,8 +308,11 @@
   /* ---------- 3. Events and drawing ---------- */
 
   // One change, from a click (render.js sends it) or from a key (the commands below make it).
-  //   detail.ui   a patch for what is open on screen     detail.op   an intent, with its arguments beside it
-  //   detail.cmd  "copy"
+  //   detail.ui     a patch for what is open on screen     detail.op   an intent, with its arguments beside it
+  //   detail.cmd    "copy", "reload"
+  //   detail.from   {fk, value}: the field the value was typed into. Its ui patch then waits for the answer.
+  //   detail.after  a ui patch for once the server has done the intent
+  //   detail.plain  (act) true: not aimed at a seat, so it starts or continues recording in turn
   // `plan` is given by keys only: {} = leave the focus on nothing, {field: name} = put it into that field.
   function apply(detail, plan, then) {
     if (detail.op === "act" && skipsHero(detail.seat)) {
@@ -407,6 +425,7 @@
     if (seat === menuDrawn) return;
     menuDrawn = seat;
     menuSeen = false;
+    if (seat != null) requestAnimationFrame(() => requestAnimationFrame(() => { if (menuDrawn === seat) menuSeen = true; }));
   }
   // Run `job` once the seat menu that is drawn now has been on the screen. Keys typed meanwhile wait.
   function onceMenuSeen(job) {

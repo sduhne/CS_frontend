@@ -220,6 +220,7 @@
   add("first-run-view", "No hand recorded yet: the server sends a table and first_run", () => {
     const view = tournament({size: 8, button: 1, players: [["You", 10000], null, null, null, null, null, null, null]});
     view.first_run = true;
+    view.can = {undo: false, redo: false};          // undo stops at the first table of a session
     view.setup = {level: "100/200", entrants: "1200"};
     return {view: view, advice: null, ui: {}};
   });
