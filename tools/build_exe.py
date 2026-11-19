@@ -177,7 +177,8 @@ def check_program(program: str, patience: float = 120.0) -> bool:
             yield step(f"{mode}: a new session, a deal and the coach's answer",
                        advice.get("status") == "ready" and verb not in ("", "NO ADVICE"),
                        f"{verb or advice.get('status')}  ({advice.get('spot') or advice.get('reason', '')})")
-        saved = sorted(os.listdir(folder))
+        # beside the four session files the folder holds app.lock while the program runs, and the .bak copies
+        saved = saved_sessions(os.listdir(folder))
         yield step("the sessions are saved", saved == ["aof.json", "app.json", "spin.json", "tournament.json"], ", ".join(saved))
 
     print(f"checking {program}", flush=True)
@@ -189,6 +190,11 @@ def check_program(program: str, patience: float = 120.0) -> bool:
         stop(running)
         shutil.rmtree(work, ignore_errors=True)
     return all(results)
+
+
+def saved_sessions(names) -> list:
+    """The session files among a folder's names: the ones ending in .json, in order."""
+    return sorted(name for name in names if name.endswith(".json"))
 
 
 def stop(running: subprocess.Popen) -> None:

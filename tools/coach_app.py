@@ -13,8 +13,10 @@ Two things differ from ``python -m poker_coach app``:
   Ctrl+C.  The table app then shows a small window with the address, "Open the page" and
   "Stop"; Stop, or closing that window, ends the program.  With a console (``build_exe.py
   --console``) the address is printed and Ctrl+C or closing the console ends it.
-- Started while a copy is already running, it opens that copy's page and steps aside: two
-  copies would save over each other's tables.
+- Started while a copy already serves the same folder of tables, it opens that copy's page and
+  steps aside: two copies would save over each other's tables.  The server finds the running
+  copy (``server.start_server`` raises ``AlreadyRunning``), so this holds for every way of
+  starting: with or without a console, on any port, with ``--folder`` or without.
 """
 from __future__ import annotations
 
@@ -69,38 +71,9 @@ def tell(text: str) -> None:
 def table_app(argv) -> int:
     from poker_coach.cli import build_parser, main
 
-    options = build_parser().parse_args(argv)
-    address = f"http://127.0.0.1:{options.port}/"
-    if not options.folder and coach_is_at(options.port):
-        # Started twice.  The copy that is running keeps the tables; this one shows its page and ends.
-        if has_console():
-            print(f"Poker Coach is already running at {address}")
-        if not options.no_browser:
-            webbrowser.open(address)
-        return 0
     if has_console():
         return main(argv)                   # exactly "python -m poker_coach app": Ctrl+C stops it
-    return table_app_with_a_window(options)
-
-
-def coach_is_at(port: int) -> bool:
-    """Whether a copy of the table app already answers on this port of this computer."""
-    import http.client
-
-    from poker_coach.app import server
-
-    link = http.client.HTTPConnection("127.0.0.1", port, timeout=0.3)   # a program on this computer answers at once
-    try:
-        link.connect()
-        link.sock.settimeout(5)
-        link.request("GET", "/api/view")
-        answer = link.getresponse()
-        answer.read()
-        return answer.status == 200 and (answer.getheader("Server") or "").strip() == server.Handler.server_version
-    except (OSError, http.client.HTTPException):    # nothing listens there, or it is another program
-        return False
-    finally:
-        link.close()
+    return table_app_with_a_window(build_parser().parse_args(argv))
 
 
 def table_app_with_a_window(options) -> int:
@@ -110,6 +83,11 @@ def table_app_with_a_window(options) -> int:
 
     try:
         table = server.start_server(options.port, app_folder(options.folder), options.verbose)
+    except server.AlreadyRunning as running:
+        # Started twice.  The copy that is running keeps the tables; this one shows its page and ends.
+        if not options.no_browser:
+            webbrowser.open(running.address)
+        return 0
     except (OSError, ValueError) as err:    # no free port, or a folder that cannot be used
         tell(f"Poker Coach could not start.\n\n{err}")
         return 2
