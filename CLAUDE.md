@@ -452,7 +452,14 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
 - **The page.** The caption row above the action bar says whose action the
   plain keys record ("YOUR ACTION", or "RECORDING" with position and seat).
   That seat is Menlo yellow on the table, the user's or another player's; a
-  white frame is a seat that is only selected.
+  white frame is a seat that is only selected. Players are asked in the
+  order of the table: before the flop from the seat after the big blind,
+  after it from the first player after the button, and the user when the
+  turn is theirs. Enter gives the players in front of the user their fold
+  or check at once (Esc takes it back); Space follows the coach and records
+  those folds or checks too (Follow says "if LJ, HJ fold"). Settings, Order
+  of action, "My decision first" asks the user's own action at once, the
+  way it was before.
   The bar has six fixed slots: Follow or Next hand, four moves, Rest fold. A
   pointer click on it is dropped while a change is on its way, and for 400 ms
   after a move button changed its player (the button is drawn dimmer

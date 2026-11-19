@@ -3715,8 +3715,10 @@ class T8TheKeysSheet(unittest.TestCase):
             self.assertIn("Your own: type the amount, then Enter", text)
             self.assertIn("An opponent's is recorded at the usual size; E changes it", text)
         enter = self.text_of("table", "accept")
-        for part in ("The rest fold (or check)", "While you record the players in front of you in turn: they fold and "
-                     "the keys are yours", "While a street's cards are wanted: skip the board",
+        # (the players are asked in the order of the table: Enter before the user's own action gives the players
+        #  in front their fold or check, after it the rest theirs)
+        for part in ("Before your action: the players in front fold (or check), the keys are yours",
+                     "After it: the rest fold (or check)", "While a street's cards are wanted: skip the board",
                      "While a split is ticked: split"):
             self.assertIn(part, enter)
         self.assertIn("Three or more players: tick who shares it with the seat numbers, then Enter",

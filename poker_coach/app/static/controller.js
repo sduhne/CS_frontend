@@ -18,9 +18,10 @@
      TABLE    between hands: seat digits, management keys
 
    WHOSE ACTION A PLAIN KEY RECORDS is what the first row of the action bar says (UI.actingSeat):
-     hero, whenever he still owes a decision: the players in front of him then take the passive default;
-     the next player otherwise; and, once the user has recorded an opponent with a plain key in this
-     betting round (ui.turn), the next player in turn until the turn reaches hero.
+     the player whose turn it is at the table, in the order of the game, until the turn is the user's.
+     Enter ("Rest fold, then you") gives the players in front of the user the passive default for this
+     betting round (ui.skip): the keys are then the user's at once. Space follows the coach from any of
+     these states, and says on its button what it takes for granted.
      A seat digit first aims one action at that seat, whatever the bar says.
 
    NOTHING CHANGES WITHOUT A WORD: where the model has no toast of its own for a change (a stack, a
@@ -158,7 +159,7 @@
       epoch += 1;
       waitingKeys.length = 0;
       state.advice = null;
-      state.ui = Object.assign({}, state.ui, UI.only({}), {target: null, turn: null, awardTiers: null,
+      state.ui = Object.assign({}, state.ui, UI.only({}), {target: null, skip: null, turn: null, awardTiers: null,
         toast: {text: "The table had changed: look again and repeat.", fix: "It was changed in another window. Nothing was done here.", error: true}});
       if (then) then(false, error);
       draw({});
@@ -221,6 +222,7 @@
       if (a.opponents !== b.opponents) words.push("Opponents: " + label(C.opponents[view.mode], b.opponents));
       if (before.unit !== view.unit) words.push("Numbers in " + (view.unit === "bb" ? "big blinds" : "chips"));
       if ((before.deck || "") !== (view.deck || "")) words.push("Deck: " + label(C.deck, view.deck));
+      if ((before.order || "turn") !== (view.order || "turn")) words.push("Asked first: " + label(C.order, view.order).toLowerCase());
       const kind = (strip) => (strip.level || {}).ante_kind;
       if (kind(a) !== kind(b)) words.push("Ante: " + label(C.ante_kind, kind(b)).toLowerCase());
       if (!!a.reentry_open !== !!b.reentry_open) words.push(b.reentry_open ? "Re-entry is open" : "Re-entry is closed");
@@ -349,15 +351,18 @@
       toast("Your own action comes first.", "A player behind you cannot act before you do: " + ownKeys() + ", or Space for the coach's play.");
       return;
     }
-    // An action recorded for an opponent without aiming at his seat (a plain key, or a button of the bar
-    // while it names him): the user is recording the players in turn. The plain keys then keep going in
-    // turn, also once a raise makes hero owe a decision, until the turn reaches hero (see UI.actingSeat).
+    // `plain` says a key or a bar button was not aimed at a seat; it is not part of the intent. In turn (the
+    // usual order, see UI.actingSeat) nothing is kept from it. With "my decision first", an opponent recorded
+    // this way starts recording in turn (ui.turn): the plain keys keep going in turn until it reaches hero.
     if (detail.op === "act" && "plain" in detail) {
       const player = UI.seatOf(state.view, detail.seat);
-      if (detail.plain && player && !player.is_hero) state.ui.turn = UI.roundKey(state.view);
+      if (!UI.inTurn(state.view) && detail.plain && player && !player.is_hero) state.ui.turn = UI.roundKey(state.view);
       detail = Object.assign({}, detail);
       delete detail.plain;
     }
+    // An action is recorded: "Rest fold, then you" has done its work. If the betting comes round again
+    // (a raise behind the user), the players are recorded in turn again.
+    if (detail.op === "act" && state.ui.skip) state.ui = Object.assign({}, state.ui, {skip: null});
     // A value typed into a field (detail.from): what it closes is closed once the server has taken
     // the value. A refused one stays in its open field, with the reason under it (see fieldAnswered).
     const from = detail.op ? detail.from : null;
@@ -508,8 +513,10 @@
     if (!hand || (ui.selected != null && !(hand.line || []).some((event) => event.i === ui.selected))) ui.selected = null;
     if (ui.editing != null && ui.editing !== ui.selected) ui.editing = null;
     if (ui.sheet !== "history") ui.handOpen = null;
-    // Recording in turn lasts for one betting round, and ends when the turn reaches hero.
-    if (ui.turn && (!hand || hand.needs !== "action" || ui.turn !== UI.roundKey(view) ||
+    // "Rest fold, then you" lasts for one betting round.
+    if (ui.skip && (!hand || hand.needs !== "action" || ui.skip !== UI.roundKey(view) || !UI.inTurn(view))) ui.skip = null;
+    // ("My decision first") recording in turn lasts for one betting round, and ends when the turn reaches hero.
+    if (ui.turn && (!hand || hand.needs !== "action" || ui.turn !== UI.roundKey(view) || UI.inTurn(view) ||
                     (hand.target_is_hero && !(hand.before_target || []).length))) ui.turn = null;
     if (!hand) ui.picker = null;
     if (ui.seatMenu != null && ui.seatMenu > view.table.size) ui.seatMenu = null;
@@ -720,7 +727,7 @@
     if (now.target_is_hero) {
       // While the players in front of hero are recorded in turn: the rest of them fold, and the keys are hero's.
       if (now.needs === "action" && state.ui.target == null && UI.actingSeat(state.view, state.ui) !== now.target) {
-        apply({ui: {turn: null}}, {});
+        apply({ui: UI.inTurn(state.view) ? {skip: UI.roundKey(state.view)} : {turn: null}}, {});
         return;
       }
       // It would be hero's fold (or check) too: his own action is always typed.
@@ -763,8 +770,15 @@
     follow() {
       const view = state.view, now = view.hand;
       if (!now || now.needs !== "action" || !now.target_is_hero) return;       // no decision of hero's to follow
+      // A seat the user aimed at (its number, a click) is waiting for that player's action: Space is not it.
+      // While the players in front are up in turn, Space follows the coach all the same: they take the
+      // passive default (the Follow button says so: "if LJ, HJ fold").
       const acting = UI.seatOf(view, UI.actingSeat(view, state.ui));
-      if (acting && !acting.is_hero) {
+      if (acting && !acting.is_hero && state.ui.target != null) {
+        toast((acting.pos || "Seat " + acting.seat) + " is the seat you picked.", "Record that player's action, or Esc; then Space.");
+        return;
+      }
+      if (acting && !acting.is_hero && !UI.inTurn(view)) {        // ("my decision first", recording in turn)
         toast((acting.pos || "Seat " + acting.seat) + " acts before you.", "Record that player first; or Enter: the players before you fold.");
         return;
       }

@@ -3540,5 +3540,68 @@ class SpinSixPlayers(unittest.TestCase):
         self.assertIn(".actions .whose .eyebrow.up,.actions .whose .eyebrow.up+b{color:var(--yellow)}", css)
 
 
+class OrderOfAction(unittest.TestCase):
+    """Whose action is asked first: the player whose turn it is at the table (the default), or the user."""
+
+    def test_the_setting_is_kept_with_the_program_and_starts_in_turn(self):
+        import shutil
+        import tempfile
+        from poker_coach.app import defaults as D
+        from poker_coach.app.model import ModelError
+        self.assertEqual((D.ORDER, D.ORDERS), ("turn", ("turn", "hero")))
+        folder = tempfile.mkdtemp(prefix="poker order test ")
+        self.addCleanup(shutil.rmtree, folder, True)
+        s = Session(folder)
+        self.assertEqual(s.view()["order"], "turn")
+        self.assertEqual(s.do("set_config", key="order", value="hero")["order"], "hero")
+        self.assertEqual(Session(folder).view()["order"], "hero")           # it is in app.json, for every mode
+        self.assertEqual(s.do("set_config", key="order")["order"], "turn")  # without a value it flips
+        with self.assertRaises(ModelError):
+            s.do("set_config", key="order", value="backwards")
+
+    def test_the_view_names_the_real_next_player_on_every_street(self):
+        # six players, the user on the button: before the flop LJ (seat 4) is first, and the model's target is
+        # the user with the players in front listed in order; after the flop the first player after the button
+        s = Session(save=False)
+        s.do("new_session", mode="tournament", size=6, start_stack=20000, level="300/600/75", button=1)
+        hand = s.do("deal", hero_cards="AhKd")["hand"]
+        self.assertEqual((hand["target"], hand["before_target"]), (1, [4, 5, 6]))
+        s.do("act", seat=4, kind="fold")
+        hand = s.do("act", seat=5, kind="call")["hand"]
+        self.assertEqual((hand["target"], hand["before_target"]), (1, [6]))
+        s.do("act", seat=6, kind="fold")
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=2, kind="fold")
+        s.do("act", seat=3, kind="check")
+        hand = s.do("set_cards", slot="flop", text="Qs7d2c")["hand"]
+        self.assertEqual((hand["phase"], hand["target"], hand["before_target"]), ("flop", 1, [3, 5]))   # BB, then HJ
+        # the user in the small blind is first after the flop: nobody is in front
+        s = Session(save=False)
+        s.do("new_session", mode="tournament", size=6, start_stack=20000, level="300/600/75", button=6)
+        s.do("deal", hero_cards="AhKd")
+        s.do("act", seat=1, kind="call")                                    # the four in front fold by default
+        s.do("act", seat=2, kind="check")
+        hand = s.do("set_cards", slot="flop", text="Qs7d2c")["hand"]
+        self.assertEqual((hand["target"], hand["before_target"]), (1, []))
+
+    def test_the_page_asks_in_turn_unless_the_setting_says_otherwise(self):
+        import os
+        static = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "poker_coach", "app", "static")
+        with open(os.path.join(static, "render.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        with open(os.path.join(static, "controller.js"), encoding="utf-8") as fh:
+            keys = fh.read()
+        # in turn: the first of the players in front is up, until Enter ("Rest fold, then you") for this round
+        self.assertIn("if (before.length && ui.skip !== roundKey(view)) return before[0];", js)
+        self.assertIn('function inTurn(view) { return (view && view.order) !== "hero"; }', js)
+        self.assertIn('order: [{value: "turn", label: "In turn"}, {value: "hero", label: "My decision first"}]', js)
+        self.assertIn('choiceRow("Asked first", CHOICES.order, view.order || "turn", config("order"))', js)
+        # the coach's eyebrow while others are up says what is taken for granted, a fold or a check
+        self.assertIn('view.hand.to_call ? "If they fold" : "If they check"', js)
+        # Follow acts for the user (the server's target), whoever the bar names
+        self.assertIn('Object.assign({op: "act", seat: hand.target, via: "follow", ui: AFTER_ACT}, follow)', js)
+        self.assertIn("apply({ui: UI.inTurn(state.view) ? {skip: UI.roundKey(state.view)} : {turn: null}}, {});", keys)
+
+
 if __name__ == "__main__":
     unittest.main()

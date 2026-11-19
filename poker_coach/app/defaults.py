@@ -134,6 +134,11 @@ OPPONENTS = {                           # the table-wide opponent type per mode;
 }
 UNITS = ("chips", "bb")                 # how numbers are shown; All-In or Fold is always big blinds
 DECKS = ("one-ink", "four-colour")
+# Whose action the page asks for first.  "turn": the player whose turn it is at the table, one after the
+# other, and the user when it is theirs.  "hero": the user's own decision at once (the players in front
+# are taken to fold or check until an action is typed for them).
+ORDERS = ("turn", "hero")
+ORDER = "turn"
 
 # --------------------------------------------------------------------------
 # Keys
@@ -159,8 +164,8 @@ KEYS_TABLE = [                          # between hands and while a hand is play
     (("r",), "raise", "Raise. Your own: type the amount, then Enter. An opponent's is recorded at the usual size; "
                       "E changes it"),
     (("a",), "allin", "All-in"),
-    (("Enter",), "accept", "The rest fold (or check). While you record the players in front of you in turn: they fold "
-                           "and the keys are yours. While a street's cards are wanted: skip the board. "
+    (("Enter",), "accept", "Before your action: the players in front fold (or check), the keys are yours. "
+                           "After it: the rest fold (or check). While a street's cards are wanted: skip the board. "
                            "While a split is ticked: split"),
     (("w",), "won", "You won the pot"),
     (("l",), "lost", "You lost a heads-up pot"),

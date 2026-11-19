@@ -59,20 +59,27 @@ Alt+1, Alt+2, Alt+3):
 You are always seat 1, and seats count clockwise from you.
 
 **A hand.** `N` deals. Type your two cards (`a k s` is ace-king suited,
-`a h k d` the exact cards), then what happens. The row above the action bar
-says whose action the letters `f c x b r a` record. On your turn it reads
-YOUR ACTION: the letters are yours, and the players in front of you whom you
-did not type are folded (or checked). A seat's digit first gives one action
-to that player. Once you record an opponent with a plain letter the row
-reads RECORDING with the next player's position and seat, and the letters go
-on in turn until it is your turn. An opponent's bet or raise is taken at the
-usual size and `E` changes the amount; your own is typed. When it is your
-turn the answer is on screen and `Space` does what it says. After the flop
-type the board (`k s 7 d 2 c`); the coach then needs your exact cards. When
-players in front of you have not acted yet, the answer says what it takes
-for granted ("if BB and CO check") and `Space` records their checks with
-your play. Undo is `Backspace`, as often as you like, back to the first
-table of the session.
+`a h k d` the exact cards), then what happens, player by player. The seat
+whose turn it is at the table is yellow, and the row above the action bar
+names it: RECORDING with that player's position and seat, or YOUR ACTION
+when the turn is yours. The letters `f c x b r a` record that player's
+action and the yellow seat moves on. The order is the table's: before the
+flop it starts with the player after the big blind, after the flop with the
+first player after the button (the small blind, when that player is still
+in). `Enter` gives the players in front of you their fold (or check) at
+once and the letters are yours; `Esc` takes that back. A seat's digit first
+gives one action to that player, whatever the row says. An opponent's bet
+or raise is taken at the usual size and `E` changes the amount; your own is
+typed. The coach's answer is on screen from the start. While players in
+front of you have not acted it says what it takes for granted ("If they
+fold", "if BB and CO check"), and `Space` does what it says and records
+their folds or checks with your play. After the flop type the board
+(`k s 7 d 2 c`); the coach then needs your exact cards. Undo is
+`Backspace`, as often as you like, back to the first table of the session.
+
+If you would rather be asked for your own decision at once, choose "My
+decision first" under Order of action in Settings: the players in front of
+you are then taken to fold or check until you type an action for them.
 
 **The keys.** `?` on the page lists them; the list is made from
 `poker_coach/app/defaults.py`, so it is always the current one.
@@ -82,7 +89,7 @@ table of the session.
 | `N` | New hand, next hand. Spin & Gold: a new game of 300 chips once one is over (`Shift+N`: of 500 chips) |
 | `Space` | Do what the coach says |
 | `F` `C` `X` `B` `R` `A` | Fold, call, check, bet, raise, all-in. Your own bet or raise: type the amount, then `Enter` |
-| `Enter` | The rest fold (or check). While you record the players in front of you in turn: they fold and the keys are yours. While a street's cards are wanted: skip the board. While a split is ticked: split |
+| `Enter` | Before your action: the players in front of you fold (or check) and the keys are yours. After it: the rest fold (or check). While a street's cards are wanted: skip the board. While a split is ticked: split |
 | `W` `L` `Shift+W` | You won the pot; you lost a heads-up pot; split pot (three or more players: tick who shares it with the seat numbers, then `Enter`) |
 | `Backspace` `Z` `Ctrl+Z` | Undo. `Ctrl+Y` or `Ctrl+Shift+Z`: redo. `Ctrl+Backspace`: discard the hand |
 | `Left` `Right` | Previous and next step of the hand. `E` changes the amount of the selected bet (or of the last one), `Delete` deletes the selected action |

@@ -186,6 +186,7 @@
     unit: [{value: "chips", label: "Chips"}, {value: "bb", label: "Big blinds"}],
     deck: [{value: "one-ink", label: "Two colours"}, {value: "four-colour", label: "Four colours"}],
     button_rule: [{value: "dead", label: "Dead button"}, {value: "forward", label: "Forward-moving button"}],
+    order: [{value: "turn", label: "In turn"}, {value: "hero", label: "My decision first"}],
     type: ["unknown", "nit", "tight", "tag", "lag", "loose", "station", "maniac"],
   };
 
@@ -378,19 +379,30 @@
   // The betting round on screen, as a word: "12:flop".
   function roundKey(view) { return view.hand ? view.hand.no + ":" + view.hand.phase : ""; }
 
-  /* The seat the action bar and the plain keys record for:
-       the one the user aimed at (a click on a seat, a seat digit); else,
-       while the user records the players in turn (ui.turn), the next player to act; else
-       the server's target: hero whenever he still owes a decision (the players in front of him then
-       take the passive default), otherwise the next player. */
+  /* The seat the action bar and the plain keys record for: the player whose turn it is at the table.
+       The one the user aimed at (a click on a seat, a seat digit) comes first; else
+       the next player to act, in the order of the game: before the flop the player after the big blind,
+       after it the first player after the button, and so on round the table until the turn is the user's.
+       The server's target is the user whenever they still owe a decision (hand.before_target are the
+       players in front who have not acted); "Rest fold, then you" (Enter) takes those players' passive
+       default for this betting round (ui.skip), and the keys are the user's at once. */
   function actingSeat(view, ui) {
     const hand = view.hand;
     if (!hand || hand.needs !== "action") return null;
     if (ui.target != null) return ui.target;
     const before = hand.before_target || [];
-    if (ui.turn && ui.turn === roundKey(view) && before.length) return before[0];
+    if (!inTurn(view)) {
+      // "My decision first" (Settings): the user's decision is asked at once, and the players in front take the
+      // passive default. Once one of them is recorded with a plain key (ui.turn) the rest follow in turn.
+      if (ui.turn && ui.turn === roundKey(view) && before.length) return before[0];
+      return hand.target;
+    }
+    if (before.length && ui.skip !== roundKey(view)) return before[0];
     return hand.target;
   }
+  // The order in which actions are asked for (Settings, Table): "turn" follows the table, player by player;
+  // "hero" asks the user's decision first.
+  function inTurn(view) { return (view && view.order) !== "hero"; }
   function heroToAct(view) {
     return !!(view.hand && view.hand.needs === "action" && view.hand.target_is_hero);
   }
@@ -658,7 +670,7 @@
       const h = advice.headline;
       // While the players in front of hero are still being recorded in turn, the answer is for the
       // spot as it will be if they all fold: the slab says so.
-      const eyebrow = !heroToAct(view) ? "Coach" : actingSeat(view, ui) === view.hand.target ? "Your turn" : "If they fold";
+      const eyebrow = !heroToAct(view) ? "Coach" : actingSeat(view, ui) === view.hand.target ? "Your turn" : view.hand.to_call ? "If they fold" : "If they check";
       return {tone: h.tone || "wait", eyebrow: eyebrow, verb: h.verb, size: h.size_text,
               qualifier: h.qualifier, spot: advice.spot, sure: h.sure, live: true};
     }
@@ -1410,18 +1422,23 @@
     if (heroOutOfHand(view)) {
       first = nextHandButton("1");
     } else {
-      const follow = isHero && known && isCurrent(view, advice) ? advice.headline.follow : null;
-      // A provisional answer ("if BB and CO check": players in front of hero have not acted) can be
-      // followed, and the button says what it takes for granted: following records their checks too.
-      // Recording one of them first brings a fresh answer.
-      const assumed = follow && advice.provisional ? String(advice.provisional) : "";
+      // The coach's answer is for the user's own turn. While the players in front are still up (the bar names
+      // one of them) it can be followed all the same: Follow then says what it takes for granted ("if LJ, HJ
+      // fold", "if BB and CO check"), and following records those folds or checks too. Recording one of them
+      // first brings a fresh answer.
+      const ahead = inTurn(view) && !isHero && plain && hand.target_is_hero && before.length > 0;
+      const follow = ((isHero && known) || ahead) && isCurrent(view, advice) ? advice.headline.follow : null;
+      const names = before.map((other) => other.pos || `Seat ${other.seat}`);
+      const run = names.length >= 4 ? `${names[0]} to ${names[names.length - 1]}` : names.join(", ");
+      const granted = ahead ? `if ${run} ${names.length === 1 ? (hand.to_call ? "folds" : "checks") : (hand.to_call ? "fold" : "check")}` : "";
+      const assumed = follow && advice.provisional ? String(advice.provisional) : follow ? granted : "";
       const does = followText(view, follow);
       // (following an all-in puts the whole stack in, as the All-in button does: the same tooltip)
       const whole = follow && follow.kind === "allin" ? allInWords(view, legal, true) : "";
       first = barButton({label: "Follow", key: "Space", primary: true, slot: "1", fk: "follow", off: !follow,
                          sub: esc(assumed || does), subClass: assumed ? "assumed" : "",
                          title: assumed ? `${does}, ${assumed}` : whole,
-                         send: follow ? Object.assign({op: "act", seat: seat, via: "follow", ui: AFTER_ACT}, follow) : {}});
+                         send: follow ? Object.assign({op: "act", seat: hand.target, via: "follow", ui: AFTER_ACT}, follow) : {}});
     }
 
     // Slots 2 to 5: the moves of the player the first row names. (All-In or Fold has two moves: each
@@ -1450,7 +1467,8 @@
       rest = barButton({label: free ? "Rest check" : "Rest fold", key: "Enter", slot: "6", fk: "rest",
                         sub: esc(next ? `from ${next.pos || "seat " + next.seat}` : ""), send: {op: "close_round", ui: AFTER_ACT}});
     } else if (!isHero && plain) {
-      rest = barButton({label: free ? "Rest check" : "Rest fold", key: "Enter", slot: "6", fk: "rest", sub: "then you", send: {ui: {turn: null}}});
+      rest = barButton({label: free ? "Rest check" : "Rest fold", key: "Enter", slot: "6", fk: "rest", sub: "then you",
+                        send: {ui: inTurn(view) ? {skip: roundKey(view)} : {turn: null}}});
     } else {
       rest = barButton({label: free ? "Rest check" : "Rest fold", key: "Enter", slot: "6", fk: "rest", off: true, sub: "after you", send: {}});
     }
@@ -2001,6 +2019,13 @@
           <div class="buttons"><button type="submit" class="btn compact">Use these levels</button></div></form>`);
     }
 
+    html += section("Order of action",
+      choiceRow("Asked first", CHOICES.order, view.order || "turn", config("order")) +
+      `<p class="hint">In turn: the player whose turn it is at the table is asked first, one after the other, and you when it is yours.
+         Enter gives the players before you their fold (or check) at once; Space follows the coach.</p>
+       <p class="hint">My decision first: your own action is asked at once, and the players before you are taken to fold or check
+         unless you press their seat number first.</p>`);
+
     if (view.mode !== "aof") {
       const rule = buttonRule(view);
       html += section("Table",
@@ -2240,7 +2265,8 @@
     if (ui.selected != null) return {selected: null, editing: null, fieldError: null};
     if (ui.edit) return {edit: null, fieldError: null};
     if (ui.target != null) return {target: null};
-    if (ui.turn) return {turn: null};                         // the plain keys are hero's again
+    if (ui.turn) return {turn: null};                         // ("my decision first") the plain keys are hero's again
+    if (ui.skip) return {skip: null};                         // "Rest fold, then you" is taken back: the players are recorded in turn again
     return null;
   }
 
@@ -2706,7 +2732,7 @@
     freshPicker: freshPicker,
     wantSuits: wantSuits,
     isCurrent: isCurrent,
-    actingSeat: actingSeat,
+    actingSeat: actingSeat, inTurn: inTurn,
     roundKey: roundKey,
     plainAmount: plainAmount,
     typesBb: typesBb,

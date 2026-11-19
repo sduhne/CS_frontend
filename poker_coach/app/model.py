@@ -30,7 +30,7 @@ Intents and their arguments (text is always parsed here, never in the browser):
     set_tournament  remaining, paid, entrants, payouts, avg_stack, start_stack, buyin, name  (or field + text)
     remaining     delta (-1, +1, -10, +10) or value
     set_config    style, plan, opponents, pace, reentry_open, bounty, button_rule (dead, forward), short_post,
-                  unit, deck, notice_seen, tally
+                  unit, deck, order (turn, hero), notice_seen, tally
     level_up, level_down
     set_level     text ("300/600/75" or "600"), or sb, bb, ante
     set_ante_kind kind (none, player, bb); without it the kind cycles
@@ -863,7 +863,7 @@ class Session:
     def __init__(self, folder: str | None = None, save: bool = True):
         self.folder = folder or default_folder()
         self.saving = save
-        self.app = {"version": 1, "mode": "tournament", "unit": "chips", "deck": D.DECKS[0],
+        self.app = {"version": 1, "mode": "tournament", "unit": "chips", "deck": D.DECKS[0], "order": D.ORDER,
                     "rev": 0, "notice_seen": False}
         self._parked: dict[str, dict] = {}                  # the other modes' sessions, once they were opened
         self._toast: list[str] = []
@@ -1013,7 +1013,7 @@ class Session:
         if not isinstance(content, dict):
             raise ValueError("app.json is not an object")
         app = {}
-        for key, options in (("mode", D.MODES), ("unit", D.UNITS), ("deck", D.DECKS)):
+        for key, options in (("mode", D.MODES), ("unit", D.UNITS), ("deck", D.DECKS), ("order", D.ORDERS)):
             if content.get(key) in options:
                 app[key] = content[key]
         rev = content.get("rev")
@@ -1486,6 +1486,8 @@ class Session:
                 self.app["unit"] = _choice(text or _next(D.UNITS, self.app["unit"]), D.UNITS, "unit")
             elif key == "deck":
                 self.app["deck"] = _choice(text or _next(D.DECKS, self.app["deck"]), D.DECKS, "deck")
+            elif key == "order":                        # whose action the page asks for first (the page's affair)
+                self.app["order"] = _choice(text or _next(D.ORDERS, self.app.get("order", D.ORDER)), D.ORDERS, "order")
             elif key == "notice_seen":
                 self.app["notice_seen"] = _truth(value)
             elif key == "style":
@@ -3078,6 +3080,7 @@ class Session:
             "mode": data["mode"],
             "unit": "bb" if data["mode"] == "aof" else self.app["unit"],
             "deck": self.app["deck"],
+            "order": self.app.get("order", D.ORDER),
             "can": {"undo": bool(journal["undo"]), "redo": bool(journal["redo"])},
             "strip": self._view_strip(hand),
             "table": self._view_table(hand, state, target),
