@@ -16,7 +16,8 @@ How an answer is made, top to bottom of this file:
 3. **The tournament numbers** (``Money``): the prize model, how much of it is
    known (ICM off, estimated, on, exact), the stage, the fold clock.  In a
    very large field (more than ``PRIZE_PLACES`` paid places still to reach)
-   the prize model is thinned so that an answer stays quick.
+   the prize model is worked out in closed form, so that an answer stays
+   quick (``thinned_prizes``).
 4. **The route.**  Which part of the engine answers:
 
        tournament, full plan     preflop.advise, then the survival guard
@@ -34,16 +35,28 @@ How an answer is made, top to bottom of this file:
    the engine's play stands.  The table folds: in the style "Cash first" the
    headline is the fold ("survival fold", the engine's play the second line);
    in the default style "Survive, then win" only when the engine's own edge is
-   thin (``THIN_EV_BB_*``, ``THIN_EDGE_POINTS_*``), otherwise the play stands
-   as a "clear edge".  A good price is never folded, first in with 17bb or more
-   the sheet's small raise takes the place of the fold, and the big blind's
-   sheet call takes it against a small raise.  A close answer that puts chips
-   in gives way to the quieter play (the big blind keeps a close call only
-   with a hand that is on the sheet's row and on its short list of hands that
-   make top pair or a real draw).  The guard is off in the money, for a
+   thin or the engine itself calls the play close, otherwise the play stands
+   as a "clear edge".  Thin is an all-in worth less than a bar that grows
+   with the stack at risk (``thin_bar``: 0.20bb, and 0.02bb more for every
+   big blind at risk above 10), or a call with too few points to spare
+   (``THIN_EDGE_POINTS_*``).  A good price is never folded, first in with
+   17bb or more the sheet's small raise takes the place of the fold, and the
+   big blind's sheet call takes it against a small raise.  A close answer
+   that puts chips in gives way to the quieter play (the big blind keeps a
+   close call only with a hand that is on the sheet's row and on its short
+   list of hands that make top pair or a real draw; "close" is said of that
+   call only where the engine's own two numbers are close, otherwise the
+   fold is the sheet's: "SHEET FOLD").  The guard is off in the money, for a
    desperate stack, near the bubble when the fold clock says "cannot fold",
    with a read that makes the play safer, while re-entry is open and in the
    Max EV style.
+
+   Two readings of the table come before any of this.  A short all-in that
+   another player then raised over is passed to the engine as a call
+   (``preflop_acts``): that raise is the first raise, not a re-raise.  And
+   when hero called earlier in the hand, a raise that costs him a fifth of
+   the pot or less is called whatever the hand
+   (``cheap_call_after_calling``).
 6. **After the flop.**  The engine is asked about the opponents who have a
    hand (a player sitting out has none), each with the range of the way he
    came in (``preflop_roles``: first raise, raise over callers, re-raise,
@@ -122,12 +135,17 @@ from .model import HERO, average_stack, goal_for, icm_level, imply_until, postfl
 COMMIT_SHARE = 1 / 3            # the guard looks at plays that can lose this share of what hero has left before the flop
 RAISE_IS_ALLIN = 1 / 3          # a raise of this share of the raiser's stack is read as an all-in in the tables
 # The guard in the style "Survive, then win" only folds a thin edge.  Thin is: an all-in (or a raise that
-# commits) the engine values below this many big blinds against folding ...
-THIN_EV_BB_FAR = 0.20           # ... far from the money
-THIN_EV_BB_CLOSE = 0.20         # ... from "close to the money" on (the points for a call are what differs)
+# commits) the engine values below a bar that grows with the stack at risk (``thin_bar``): 12bb at risk
+# 0.24bb, 21bb 0.42bb, 30bb 0.60bb.  It is the margin the all-in tables themselves are built with (0.02bb
+# per big blind of stack over 10), far from the money and close to it alike:
+THIN_EV_BB = 0.20               # ... this many big blinds against folding,
+THIN_EV_PER_BB = 0.02           # ... and this much more for every big blind at risk
+THIN_EV_FROM_BB = 10            # ... above this many
 # ... and a call of an all-in (or a call that commits) with fewer points of equity than this over what it needs:
 THIN_EDGE_POINTS_FAR = 4
 THIN_EDGE_POINTS_CLOSE = 7
+CALLED_PRICE = 1 / 6            # hero called earlier in the hand and is raised: at 5 to 1 or better the call is
+                                # never folded, whatever the hand (the rule "you only called: fold" is for a real raise)
 GOOD_PRICE = 0.25               # the guard never folds a call at 3 to 1 or better (pot odds of 25% or less) ...
 CLEAR_EQUITY_POINTS = 15        # ... nor one with this many points of equity over what it needs
 SHEET_RAISE_BB = 17             # first in from this stack up, the guard's fold of an all-in becomes the sheet's small raise
@@ -158,8 +176,9 @@ CALLER_SHARE, CALLER_WIDEST = 0.75, 50.0    # a player who called an all-in and 
                                 # solved calling range, and never more than this many percent of hands (as the engine)
 CHIP_STEPS = (1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000)
                                 # after the flop a bet is rounded to the biggest of these that the blinds are made of
-PRIZE_PLACES = 1000             # the prize maths works on this many paid places at most: a bigger field is thinned
-                                # (``thinned_prizes``).  A 5,000-entrant field with 750 paid is not touched
+PRIZE_PLACES = 1000             # up to this many paid places still to reach the prize maths is the integral; a
+                                # bigger field is worked out in closed form (``thinned_prizes``).  A 5,000-entrant
+                                # field with 750 paid is not touched
 EV_CLOSE_BB = 0.05              # an all-in within this of its threshold is drawn as "close" in a chart
 CHART_SOLVER_WORK = 72          # a solver chart may cost about this many (rounds x players who can call)
 
@@ -579,18 +598,47 @@ def seat_types(data: dict, order: list) -> tuple[list, list]:
     return types, tags
 
 
+def short_all_ins(state) -> set:
+    """The places in ``state.log`` of the all-ins before the flop that are not "a raise": of less than a full
+    raise, or under ``SHORT_ALLIN_BB`` big blinds (the same reading as ``preflop_roles``)."""
+    short = set()
+    level, full_raise = state.bb, state.bb      # the bet to match, and the size of a full raise over it
+    for place, entry in enumerate(state.log):
+        if entry["street"] != "preflop" or entry["kind"] not in ("bet", "raise"):
+            continue
+        to = entry["to"]
+        is_full = to - level >= full_raise - 1e-9
+        if entry["allin"] and (not is_full or to < SHORT_ALLIN_BB * state.bb):
+            short.add(place)
+        if is_full:
+            full_raise = to - level
+        level = max(level, to)
+    return short
+
+
 def preflop_acts(state, order: list) -> list:
     """What each player did before the flop, as the engine reads it.
 
     Folds and checks are left out.  A call before any raise is a limp.  The
     amount is the total the player has in front of him ("raise to").
+
+    A short all-in (``short_all_ins``) that another player then raised over
+    without moving all-in himself is passed as a call: that raise is the
+    first raise of the hand, made with a normal raising range and with the
+    short stack's chips in the pot.  Read as "a raise and a re-raise" it
+    folded everything but aces and kings to a raise over 1.4 big blinds.
     """
+    log = [(place, entry) for place, entry in enumerate(state.log) if entry["street"] == "preflop"]
+    short = short_all_ins(state)
+    raised_over = {place for place in short
+                   if any(later > place and entry["kind"] in ("bet", "raise") and not entry["allin"]
+                          and entry["seat"] != state.log[place]["seat"] for later, entry in log)}
     acts, raised = [], False
-    for entry in state.log:
-        if entry["street"] != "preflop" or entry["kind"] in ("fold", "check"):
+    for place, entry in log:
+        if entry["kind"] in ("fold", "check"):
             continue
         index = order.index(entry["seat"])
-        if entry["kind"] == "call":
+        if entry["kind"] == "call" or place in raised_over:
             acts.append(Act(index, "call" if raised else "limp", entry["to"]))
         else:                                   # a raise (the big blind is the bet, so nobody "bets" before the flop)
             acts.append(Act(index, "allin" if entry["allin"] else "raise", entry["to"]))
@@ -682,7 +730,8 @@ def spot_line(seen: Seen) -> str:
 def preflop_story(seen: Seen) -> str:
     """What happened before the flop, in a few words."""
     parts, raised = [], False
-    for entry in seen.state.log:
+    short = short_all_ins(seen.state)           # a raise over a short all-in is a raise, not a re-raise
+    for place, entry in enumerate(seen.state.log):
         if entry["street"] != "preflop" or entry["kind"] in ("fold", "check"):
             continue
         index = seen.order.index(entry["seat"])
@@ -696,7 +745,7 @@ def preflop_story(seen: Seen) -> str:
         else:
             word = "re-raise" if raised else "raise"
             parts.append(f"you {word}d to {size}" if mine else f"{who} {word}s to {size}")
-        raised = raised or entry["kind"] != "call"
+        raised = raised or (entry["kind"] != "call" and place not in short)
     if not parts:
         return "first to act" if seen.hero == 0 else "folded to you"
     return ", ".join(parts)
@@ -789,55 +838,29 @@ class Money:
 def thinned_prizes(prizes: Prizes, table: int, places: int | None = None) -> Prizes:
     """The prize model, made affordable in a very large field.
 
-    The time an ICM value takes grows with the paid places that can still be
-    reached, a little faster than in step with them: with 22,000 of them one
-    answer took 12 seconds.  A player's value depends on his share of the
-    chips and on the share of the field that is paid, not on the head count.
-    So above ``PRIZE_PLACES`` the rest of the field is thinned: every ``c``
-    players become one with the same stack, and every ``c`` places of the
-    ladder one place that pays their average.  The players at the table stay
-    as they are.  What is kept exactly: whether the money has been reached
-    (nobody is paid who would not be, and at least one place stays unpaid
-    before the money), the prize of a place as a share of the field, and the
-    bonus for cashing.
+    The time an ICM value takes by the integral grows with the paid places
+    that can still be reached, a little faster than in step with them: with
+    22,000 of them one answer took 12 seconds.  So above ``PRIZE_PLACES`` the
+    same model is worked out in closed form (``icm.large_field_equity``):
+    the real ladder, the real field and the real number of places still to
+    go, in a few milliseconds whatever the size of the field.  Nothing is
+    merged: three places from the money are three places, also for a short
+    stack at a table of short stacks.  (The first version of this function
+    thinned the field, every ``c`` players into one: that made one place of
+    three, and priced a 12bb stack near the money far too carefully.  The
+    name is kept for the callers.)
 
     ``table`` is the number of players at hero's table (they are not part of
     ``prizes.field_n``).  A field of 5,000 with 750 paid is under the cap and
     comes back untouched; late in a huge field, when fewer players are left
-    than the cap, the exact ladder is used again.
+    than the cap, the integral is used again.
     """
     cap = PRIZE_PLACES if places is None else places
-    pays = prizes.raw_payouts
-    left = table + prizes.field_n
-    reachable = min(len(pays), left)            # the paid places somebody can still finish in
-    if prizes.chip_ev or reachable <= cap:
+    reachable = min(len(prizes.raw_payouts), table + prizes.field_n)    # the paid places somebody can still finish in
+    if prizes.chip_ev or reachable <= cap or prizes.large:
         return prizes
-    c = -(-reachable // cap)                    # players of the field that become one
-    field = max(1, round(prizes.field_n / c))
-    unpaid = left - len(pays)                   # places from the money, before it
-    unpaid_thin = max(1, round(unpaid / c)) if unpaid > 0 else 0
-    paid_thin = max(1, table + field - unpaid_thin)
-    ratio = reachable / paid_thin               # places of the real ladder behind one place of the thin one
-    total = [0.0]
-    for prize in pays[:reachable]:
-        total.append(total[-1] + prize)
-
-    def paid_to(place: float) -> float:
-        """The prizes of the first ``place`` places together (a part of a place counts as that part of its prize)."""
-        whole = min(int(place), reachable)
-        return total[whole] + ((place - whole) * pays[whole] if whole < reachable else 0.0)
-
-    banded = []
-    for j in range(paid_thin):
-        first, end = j * ratio, (j + 1) * ratio
-        low, high = min(int(first), reachable - 1), min(reachable - 1, max(int(first), -int(-end // 1) - 1))
-        if pays[low] == pays[high]:             # the whole band pays one prize: that prize, to the last digit
-            prize = pays[low]                   # (a rounding difference would count as one more pay jump)
-        else:
-            prize = (paid_to(end) - paid_to(first)) / ratio
-        banded.append(min(prize, banded[-1]) if banded else prize)
-    return Prizes(banded, field_n=field, field_stack=prizes.field_stack, itm_bonus=prizes.itm_bonus,
-                  label=prizes.label)
+    return Prizes(prizes.raw_payouts, field_n=prizes.field_n, field_stack=prizes.field_stack,
+                  itm_bonus=prizes.itm_bonus, label=prizes.label, large=True)
 
 
 def read_money(session) -> Money:
@@ -846,7 +869,8 @@ def read_money(session) -> Money:
     goal = goal_for(data)
     prizes = thinned_prizes(S.build_prizes(state, goal), len(S.occupied(state)))
     # the opponents play for the real prizes, without hero's bonus for cashing
-    field_prizes = Prizes() if prizes.chip_ev else Prizes(prizes.raw_payouts, prizes.field_n, prizes.field_stack)
+    field_prizes = Prizes() if prizes.chip_ev else Prizes(prizes.raw_payouts, prizes.field_n, prizes.field_stack,
+                                                          large=prizes.large)
     stage = S.stage(state)
     clock = S.fold_clock(state)
     remaining, paid = stage.get("remaining"), stage.get("paid")
@@ -982,7 +1006,7 @@ def fold_clock_line(data: dict, money: Money) -> str:
         text = sentence(lasts)
     cover = sit_out_cover(data, money)
     if cover is not None and cover >= 2:        # ("2524% of what it takes" is a number nobody can read)
-        text += f" You hold {cover:.0f} times what it takes to fold into the money (the sit-out line)."
+        text += f" You hold {times(cover)} what it takes to fold into the money (the sit-out line)."
     elif cover is not None:
         text += f" You hold {percent(cover)} of what it takes to fold into the money (the sit-out line)."
     after = next_level(data)
@@ -998,9 +1022,15 @@ def no_bubble_estimate(money: Money) -> bool:
     return bool(clock) and clock.get("eta") is None and clock_gives_a_verdict(money) and not money.in_money
 
 
+def times(factor: float) -> str:
+    """ "8.7 times", "25 times": one decimal under ten, where it still says something."""
+    return f"{bb_number(factor) if factor < 9.95 else format(factor, '.0f')} times"
+
+
 def of_the_line(cover: float) -> str:
-    """Hero's stack against the sit-out line, in words: "31% of the sit-out line", "9 times the sit-out line"."""
-    return f"{cover:.0f} times the sit-out line" if cover >= 2 else f"{percent(cover)} of the sit-out line"
+    """Hero's stack against the sit-out line, in words: "31% of the sit-out line", "8.7 times the sit-out line"
+    ("872% of the sit-out line" is a number nobody can read)."""
+    return f"{times(cover)} the sit-out line" if cover >= 2 else f"{percent(cover)} of the sit-out line"
 
 
 def sit_out_cover(data: dict, money: Money) -> float | None:
@@ -1119,21 +1149,39 @@ def engine_facts(adv) -> dict:
     return facts
 
 
-def engine_tiles(facts: dict, kind: str, value_note: str) -> list:
-    """The key numbers of an engine answer as tiles, the most telling first."""
+def engine_tiles(facts: dict, kind: str, value_note: str, line: tuple | None = None) -> list:
+    """The key numbers of an engine answer as tiles, the most telling first.
+
+    ``line``: what the engine wants of an all-in in this spot (``engine_line``), for the note beside a fold
+    whose all-in number is a small gain.
+    """
     tiles = []
     if kind == "call" and "pot_odds" in facts and "my_equity" in facts and "need" not in facts:
-        tiles.append(tile("Price / equity", f"{facts['pot_odds']:.0f}% / {facts['my_equity']:.0f}%",
-                          "pot odds; your equity against their range"))
+        if "bb_call_need" in facts:
+            # The big blind against a raise: the engine's own test is the price plus points for how the hand
+            # plays after the flop.  That is the "need" shown, so a call it marks close reads as close (the
+            # bare pot odds, 20% against 40%, did not).
+            points = round(100 * facts["bb_call_need"]) - round(facts["pot_odds"])
+            tiles.append(tile("Need / have", f"{100 * facts['bb_call_need']:.0f}% / {facts['my_equity']:.0f}%",
+                              f"the price ({facts['pot_odds']:.0f}%) plus {points} points for play after the flop"))
+        else:
+            tiles.append(tile("Price / equity", f"{facts['pot_odds']:.0f}% / {facts['my_equity']:.0f}%",
+                              "pot odds; your equity against their range"))
     # A raise or an all-in the engine makes by rule (aces and kings after a raise and a re-raise) while its own
     # all-in number is a loss: that number, and the fold share that goes with it, would contradict the headline.
     by_rule = kind in ("raise", "allin") and facts.get("ev", 0.0) < 0
     # And a fold the engine made by a rule (the opening chart from 17bb, "only premiums continue" after a raise
     # and a re-raise): the all-in's number is its reference there, not what the answer was made from.  A gain
     # beside the fold would read as "all-in instead".
-    by_rule = by_rule or (kind in ("fold", "check") and not number_backs_the_fold(facts))
+    by_rule = by_rule or (kind in ("fold", "check") and not number_backs_the_fold(facts, line))
+    # A small gain beside a fold is shown with the line it is under ("under the +0.15bb it takes over a raise").
+    # Where the engine has no such line (re-raised with more than 45bb it goes by its equity rules) the fold
+    # was made by a rule, and the gain is left out like the bigger ones.
+    gain_beside_fold = kind in ("fold", "check") and sign_of(facts.get("ev", 0.0)) > 0
+    by_rule = by_rule or (gain_beside_fold and line is None)
     if "ev" in facts and not by_rule:
-        tiles.append(tile("All-in against folding", signed_bb(facts["ev"]), value_note, sign_of(facts["ev"])))
+        note = f"under the {signed_bb(line[0])} it takes {line[1]}" if gain_beside_fold else value_note
+        tiles.append(tile("All-in against folding", signed_bb(facts["ev"]), note, sign_of(facts["ev"])))
     if "need" in facts and "equity" in facts:
         counted = "pot odds alone" if value_note == "chip EV" else "the price and ICM are counted"
         tiles.append(tile("Need / have", f"{percent(facts['need'])} / {percent(facts['equity'])}",
@@ -1153,10 +1201,38 @@ def engine_tiles(facts: dict, kind: str, value_note: str) -> list:
     return tiles[:3]
 
 
-def number_backs_the_fold(facts: dict) -> bool:
+def number_backs_the_fold(facts: dict, line: tuple | None = None) -> bool:
     """Was a fold made from the all-in's own number?  Where the solver decides, the all-in is folded when it
-    earns nothing, or under +0.15bb over a raise.  A fold beside a bigger gain was made by a rule of the engine."""
-    return facts.get("ev", 0.0) <= 0.15 + 1e-9 and "open_range" not in facts
+    earns nothing, or less than the engine wants of it there (``engine_line``: +0.15bb over a raise, +0.50bb
+    against a re-raise).  A fold beside a bigger gain was made by a rule of the engine."""
+    return facts.get("ev", 0.0) <= max(0.15, line[0] if line else 0.0) + 1e-9 and "open_range" not in facts
+
+
+# What the engine wants an all-in to earn against folding before it makes it, by what happened before hero
+# (the lines of ``preflop.py``: vs_limp, vs_open with 25bb or less, vs_3bet with 45bb or less, cold_vs_3bet).
+ENGINE_ALLIN_LINES = {"limped": (0.15, "over callers"), "raise": (0.15, "over a raise"),
+                      "reraised": (0.50, "against a re-raise"),
+                      "raise_reraise": (0.50, "after a raise and a re-raise")}
+ENGINE_FIRST_IN_LINE = (0.05, "at this depth")      # first in between 10bb and the top of its all-in zone
+
+
+def engine_line(seen: Seen, facts: dict, before: Before) -> tuple | None:
+    """(what the engine's all-in must earn here, in which spot) where that is more than nothing, else ``None``.
+
+    "Close" beside an all-in's number is close to this line, not to zero:
+    +1.36bb is close where an all-in in place of a small re-raise takes
+    +1.20bb, and a fold beside +0.12bb is a fold where it takes +0.15bb.
+    """
+    if "ev" not in facts:
+        return None
+    if "reshove_bar_bb" in facts:               # 26 to 45bb: the hand could re-raise small or call instead
+        return facts["reshove_bar_bb"], "in place of a small re-raise"
+    if before.kind == "first_in":
+        late = seen.n == 2 or seen.behind(seen.hero) == 1
+        return ENGINE_FIRST_IN_LINE if 10 < seen.bbs(start_effective(seen)) <= (20 if late else 16) else None
+    if before.kind == "reraised" and seen.bbs(effective_stack(seen)) > 45:
+        return None                             # deeper, the engine answers a re-raise by its equity rules
+    return ENGINE_ALLIN_LINES.get(before.kind)
 
 
 PLAN_LINE = re.compile(r"If (.+) \((\d+)bb\) moves all-in: (CALL|FOLD) \(need (\d+)%, have (\d+)%\)")
@@ -1207,13 +1283,14 @@ def will_not_fold(adv) -> bool:
     return bool(sized) and not action.startswith("RAISE") and any(NEVER_FOLDS.search(text) for text in adv.why)
 
 
-def play_from_engine(seen: Seen, adv, value_note: str) -> Play:
+def play_from_engine(seen: Seen, adv, value_note: str, before: Before | None = None) -> Play:
     """An answer of ``preflop.advise`` as a play: its action, its first reason, its numbers."""
     verb, kind, to, qualifier = read_engine_action(adv.action, seen.bb)
     facts = engine_facts(adv)
+    line = engine_line(seen, facts, before) if before is not None else None
     play = Play(verb=verb, kind=kind, to=to, qualifier=qualifier, sure=adv.confidence,
                 reason=sentence(plain(adv.why[0])) if adv.why else "",
-                tiles=engine_tiles(facts, kind, value_note),
+                tiles=engine_tiles(facts, kind, value_note, line),
                 also=sentence(plain(adv.alt[0])) if adv.alt else "", plans=plan_lines(seen, adv), facts=facts)
     for text in adv.warnings:
         play.warnings.append(warning("engine", sentence(plain(text))))
@@ -1261,17 +1338,17 @@ def engine_summary(play: Play) -> str:
 def full_plan_play(seen: Seen, money: Money) -> Play:
     before = what_happened(seen)
     if before.kind == "called_then_raised" and before.raises[-1].kind != "allin":
-        return called_then_raised(seen, before)
+        return cheap_call_after_calling(seen, before, called_then_raised(seen, before))
     spot = engine_spot(seen, money.prizes, money.field_prizes, money.stage, money.desperate)
     adv = engine_advise(spot)
-    play = play_from_engine(seen, adv, value_note(money))
+    play = play_from_engine(seen, adv, value_note(money), before)
     play.chart = hero_cell_as_played(engine_chart(seen, spot, adv, before), seen.hand_class, play.kind)
     play.source = "the engine decides"
     if not play.flip:
         play.flip = table_limit_line(seen, money, before)
     survival_guard(seen, money, before, adv, play)
     add_spot_warnings(seen, money, before, adv, play)
-    return play
+    return cheap_call_after_calling(seen, before, play)
 
 
 def player_notes(seen: Seen) -> list:
@@ -1293,10 +1370,44 @@ def value_note(money: Money | None) -> str:
     return "ICM counted"
 
 
+def cheap_call_after_calling(seen: Seen, before: Before, play: Play) -> Play:
+    """Hero called earlier in the hand and a raise came: at 5 to 1 or better he calls again, whatever the hand.
+
+    The sheet's rule ("you only called and a player raised: fold") is for a
+    real raise, and the engine does not count hero's earlier call.  Both
+    folded whatever the price: the big blind, who had called 2bb, folded to
+    a raise of one big blind more into a pot of seven.  At 5 to 1 a hand
+    needs one chance in six, and every hand that was worth the first call
+    has that.  ``play`` is the answer so far; a fold at that price becomes
+    the call, with the fold as the second line.
+    """
+    price = call_price(seen)
+    if not before.hero_called or not before.raises or play.kind != "fold" or price is None \
+            or price > CALLED_PRICE + 1e-9:
+        return play
+    call = min(seen.to_call, seen.state.stack[HERO])
+    pot = bb_number(seen.bbs(call / price - call))
+    odds = bb_number((1 - price) / price)
+    was = play.source or "the engine"
+    return Play(verb="CALL", kind="call", qualifier="the price", sure="standard",
+                reason=f"You called earlier in this hand, and the raise costs {bb_number(seen.bbs(call))}bb more "
+                       f"for a pot of {pot}bb: {odds} to 1. At 5 to 1 or better that call is never folded.",
+                tiles=[tile("Price", f"{odds} to 1", f"the call needs {percent(price)} of the pot")],
+                also=f"Without the price: FOLD ({'the rule after a call' if was == SHEET_RULE else 'by the numbers'}).",
+                flip="Fold to a raise that costs more than a fifth of the pot.",
+                warnings=[w for w in play.warnings if w["code"] != "engine"],
+                source="a call at 5 to 1 or better after calling is never folded", chart=None)
+
+
+SHEET_RULE = "the sheet's rule"                 # the source of ``called_then_raised``
+
+
 def called_then_raised(seen: Seen, before: Before) -> Play:
     """Hero only called and a player raised: the sheet's rule, not the engine (which does not price hero's call).
 
-    Fold.  With a pair and 15 times the raise behind, one call for a set is allowed.
+    Fold.  With a pair and 15 times the raise behind, one call for a set is
+    allowed.  (At 5 to 1 or better the call is made whatever the hand:
+    ``cheap_call_after_calling``.)
     """
     pair = seen.hand_class % 14 == 0            # the pairs sit on the diagonal of the 13 x 13 grid
     behind = seen.state.stack[HERO]
@@ -1304,10 +1415,10 @@ def called_then_raised(seen: Seen, before: Before) -> Play:
         return Play(verb="CALL", kind="call", qualifier="once, for a set", sure="close",
                     reason="You only called and were raised: with a pair and 15 times the raise behind, one call "
                            "for a set is allowed.",
-                    flip="Fold the flop without a set or an overpair.", source="the sheet's rule")
+                    flip="Fold the flop without a set or an overpair.", source=SHEET_RULE)
     return Play(verb="FOLD", kind="fold", sure="standard",
                 reason="You only called and a player raised: fold. Only a pair with 15 times the raise behind may call.",
-                source="the sheet's rule")
+                source=SHEET_RULE)
 
 
 def add_spot_warnings(seen: Seen, money: Money, before: Before, adv, play: Play) -> None:
@@ -1323,7 +1434,7 @@ def add_spot_warnings(seen: Seen, money: Money, before: Before, adv, play: Play)
     if before.kind == "shoved_on" and still_in:
         # hero raised, somebody called, then came the all-in: the engine prices the all-in player alone
         play.warnings.append(warning(
-            "caller_behind", "A player who called your raise is still to act: these numbers do not count him.",
+            "caller_behind", "A player who called your raise is still to act: these numbers do not count them.",
             "a caller is still behind"))
     if money.final_table and play.kind in ("call", "allin") and before.raises:
         # the engine decides alone at a final table; say so when the bubble table would not call a bigger stack
@@ -1337,25 +1448,29 @@ def add_spot_warnings(seen: Seen, money: Money, before: Before, adv, play: Play)
         play.warnings.append(warning(
             "engine", "You called earlier in this hand: those chips are not counted here, so the real price is "
                       "a little better than the one shown.", "your earlier call is not priced"))
-    if adv.confidence == "close" and play.guard not in ("survival", "close"):     # those two say it in the reason
-        play.warnings.append(close_warning(engine_facts(adv), before, money, play))
+    # (the guard's own plays say it in the reason; and a play the adapter no longer shows as close has no "Close:")
+    if adv.confidence == "close" and play.sure == "close" and play.guard not in ("survival", "close"):
+        play.warnings.append(close_warning(seen, engine_facts(adv), before, money, play))
     after = pending_level(seen)
     if after and before.kind == "first_in" and seen.bbs(seen.start[seen.hero]) < BLINDS_UP_BB:
         play.warnings.append(blinds_up_warning(seen, money, after))
 
 
-def close_warning(facts: dict, before: Before, money: Money | None, play: Play) -> dict:
+def close_warning(seen: Seen, facts: dict, before: Before, money: Money | None, play: Play) -> dict:
     """The engine calls its answer close.  The last sentence says why the headline is what it is."""
+    line = engine_line(seen, facts, before)
     if "need" in facts and "equity" in facts:
         text = f"Close: you need {percent(facts['need'])} and have {percent(facts['equity'])}."
+    elif play.kind == "call" and big_blind_call_numbers(facts):
+        need, have, _close = big_blind_call_numbers(facts)
+        text = f"Close: the call takes {need}% with the points for play after the flop, and you have {have}%."
     elif play.kind == "call":
         text = "Close: the call and the fold are worth about the same."
-    elif "ev" in facts and (play.kind not in ("fold", "check") or number_backs_the_fold(facts)):
+    elif "ev" in facts and (play.kind not in ("fold", "check") or number_backs_the_fold(facts, line)):
         # (a fold made by a rule is close to another play, not to the all-in whose number the engine also gives)
-        if "reshove_bar_bb" in facts:           # an all-in in place of a small re-raise: the hand could call instead
-            wants = f"; in place of a small re-raise it takes {signed_bb(facts['reshove_bar_bb'])}"
-        else:
-            wants = "; over a raise it takes +0.15bb" if before.kind == "raise" else ""
+        # Close to what the engine wants of the all-in here, which the sentence names: +1.36bb is close where
+        # the all-in takes +1.20bb, not beside "+0.15bb over a raise".
+        wants = f"; {line[1]} it takes {signed_bb(line[0])}" if line else ""
         text = f"Close: an all-in earns {signed_bb(facts['ev'])} against folding{wants}."
     else:
         text = "Close: the other play is nearly as good."
@@ -1367,6 +1482,22 @@ def close_warning(facts: dict, before: Before, money: Money | None, play: Play) 
         elif play.source.endswith("the sheet's big blind list"):
             text += " The sheet calls this hand in the big blind."
     return warning("close", text, "close")
+
+
+def big_blind_call_numbers(facts: dict) -> tuple[int, int, bool] | None:
+    """(need, have, are the two close) for the big blind's call of a raise, in the engine's own numbers.
+
+    Its test for that call is the price plus points for how the hand plays
+    after the flop (``bb_call_need``).  Within ``THIN_EDGE_POINTS_CLOSE``
+    points of it the call is close.  The engine marks every hand outside its
+    chart "close" whatever the margin: with more to spare the adapter does
+    not repeat the word beside two numbers that are far apart.  ``None``
+    when the engine gave no such test (hero is not the big blind).
+    """
+    if "bb_call_need" not in facts or "my_equity" not in facts:
+        return None
+    need, have = round(100 * facts["bb_call_need"]), round(facts["my_equity"])
+    return need, have, have - need < THIN_EDGE_POINTS_CLOSE
 
 
 def pending_level(seen: Seen) -> dict | None:
@@ -1394,7 +1525,8 @@ def blinds_up_warning(seen: Seen, money: Money, after: dict) -> dict:
 #   cash ("Cash first")            strict: before the money a play that risks the stack needs the
 #                                  all-in or fold table to agree.
 #   survive ("Survive, then win")  thin edge: the table can only fold a play whose own edge is thin
-#                                  (THIN_EV_BB_*, THIN_EDGE_POINTS_*).  A clear edge is played.
+#                                  (thin_bar, THIN_EDGE_POINTS_*) or that the engine itself calls
+#                                  close.  A clear edge is played.
 #   maxev                          no guard.
 #
 # In both strengths: a play is judged by the chips it can lose against the players who can still put
@@ -1471,20 +1603,31 @@ def thin_call(points: tuple | None, near: bool) -> bool:
     return points[1] - points[0] < (THIN_EDGE_POINTS_CLOSE if near else THIN_EDGE_POINTS_FAR)
 
 
-def engine_edge(play: Play, near: bool) -> tuple[bool, str]:
-    """(is the engine's own edge thin, the edge in words): "engine +0.85bb", or "56% against 47%" for a call.
+def thin_bar(at_risk_bb: float) -> float:
+    """What an all-in must earn against folding to be more than a thin edge, by the big blinds at risk: 0.20bb
+    up to 10bb, then 0.02bb more for each big blind (12bb: 0.24, 21bb: 0.42, 30bb: 0.60).  To two decimals, the
+    way the edge itself is shown and compared."""
+    return round(THIN_EV_BB + THIN_EV_PER_BB * max(0.0, at_risk_bb - THIN_EV_FROM_BB), 2)
+
+
+def engine_edge(play: Play, near: bool, at_risk_bb: float = 0.0) -> tuple[bool, str, str]:
+    """(is the engine's own edge thin, the edge in words, what it takes in words): "engine +0.36bb" and
+    "+0.42bb", or "56% against 47%" and "" for a call.
 
     An all-in, or a raise that commits, is measured by the engine's "all-in
-    against folding"; a call by its equity over what it needs.  A play with
-    no usable number counts as thin.
+    against folding" against a bar that grows with the big blinds at risk
+    (``thin_bar``; ``at_risk_bb`` is the number the guard reads the charts
+    at); a call by its equity over what it needs.  A play with no usable
+    number counts as thin.
     """
     facts, points = play.facts, edge_points(play.facts)
     if play.kind != "call" and "ev" in facts:
         value = round(facts["ev"], 2)                       # the number as the tile shows it
-        return value < (THIN_EV_BB_CLOSE if near else THIN_EV_BB_FAR), "engine " + signed_bb(value)
+        bar = thin_bar(at_risk_bb)
+        return value < bar - 1e-9, "engine " + signed_bb(value), signed_bb(bar)
     if points is not None:
-        return thin_call(points, near), f"{points[1]}% against {points[0]}%"
-    return True, ""
+        return thin_call(points, near), f"{points[1]}% against {points[0]}%", ""
+    return True, "", ""
 
 
 def guard_is_off(seen: Seen, money: Money) -> str:
@@ -1629,46 +1772,75 @@ def survival_guard(seen: Seen, money: Money, before: Before, adv, play: Play) ->
         if price:
             play.guard, play.source = "off", f"GUARD OFF ({price})"
             if not play.flip:
-                play.flip = f"The all-in chart folds here ({says.short}), but a price like this is never folded."
+                play.flip = f"The all-in chart folds here ({says.note}), but a price like this is never folded."
             return
-    thin, edge = engine_edge(play, near)
-    thin = thin or adv.confidence == "close"        # what the engine itself calls close is no clear edge
-    if not strict and not thin:
+    thin, edge, takes = engine_edge(play, near, risk.stack_bb)
+    close = adv.confidence == "close"               # what the engine itself calls close is no clear edge
+    if not strict and not thin and not close:
         # a clear edge: the engine's play stands although the table would fold
-        play.guard, play.source = "edge", f"CLEAR EDGE ({edge}): played although the all-in table folds"
-        play.tiles = play.tiles[:2] + [tile(CHART_SAYS, "CHECK" if seen.to_call <= 0 else "FOLD", says.short)]
+        needs = f", needs {takes}" if takes else ""
+        play.guard, play.source = "edge", f"CLEAR EDGE ({edge}{needs}): played although the all-in table folds"
+        play.tiles = play.tiles[:2] + [tile(CHART_SAYS, "CHECK" if seen.to_call <= 0 else "FOLD", says.note)]
         if not play.flip:
             play.flip = "The all-in chart folds here; the Cash first style follows it."
         return
-    survival_play(seen, money, before, play, says, risk, strict, edge)
+    survival_play(seen, money, before, play, says, risk, strict,
+                  thin_edge_words(seen, play, before, risk, edge, takes, thin))
+
+
+def thin_edge_words(seen: Seen, play: Play, before: Before, risk: Risk, edge: str, takes: str, thin: bool) -> str:
+    """Why the default style lets the chart fold this play, as the start of the reason.
+
+    "A thin edge (+0.36bb, where 21bb at risk takes +0.42bb)": the bar
+    grows with the stack at risk, so the sentence names it.  A call is thin
+    by its points: "A thin edge (56% against 53%)".  A play the engine
+    itself marks close although its number clears that bar is close to the
+    engine's own line for the all-in, not to the fold: "Close by the numbers
+    (+1.38bb against folding, just over the +1.11bb an all-in this deep
+    takes)".
+    """
+    number = edge.replace("engine ", "")
+    if not number:
+        return ""                       # no number to call thin: the reason starts with the play itself
+    if not takes:
+        return f"A thin edge ({number})"
+    if thin:
+        return f"A thin edge ({number}, where {bb_number(risk.stack_bb)}bb at risk takes {takes})"
+    line = engine_line(seen, play.facts, before)
+    over = f", just over the {signed_bb(line[0])} it takes {line[1]}" if line else ""
+    return f"Close by the numbers ({number} against folding{over})"
 
 
 def survival_play(seen: Seen, money: Money, before: Before, play: Play, says, risk: Risk, strict: bool,
-                  edge: str) -> None:
+                  thin_edge: str) -> None:
     """The table folds and the guard follows it: the quietest play the sheet allows becomes the headline.
 
     That is a fold (a check when it is free), with two exceptions from the
     tight-aggressive sheet: first in with 17bb or more a hand on the sheet's
     raise list raises small instead of moving all-in, and the big blind may
     call a small raise with the sheet's list instead of folding.
+
+    ``thin_edge``: the start of the reason in the default style ("A thin
+    edge (+0.36bb, where 21bb at risk takes +0.42bb)", ``thin_edge_words``).
+    The strict guard does not ask how big the edge is.
     """
     engine = engine_summary(play)
     free = seen.to_call <= 0
-    thin_edge = "" if strict else edge.replace("engine ", "")       # the strict guard does not ask how big the edge is
+    thin_edge = "" if strict else thin_edge
     commits = "A re-raise at this depth commits the stack. " if play.kind == "raise" and risk.whole else ""
 
     def reason_for(lead: str) -> str:
-        """ "Fold before the money: KQs from the button is an all-in only up to 28bb, and this close ..." """
+        """ "Fold before the money: KQs from the button is an all-in only up to 28bb." """
         why = says.why.replace(" before the money", "", 1)      # the lead says it already
         if thin_edge:
-            return f"{commits}A thin edge ({thin_edge}): {lead[0].lower() + lead[1:]} before the money. {sentence(why)}"
+            return f"{commits}{thin_edge}: {lead[0].lower() + lead[1:]} before the money. {sentence(why)}"
         return f"{commits}{lead} before the money: {why}."
 
     play.also = by_the_numbers(engine, max_ev=True)
     play.tiles = [t for t in play.tiles if t["label"] in ("All-in against folding", "Need / have")][:1]
     if play.tiles:
         play.tiles[0]["note"] = NUMBERS_ALONE
-    play.tiles.append(tile(CHART_SAYS, "CHECK" if free else "FOLD", says.short))
+    play.tiles.append(tile(CHART_SAYS, "CHECK" if free else "FOLD", says.note))
     again = ["once in the money", "with a read that makes it safer"]
     if clock_gives_a_verdict(money) and money.clock:
         again.insert(1, "when the fold clock says you cannot fold")
@@ -1839,19 +2011,31 @@ def lower_variance_side(seen: Seen, before: Before, adv, play: Play) -> None:
         play.source = f"CLOSE: before the money the lower-variance side leads (engine: {engine})"
         play.chart = hero_cell_as_played(play.chart, seen.hand_class, play.kind)
         return
+    by_the_sheet = False            # folded for what the hand is, although the engine's numbers are not close
     if play.kind == "call" and rows is not None:
+        # "Close" only where the engine's own numbers are close: the price plus its points for play after the
+        # flop.  With more to spare, a hand the sheet calls is simply called, and one it does not call is folded
+        # for what it is, not for a margin that is not there.
+        numbers = big_blind_call_numbers(play.facts)
         if kept:
             play.source = "the engine's close call is on the sheet's big blind list"
+            if numbers and not numbers[2]:
+                play.sure, play.source = "standard", "the engine's call is on the sheet's big blind list"
             return
         short_list = rows[0] == TAG.BB_CALL_SHORT
+        lead = "Close, and"
+        if numbers:
+            need, have, by_the_sheet = numbers[0], numbers[1], not numbers[2]
+            lead = f"A call by the price ({have}% where it takes {need}%), but" if by_the_sheet else \
+                f"Close ({have}% where the call takes {need}%), and"
         if not short_list and in_range(rows[0], seen.hand_class):
             # on the sheet's row for 25bb or more, but not a hand that makes top pair or a real draw
             sheet = tile("Before the money", "FOLD", "the call is kept for " + TAG.BB_CALL_WORDS)
-            reason = f"Close, and not a hand that makes top pair or a real draw ({TAG.BB_CALL_WORDS}): before " \
+            reason = f"{lead} not a hand that makes top pair or a real draw ({TAG.BB_CALL_WORDS}): before " \
                      "the money, fold."
         else:
             sheet = tile("The sheet says", "FOLD", ("it calls " if short_list else "not on ") + rows[1])
-            reason = f"Close, and not a hand the sheet calls a {'small ' if short_list else ''}raise with in the " \
+            reason = f"{lead} not a hand the sheet calls a {'small ' if short_list else ''}raise with in the " \
                      f"big blind ({rows[1]}): before the money, fold."
     else:
         what = {"call": "call", "allin": "all-in"}.get(play.kind, "raise")
@@ -1872,6 +2056,10 @@ def lower_variance_side(seen: Seen, before: Before, adv, play: Play) -> None:
     play.reason, play.plans = reason, []
     play.flip = NUMBERS_AGAIN
     play.source = f"CLOSE: before the money the lower-variance side leads (engine: {engine})"
+    if by_the_sheet:
+        play.qualifier, play.sure = "not on the sheet's list", "standard"
+        play.source = f"SHEET FOLD (engine: {engine}): before the money the big blind calls with the sheet's " \
+                      "short list only"
     play.chart = hero_cell_as_played(play.chart, seen.hand_class, play.kind)
 
 
@@ -1959,6 +2147,49 @@ class TableSays:
     short: str = ""             # the same in a few words, for a tile
     chart: dict | None = None
     sure: str = "standard"
+    where: str = ""             # "this close to the money" when ``short`` is a stack counted in hero's own chips
+                                # there (the chart was read at twice his stack)
+
+    @property
+    def note(self) -> str:
+        """``short`` with its "this close to the money": a limit never stands without the stage it holds at."""
+        return f"{self.short} {self.where}" if self.where else self.short
+
+
+CLOSE_WORDS = "this close to the money"         # where the all-in charts are read at twice the stack
+
+
+def own_limit(limit: int, close: bool, capped: bool = False) -> float:
+    """A first-in limit of the all-in chart in hero's own chips.
+
+    Far from the money it is the chart's number.  Close to it the chart is
+    read at twice the stack, so a hand that moves in up to 21bb is an all-in
+    up to 10.5bb of his: that is the number the screen shows, beside a stack
+    of 12.4bb, and never the 21.  ``capped``: the guard reads a doubled stack
+    from the deepest column at most, so a hand of that column moves in with
+    any stack the column stands for.
+    """
+    if not close:
+        return limit
+    return float(BN.TOP) if capped and limit >= BN.TOP else limit / 2
+
+
+def limit_words(limit: int, close: bool, capped: bool = False) -> str:
+    """ "up to 21bb", and close to the money "up to 10.5bb this close to the money (21bb far from it)"."""
+    mine = own_limit(limit, close, capped)
+    if not close:
+        return f"up to {bb_number(mine)}bb"
+    return f"up to {bb_number(mine)}bb {CLOSE_WORDS}" + (f" ({limit}bb far from it)" if mine != limit else "")
+
+
+def counts_as(eff: float, limit: int, close: bool, capped: bool = False) -> str:
+    """The chart knows whole big blinds, and half a big blind over a limit still reads as that limit: 21.4bb
+    moves in with a hand that is an all-in "up to 21bb".  The words that say so, or "" when the stack on screen
+    is not above the limit on screen."""
+    mine = own_limit(limit, close, capped)
+    if float(bb_number(eff)) <= mine + 1e-9:
+        return ""
+    return f"your {bb_number(eff)}bb counts as {bb_number(mine)}bb"
 
 
 def table_players(n: int) -> int:
@@ -2009,8 +2240,9 @@ def table_answer(seen: Seen, money: Money, before: Before, bubble_charts: bool =
     eff = seen.bbs(effective_stack(seen)) if at_risk is None else at_risk
     stage = "money" if money.in_money else "before"
     column = eff * 2 if money.close else eff                # close to the money: the column for twice the stack
-    twice = f", and this close to the money your {bb_number(eff)}bb counts double" if money.close else ""
-    if sized or (at_risk is not None and money.close and eff <= BN.TOP):
+    capped = sized or (at_risk is not None and money.close and eff <= BN.TOP)
+    deepest = capped and column > BN.TOP        # ... and the stack is read from the deepest column instead
+    if capped:
         # For the guard: "aces and kings only" is the rule for a stack of more than 40bb that moves all-in.  A
         # stack of 21bb read at twice its size, and a re-raise that is not an all-in, read the deepest column
         # the table has.  (The all-in plan keeps its own rule: a hand must be good for twice the stack.)
@@ -2055,10 +2287,10 @@ def table_answer(seen: Seen, money: Money, before: Before, bubble_charts: bool =
             return bubble_chart_answer(seen, zone, players, "late" if raiser <= 3 else "early", behind)
         action, why = BN.decide(hand, behind, column, stage, "raise", raiser, None, False, players)
         row = BN.reshove(stage, BN.raiser_kind(raiser), column, players)
-        chart = range_chart(f"All-in chart: over a raise from {seen.label(before.raises[0].idx)}, "
-                            f"{bb_number(column)}bb", seen.hand_name, {"r": parse_range(row)},
-                            legend=(("r", "All-in"), ("f", "Fold")))
-        return TableSays(action, why.replace(": ", " the chart moves all-in with ", 1) + twice, row, chart)
+        why, read_at = over_a_raise_words(why, eff, column, money.close, deepest)
+        chart = range_chart(f"All-in chart: over a raise from {seen.label(before.raises[0].idx)}, {read_at}",
+                            seen.hand_name, {"r": parse_range(row)}, legend=(("r", "All-in"), ("f", "Fold")))
+        return TableSays(action, why, row, chart)
     # Nobody has raised.  Behind callers the range of the seat before applies; the big blind reads the
     # small blind's range and checks with the rest (binary.decide would answer CHECK before reading any range).
     seat = behind
@@ -2073,12 +2305,51 @@ def table_answer(seen: Seen, money: Money, before: Before, bubble_charts: bool =
         action = "CHECK"
     limit = BN.limit(stage, seat, hand, players) if column <= BN.TOP else 0
     sure = "clear" if abs(limit - column) >= 4 else "close" if abs(limit - column) < 1.5 else "standard"
-    short = f"all-in up to {limit}bb" if limit else "never an all-in"
-    why = own_seat_in_words(why)
+    why, where = own_seat_in_words(why), ""
+    if column > BN.TOP:
+        # only aces and kings move in (``why`` says so).  Close to the money that is from half that stack on.
+        short = f"over {bb_number(own_limit(BN.TOP, money.close))}bb: {BN.DEEP_FIRST_IN} only"
+        if money.close:
+            where = CLOSE_WORDS
+            why = f"{CLOSE_WORDS} your {bb_number(eff)}bb counts double, and {why}"
+    elif not limit:
+        short = "never an all-in"
+    else:
+        # the limit in hero's own chips: close to the money the chart's 21bb is 10.5bb of his
+        short = f"all-in up to {bb_number(own_limit(limit, money.close, capped))}bb"
+        if money.close:
+            where = CLOSE_WORDS
+            seat_words = SEAT_FROM.get(BN.seat_name(seat, players), "this seat")
+            why = f"{seen.hand_name} from {seat_words} is an all-in {'' if action == 'ALL-IN' else 'only '}" \
+                  + limit_words(limit, True, capped)
+        rounds = counts_as(eff, limit, money.close, capped) if action == "ALL-IN" else ""
+        why += f"; {rounds}" if rounds else ""
     if before.limpers:
         why = "behind callers the range of the seat before yours applies: " + why
-    chart = first_in_table_chart(seen, stage, seat, column, players, bool(before.limpers))
-    return TableSays(action, why + twice, short, chart, sure)
+    chart = first_in_table_chart(seen, stage, seat, column, players, bool(before.limpers), eff, money.close, capped)
+    return TableSays(action, why, short, chart, sure, where)
+
+
+def over_a_raise_words(why: str, eff: float, column: float, close: bool, deepest: bool) -> tuple[str, str]:
+    """(the chart's reason over a raise, the stack its chart is titled with), said in hero's own chips.
+
+    ``why`` is the chart's sentence, "over a raise from CO with 25 to 40bb:
+    99+, AQs+, AKo".  Read at hero's own stack it stands as it is.  Close to
+    the money it is read at twice his stack, and deeper than the chart goes
+    (a re-raise that is not an all-in, or a doubled stack) from its deepest
+    row: the sentence then says so before it names a stack he does not hold.
+    """
+    spot, hands = why.split(": ", 1)            # "over a raise from CO with 25 to 40bb", "99+, AQs+, AKo"
+    if deepest:
+        whose = f"{CLOSE_WORDS} your {bb_number(eff)}bb is" if close else f"a re-raise with more than {BN.TOP}bb is"
+        row = BN.BANDS[-1][0]
+        return (f"{whose} read from the chart's deepest row ({row}), which {spot.split(' with ')[0]} moves all-in "
+                f"with {hands}", f"the deepest row ({row})")
+    plain_why = f"{spot} the chart moves all-in with {hands}"
+    if close:
+        return (f"{CLOSE_WORDS} your {bb_number(eff)}bb counts double, and {plain_why}",
+                f"{bb_number(column)}bb (twice your {bb_number(eff)}bb)")
+    return plain_why, f"{bb_number(column)}bb"
 
 
 SEAT_FROM = {"UTG": "under the gun", "UTG+1": "UTG+1", "LJ": "the lojack", "HJ": "the hijack", "CO": "the cutoff",
@@ -2093,14 +2364,29 @@ def own_seat_in_words(why: str) -> str:
     return f"{found.group(1)} from {SEAT_FROM[found.group(2)]} is " + why[found.end():]
 
 
-def first_in_table_chart(seen: Seen, stage: str, seat: int, column: float, players: int, callers: bool) -> dict:
-    """The all-in table's first-in range for a seat and a stack; each cell knows its deepest stack."""
+def first_in_table_chart(seen: Seen, stage: str, seat: int, column: float, players: int, callers: bool,
+                         eff: float | None = None, close: bool = False, capped: bool = False) -> dict:
+    """The all-in table's first-in range for a seat and a stack; each cell knows its deepest stack.
+
+    ``eff`` is hero's own stack and ``column`` the stack the chart is read
+    at.  Close to the money that is twice his: the title says so, and the
+    cells give their limit in his chips, as the tile and the reason do.
+    """
     weights = BN.first_in_range(stage, seat, column, players)
     limits = BN.limits(stage, seat, players)
-    numbers = [f"all-in up to {limit}bb" if limit else "never an all-in" for limit in limits]
-    title = f"All-in chart: {SEAT_TITLES.get(BN.seat_name(seat, players), 'seat').lower()}, first in, {bb_number(column)}bb"
+    numbers = ["all-in " + limit_words(limit, close, capped).split(" (")[0] if limit else "never an all-in"
+               for limit in limits]
+    read_at, notes = f"{bb_number(column)}bb", []
+    if close and eff is not None:
+        if column < 2 * eff - 1e-9:
+            read_at = f"the deepest column ({read_at})"
+        else:
+            notes.append(f"twice your {bb_number(eff)}bb")
     if callers:
-        title += " (behind callers: the seat before yours)"
+        notes.append("behind callers: the seat before yours")
+    title = f"All-in chart: {SEAT_TITLES.get(BN.seat_name(seat, players), 'seat').lower()}, first in, {read_at}"
+    if notes:
+        title += f" ({'; '.join(notes)})"
     return range_chart(title, seen.hand_name, {"r": weights}, numbers, legend=(("r", "All-in"), ("f", "Fold")))
 
 
@@ -2162,7 +2448,17 @@ def table_limit_line(seen: Seen, money: Money, before: Before) -> str:
     where = BN.STAGE_NAMES["money" if money.in_money else "before"]
     if not limit:
         return f"The all-in chart never moves in with {seen.hand_name} from this seat {where}."
-    return f"The all-in chart moves in with {seen.hand_name} up to {limit}bb from this seat {where}."
+    if not money.close:
+        text = f"The all-in chart moves in with {seen.hand_name} up to {limit}bb from this seat {where}."
+    else:
+        # the chart is read at twice the stack there: the limit is said in hero's own chips, never as a stack
+        # he does not hold ("up to 21bb" beside his 12.4bb)
+        text = f"The all-in chart moves in with {seen.hand_name} up to {bb_number(own_limit(limit, True))}bb from " \
+               f"this seat {CLOSE_WORDS} ({limit}bb far from it)."
+    eff = seen.bbs(effective_stack(seen))
+    moves_in = limit >= max(1.0, (2 * eff if money.close else eff) - 0.5)
+    rounds = counts_as(eff, limit, money.close) if moves_in else ""
+    return text + (f" {sentence(rounds)}" if rounds else "")
 
 
 # ---- the bubble charts (late-registration plan) ---------------------------------------------
@@ -2237,9 +2533,9 @@ def allin_plan_play(seen: Seen, money: Money) -> Play:
     """One decision a hand, from the tables; the full engine on the real stacks is the second line."""
     before = what_happened(seen)
     if before.kind == "called_then_raised" and before.raises[-1].kind != "allin":
-        return called_then_raised(seen, before)
+        return cheap_call_after_calling(seen, before, called_then_raised(seen, before))
     spot = engine_spot(seen, money.prizes, money.field_prizes, money.stage, money.desperate)
-    engine = play_from_engine(seen, engine_advise(spot), value_note(money))
+    engine = play_from_engine(seen, engine_advise(spot), value_note(money), before)
     says = table_answer(seen, money, before, bubble_charts=True)
     if says is None:
         # no row (hero called and then met an all-in, or a seat the sheet does not cover): the engine answers
@@ -2247,7 +2543,7 @@ def allin_plan_play(seen: Seen, money: Money) -> Play:
         engine.chart = None
         engine.warnings.append(outside_tables("The all-in or fold charts have no row for this spot: "
                                               "this is the answer with all moves."))
-        return engine
+        return cheap_call_after_calling(seen, before, engine)
     action, reason = says.action, sentence(says.why)
     if action == "CALL" and any(r.kind != "allin" for r in before.raises) and seen.state.stack[HERO] > seen.to_call:
         # The table calls a raise it reads as an all-in (a third of the raiser's stack), but that player still
@@ -2255,9 +2551,14 @@ def allin_plan_play(seen: Seen, money: Money) -> Play:
         action = "ALL-IN"
         reason += " The raiser is not all-in yet, so move all-in yourself: this plan never just calls."
     source = "all-in or fold table"
-    if action == "FOLD" and engine.kind == "call" and 0 < seen.to_call < COMMIT_SHARE * seen.state.stack[HERO]:
-        # The chart reads the size of the all-in, not the price.  A call for a small part of the stack at 3 to 1
-        # or better, or with 15 points to spare, is never folded: the same rule as the guard's.
+    only_all_ins = bool(before.raises) and all(r.kind == "allin" for r in before.raises)
+    if action == "FOLD" and only_all_ins and engine.kind in ("call", "raise", "allin") \
+            and 0 < seen.to_call < COMMIT_SHARE * seen.state.stack[HERO]:
+        # The chart reads the size of the all-in, not the price.  A call of an all-in for a small part of the
+        # stack at 3 to 1 or better, or with 15 points to spare, is never folded: the same rule as the guard's.
+        # Only of an all-in: this plan never just calls a raise (a weaker hand would call where a stronger one,
+        # which the full engine re-raises, is folded by the chart).  And a hand the full engine raises there is
+        # called with as well, for the same reason.
         price = good_price(call_price(seen), edge_points(engine.facts))
         if price:
             action, source = "CALL", "all-in or fold table: a good price is never folded"
@@ -2266,10 +2567,13 @@ def allin_plan_play(seen: Seen, money: Money) -> Play:
     play = Play(verb=action, kind=kind, sure=says.sure, reason=reason, chart=says.chart,
                 source=source, also=f"With all moves, on these stacks: {engine_summary(engine)}.")
     if says.short and before.kind in ("first_in", "limped"):
-        play.tiles.append(tile("The chart", says.short, f"{seen.hand_name} from this seat"))
+        whose = f"{seen.hand_name} {'behind callers' if before.limpers else 'from this seat'}"
+        play.tiles.append(tile("The chart", says.short, f"{whose}, {says.where}" if says.where else whose))
     for number in engine.tiles:
         if number["label"] in ("All-in against folding", "Need / have"):
-            number["note"] = "with all moves, " + value_note(money)
+            # (a small gain beside the engine's own fold keeps the line it is under: "under the +0.15bb ...")
+            kept = number["note"] if number["note"].startswith("under the") else value_note(money)
+            number["note"] = "with all moves, " + kept
             play.tiles.append(number)
             break
     eff_bb = seen.bbs(effective_stack(seen))
@@ -2319,7 +2623,7 @@ def spin_play(seen: Seen) -> Play:
             edge = SP.edge(row, eff, seen.hand_class)
             play.source = f"chip-EV engine: over {table_top}bb a small raise beats all-in or fold"
             play.also = f"All-in instead: {signed_bb(edge)} against folding (the spin chart)."
-        return play
+        return cheap_call_after_calling(seen, before, play)
     vs = callers_profile(seen) if first_in else "solid"     # only the first-in ranges change for loose callers
     action, _why = SP.decide(seen.hand_class, row, eff, vs)
     if row in SP.OPENERS and action in ("FOLD", "CHECK") and seat == "BB" and eff > SPIN_TABLE_BB:
@@ -2423,10 +2727,10 @@ def spin_engine_play(seen: Seen) -> Play:
     before = what_happened(seen)
     spot = engine_spot(seen, Prizes(), Prizes(), {}, False)
     adv = engine_advise(spot)
-    play = play_from_engine(seen, adv, "chip EV")
+    play = play_from_engine(seen, adv, "chip EV", before)
     play.chart = hero_cell_as_played(engine_chart(seen, spot, adv, before), seen.hand_class, play.kind)
     if adv.confidence == "close":
-        play.warnings.append(close_warning(engine_facts(adv), before, None, play))
+        play.warnings.append(close_warning(seen, engine_facts(adv), before, None, play))
     return play
 
 
@@ -2450,7 +2754,7 @@ def spin_table_play(seen: Seen, row: str, eff: float, vs: str, action: str, rais
         inside = "inside" if action in ("ALL-IN", "CALL") else "outside"
         if calling and raised_not_all_in:
             # the row is "... is all-in": say that the raise is read as one, and what to do about the chips behind
-            does = " He still has chips, so move all-in yourself" if action == "ALL-IN" else ""
+            does = " The raiser still has chips, so move all-in yourself" if action == "ALL-IN" else ""
             play.reason = sentence(f"One prize, so chips are money. A raise this big for the stack will not be folded, "
                                    f"so it is read as an all-in: {name} is {inside} the {percent(width / 100)} of hands "
                                    f"that play against it ({bb_number(eff)}bb).{does}")
@@ -2627,7 +2931,7 @@ def after_the_flop(seen: Seen, money: Money | None) -> Play:
     play.source = "after the flop: equity against an estimated range, a rule-based line"
     if unknown:
         play.warnings.append(warning("preflop_unknown", "No action is recorded for an opponent before the flop: "
-                                     "he is read as a caller.", "an opponent read as a caller"))
+                                     "that player is read as a caller.", "an opponent read as a caller"))
     no_pair_no_draw(play, made, told)
     playbook_check(play, made, told)
     close_after_the_flop(seen, money, adv, play, told)

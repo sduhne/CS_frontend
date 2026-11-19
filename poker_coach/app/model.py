@@ -2376,7 +2376,8 @@ class Session:
         mine = [k for k, e in enumerate(hand["events"]) if e["seat"] == seat and e["kind"] not in MARKERS]
         last = hand["events"][mine[-1]] if mine else None
         if seat in state.away:
-            raise ModelError(f"{self._who_is(seat, labels)} sitting out: the defaults are his actions.",
+            their = "your" if seat == HERO else "their"
+            raise ModelError(f"{self._who_is(seat, labels)} sitting out: the defaults are {their} actions.",
                              "Mark the player as back first.")
         implied_here = last is not None and last["auto"] and last["street"] == now
         implied_fold = seat in state.folded and last is not None and last["auto"] and last["kind"] == "fold"
@@ -2431,18 +2432,18 @@ class Session:
         """The refusal of a bet, raise, all-in or fold typed for a seat while the hand waits for a street's cards."""
         street = state.phase                            # the street whose cards are wanted
         word = {"bet": "bet", "raise": "raise", "allin": "all-in", "fold": "fold"}[kind]
-        he, his = ("you", "your") if seat == HERO else ("he", "his")
+        they, their = ("you", "your") if seat == HERO else ("they", "their")      # a player is "they", never "he"
         if kind == "fold":
             # (the seat's check in the round just closed was only implied, and it was free)
             return ModelError(f"Type the {street} first ({BOARD_EXAMPLE[street]}), then record the fold.",
-                              f"On the record {he} checked {STREET_WORDS[now]}, where a check was free: "
+                              f"On the record {they} checked {STREET_WORDS[now]}, where a check was free: "
                               f"a fold now is {STREET_WORDS[street]}.")
         if his_fold:
-            way = f"select {his} fold on the hand line, then Raised."
+            way = f"select {their} fold on the hand line, then Raised."
         else:
             way = f"undo to that point ({key_for('undo')})."
         return ModelError(f"Type the {street} first ({BOARD_EXAMPLE[street]}), then record the {word}.",
-                          f"A bet or raise {he} made {STREET_WORDS[now]}: {way}")
+                          f"A bet or raise {they} made {STREET_WORDS[now]}: {way}")
 
     @staticmethod
     def _all_in_is_a_call(hand: dict, index: int, seat: int) -> bool:
@@ -2514,10 +2515,11 @@ class Session:
             raise refusal
         hand["events"], hand["ranking"] = trial["events"], None
         there = next(e for e in entries if e["street"] == fold_street and not e["auto"])
-        was, he = ("You were", "you") if seat == HERO else (f"{who} was", "he")
-        self._say(f"{was} folded {STREET_WORDS[fold_street]} on the record: now {he} "
+        was, they = ("You were", "you") if seat == HERO else (f"{who} was", "they")
+        # "they" takes the verb as "you" does: "now they called there, and bet 600 here"
+        self._say(f"{was} folded {STREET_WORDS[fold_street]} on the record: now {they} "
                   f"{'checked' if there['kind'] == 'check' else 'called'} there, and "
-                  f"{self._verb_words(entries[-1], seat)} here. {key_for('undo')} takes it back.")
+                  f"{self._verb_words(entries[-1], HERO)} here. {key_for('undo')} takes it back.")
 
     def _hero_untouched(self, before: HandState, after: HandState) -> bool:
         """Hero's typed actions are exactly what they were, and no action was implied for him that was not there."""

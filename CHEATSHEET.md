@@ -6,8 +6,8 @@
 
 | Stack | Do this |
 |---|---|
-| **30bb+** | Raise to 2.2x with the OPEN range |
-| **16–30bb** | Raise to 2x with the OPEN range; fold to a shove unless you hold TT+, AQ+ |
+| **25bb+** | Raise to 2.2x (2.3x from 40bb) with the OPEN range |
+| **16–25bb** | Raise to 2x with the OPEN range; fold to a shove unless you hold TT+, AQ+ |
 | **under 16bb** | ALL-IN with the SHOVE range, otherwise fold. Never raise-fold |
 
 ### OPEN (30bb)
@@ -26,11 +26,14 @@
 | **BTN** | any pair, any ace, K4s+, Q6s+, J7s+, T7s+, 96s+, K9o+, QTo+, J9o+ | + any suited king, Q5s+, K8o+ | + Q3s+, any king, Q8o+ |
 | **SB** | any ace, any king, any suited queen/jack, most connected cards, Q5o+, J7o+ | about 70% of hands | almost anything except the worst trash |
 
+These are chip-EV ranges: right in the money, or when the blinds will finish you first. **Before the money the coach's own all-in lists are about half as wide** (`python3 -m poker_coach tag-sheet --players 8`, part 1).
+
 ## 2. Someone opened (raised) before you
 
 | Your stack | Do this |
 |---|---|
-| **over 30bb** | 3-bet: QQ+, AK (add JJ, AQ vs late seats). Call in position: TT-77, AQs, AJs, KQs. Rest folds |
+| **over 45bb** | 3-bet: QQ+, AK vs UTG and UTG+1; add JJ, AQs vs LJ/HJ; add TT, AJs, KQs, AQo vs CO/BTN. Call in position: the pairs down to 77 and AQs, AJs, KQs that are not a 3-bet. Rest folds |
+| **26–45bb** | 3-bet small only what calls an all-in over it: JJ+, AK (QQ+, AK vs UTG and UTG+1). TT, AQ and the like: ALL-IN where it clearly earns, otherwise call in position or in the BB; in the SB the weaker ones (KQs, AJs, AQo) fold. No bluff 3-bets |
 | **15–25bb** | **Re-shove or fold.** vs UTG/HJ open: 88+, ATs+, AJo+, KQs. vs CO/BTN open: 33+, A8s+, ATo+, KTs+, QTs+, KQo. In BB vs BTN: any pair, any ace, suited kings, broadways |
 | **under 15bb** | Shove what you'd shove first-in from that seat, a bit tighter vs early opens |
 
@@ -46,7 +49,7 @@ Shorter shover → call wider. Bigger shover or tight player → tighter. **Near
 
 ## 4. After the flop, rules of thumb
 - Heads-up as the raiser on a dry board: bet 1/3 pot once, give up if called and you missed.
-- Check-raise or a big turn bet against your one pair = **fold**.
+- A check-raise, a raise on the turn or river, or a big river bet (60% of the pot or more) against your one pair = **fold**, unless the player is wild.
 - Top pair or better and less than 1.5x the pot behind = you're committed, get it in.
 
 **Ask me for:** re-raises, all-ins near the money, and big pots after the flop.

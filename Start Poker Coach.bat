@@ -3,7 +3,7 @@ rem Starts the table app from this folder: a page in your browser where you type
 rem your table and the coach answers. It needs Python 3.10 or newer and nothing else: nothing is
 rem installed and the internet is not used. Your tables are saved in this folder, in tournament\app.
 setlocal
-title Poker Coach
+title Menlo Coach
 cd /d "%~dp0"
 if not exist "poker_coach\app\server.py" goto nofiles
 set "PY=python"
@@ -13,7 +13,7 @@ if not errorlevel 1 set "PY=py -3"
 if errorlevel 1 goto nopython
 %PY% -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>nul
 if errorlevel 1 goto oldpython
-echo Poker Coach: the page opens in your browser. Keep this window open while you use it.
+echo Menlo Coach: the page opens in your browser. Keep this window open while you use it.
 echo To stop the coach, close this window.
 echo.
 %PY% -m poker_coach app

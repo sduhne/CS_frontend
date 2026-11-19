@@ -24,8 +24,9 @@ reads the screen, nothing clicks for you and nothing leaves the computer: the
 program is a small server on 127.0.0.1 written with Python's standard library
 alone, and the page is plain HTML, CSS and JavaScript with its fonts beside
 it. It is for study and play money; real-money sites ban real-time help.
-The program calls itself Menlo Coach: that is the name on the page and in
-its windows. The files keep "Poker Coach" in their names.
+The program calls itself Menlo Coach: that is the name on the page, the
+title the starter gives its black window, and the name in the small window
+of the .exe. The files keep "Poker Coach" in their names.
 
 **Start it.** On Windows, double-click `Start Poker Coach.bat`: it needs
 Python 3.10 or newer, installs nothing and works offline (`START HERE.txt`
@@ -105,18 +106,33 @@ table of the session.
 the mode; the strip under it has `-` and `+` for the level and for players
 left, and a click on the level, players left or places paid lets you type
 it. At the top right are Undo, Redo and Settings (the three lines); the
-style and moves at the head of the coach's answer open Settings too. A
-click on a seat opens its menu: stack, name, type, note, Sit out, Button,
-Bust, Clear, and Save (a seat's stack, name and note are saved with `Enter`
-or Save, never by clicking elsewhere). Table tools, at the table, has
-Button back and forward, - Seat and + Seat, Every stack, New table (a table
-move: you and the tournament stay), Skip a hand and Discard hand. The
-action bar has six places that never move: Follow (Next hand once you have
-folded or the hand is over), the four moves, and Rest fold. A click on a
-step of the hand line selects it (Amount, Delete); on a fold the app made
-for a player it offers Called and Raised. Under the answer, Why and Range
-show the reasons and the range chart. The hand history has Copy as text,
-and a click on one hand shows its text with Copy this hand.
+style and moves at the head of the coach's answer open Settings too. A click
+on a seat opens its menu: stack, name, type, note, Sit out, Button, Bust,
+Clear, and Save (a seat's stack, name and note are saved with `Enter` or
+Save, never by clicking elsewhere). Table tools, at the table, has Button
+back and forward, - Seat and + Seat, Every stack, New table (a table move:
+you and the tournament stay), Skip a hand and Discard hand. The action bar
+has six places that never move: Follow (Next hand once you have folded or
+the hand is over), the four moves, and Rest fold. A click on the bar counts
+once the button under the pointer has stood there for a moment (400 ms), and
+not while a change is still on its way: a double-click on Next hand deals
+one hand, and a double-click on Fold folds one player. For a row of folds
+use Rest fold or the keys. A click on a step of the hand line selects it
+(Amount, Delete); on a fold the app made for a player it offers Called and
+Raised. Under the answer, Why and Range show the reasons and the range
+chart. The hand history has Copy as text, and a click on one hand shows its
+text with Copy this hand.
+
+**In a small window.** When the window is shorter than the page (half a
+screen beside another program, or a zoomed page), the answer stays at the
+top and the action bar at the foot. The table takes a shorter form first:
+in one column the line under the answer gives its row to the table and its
+button, Why, moves into the answer's first row; from 852 wide and at most
+660 high the answer stands beside the table. What still does not fit
+scrolls inside the table's own box, which rests on your cards, the board
+and the pot. A seat you aim at comes into sight, and the menus open over
+the head of the page. A 1440x900 screen at 150% (a window of 960x600) shows
+the whole table.
 
 **Typing amounts.** `1300`, `12.5k`, `1.2m`, `25bb`, `3x` (three times the
 bet being raised), `66%` (of the pot, for bets), `+3k` and `-1500` (a stack).
@@ -135,7 +151,9 @@ field with the reason under it.
   an action of your own.
 - While a street's cards are wanted, a forgotten call or check can still be
   added to the round just closed. A bet, raise or all-in for such a player
-  is refused: "Type the flop first (K S 7 D 2 C), then record the bet."
+  is refused: "Type the flop first (K S 7 D 2 C), then record the bet." So
+  is a fold for a player whose check in that round the app only assumed:
+  "Type the turn first (5 H), then record the fold."
 - The dealer button moves by the dead-button rule (Settings, Table): after
   a bust the big blind still moves on by one player, so the button can
   stand on an empty seat for a hand. The other choice is a forward-moving
@@ -150,20 +168,27 @@ field with the reason under it.
 top right). Players left and places paid tell the coach how far the money
 is; without them it counts chips only and says so. A typed payout list
 (`1:1000 2:600 4-6:200`) replaces the typical prizes. In a very large field
-(more than 1,000 paid places still to reach) the prize maths works on a
-thinned field, so that an answer still comes in about half a second. That
-is an approximation: close to the exact maths for stacks near the average,
-and too careful for a very short stack a few places from the money.
+(more than 1,000 paid places still to reach) the same prize maths is worked
+out by a closed formula, so that an answer still comes in about a third of
+a second: nine players at 150,000 entrants were measured. Nothing is
+merged, so three places from the money are three places. From 8,000 to
+150,000 entrants the formula was within 0.02 points of risk premium of the
+exact maths. On the command line `advise` and `quick` still use the exact
+maths, which takes about half a minute a decision at 150,000 entrants.
 
 *Styles.* What differs is what happens before the money, when a play would
 put a third or more of your chips at risk. The coach then also looks the
 hand up in the all-in or fold chart, which is built to reach the money.
 
 - *Survive, then win* (the default). If the chart would fold and the play
-  is worth little by the numbers (an all-in worth less than 0.20 big blinds
-  against folding, a call only a few points better than its price), the
-  answer is FOLD and the play by the numbers is the second line. A play with
-  a clear edge is made. A close answer shows the lower-variance side first.
+  is worth little by the numbers, the answer is FOLD and the play by the
+  numbers is the second line. Little is: an all-in worth less than 0.20 big
+  blinds against folding, plus 0.02 for every big blind at risk above 10
+  (0.24 with 12 at risk, 0.42 with 21, 0.60 with 30); a play the numbers
+  themselves call close; a call only a few points better than its price.
+  A play with a clear edge is made. With 17 big blinds or more, a fold of
+  an all-in becomes the sheet's small raise where the sheet has one. A
+  close answer shows the lower-variance side first.
 - *Cash first*. Stricter: such a play is made only when the chart makes it
   too, and a min-cash counts double until the bubble bursts.
 - *Max EV*. Plain prize maths: no guard, and a close answer is shown as the
@@ -175,8 +200,24 @@ money is the aim. In every style a good price is never folded (3 to 1 or
 better), the guard is off in the money and while re-entry is open, and a
 read on a player lifts it only when it makes the play safer.
 
+Close to the money the chart is read at twice your stack, and its limit is
+said in your own chips: "all-in up to 10.5bb this close to the money (21bb
+far from it)", under a chart headed "24.8bb (twice your 12.4bb)".
+
 *Moves.* All moves, or All-in or fold only: one decision a hand, from the
 all-in or fold charts, with the play with all moves as the second line.
+Against an all-in, a call that the play with all moves makes for less
+than a third of your stack at a good price is made in that plan too.
+
+*How the coach reads the table.* An all-in under 3 big blinds (or of less
+than a full raise) that another player raised over counts as a call, so
+that raise is the first raise and not a re-raise. A blind that is all-in
+from posting is not counted as a caller. Two players who are both in for
+your whole stack are read as two all-ins. When you may not raise and nobody
+left in the hand can match more than the call, an all-in would only be
+that call, and the answer says CALL. And when you called earlier in the
+hand, a raise that costs a fifth of the pot or less (5 to 1 or better) is
+called whatever the hand.
 
 **The small line under an answer** says how much of the prize money is
 counted and where the answer comes from. In that line "table" means the
@@ -189,20 +230,27 @@ all-in or fold chart.
 | ICM, ICM exact | Your numbers are in; exact with a prize typed for every paid place |
 | the engine decides | The play by the numbers; the guard had nothing to say |
 | the all-in table agrees | The play risks a third of your chips and the chart makes it too |
-| CLEAR EDGE (engine +0.40bb): played although the all-in table folds | The chart would fold; the edge is big enough to play (Survive, then win) |
+| CLEAR EDGE (engine +0.50bb, needs +0.42bb): played although the all-in table folds | The chart would fold; the edge is over what this stack at risk takes, so the play is made (Survive, then win) |
 | SURVIVAL FOLD (engine: ALL-IN +0.13bb) | The chart folds and so does the coach; the bracket is the play by the numbers |
 | SURVIVAL RAISE (...), SURVIVAL CALL (...) | The sheet's small raise, or the big blind's sheet call, in place of an all-in |
 | CLOSE: before the money the lower-variance side leads (engine: ...) | Two plays worth about the same: the quieter one is shown first |
+| SHEET FOLD (engine: CALL, 41% against 33%): before the money the big blind calls with the sheet's short list only | Big blind against a raise: a call by the price with 7 points or more to spare, but not a hand on the sheet's list |
+| a call at 5 to 1 or better after calling is never folded | You called earlier in the hand and the raise costs a fifth of the pot or less |
 | GUARD OFF (why) | The guard is off or steps aside: in the money, final table, Max EV style, re-entry open, too short to wait, the fold clock says you cannot fold, a good price, a read that makes the play safer |
 | after the flop: equity against an estimated range, a rule-based line | Every answer after the flop |
+
+**While the coach works** on a new spot the answer panel says "Updating".
+An answer made for an earlier table is never shown over a new one.
 
 **When an answer looks wrong.** Open the hand history (`Y`), press Copy as
 text (or click the hand and Copy this hand) and send it with the style and
 moves, players left and places paid, and the small line under the answer.
-After the flop, say whether the players in front of you had acted. NO ADVICE
-means the coach could not read the spot: start the program with `--verbose`
-and send the lines the black window prints after "the coach could not answer
-a spot:".
+The text has the blinds, a "Seats:" line with every player's seat, position
+and stack before the hand, and every bet in chips ("raise to 1,320
+(2.2bb)"): enough to play the hand again. After the flop, say whether the
+players in front of you had acted. NO ADVICE means the coach could not read
+the spot: start the program with `--verbose` and send the lines the black
+window prints after "the coach could not answer a spot:".
 
 **Where things are saved.** In `tournament/app/` in this folder, after every
 change:
@@ -211,7 +259,9 @@ change:
   hand, the undo steps, the last 500 hands);
 - `<mode>.json.bak`: that table one change earlier. It is used, and the page
   says so, when the main file is damaged or missing;
-- `<mode>.json.unreadable-<date-time>`: a damaged file, set aside;
+- `<mode>.json.unreadable-<date-time>`: a damaged file, set aside. When
+  there was no good copy to go on from, the page says so, on the first-run
+  form too, and the notice stays until you dismiss it or change something;
 - `app.json`: the mode on screen, chips or big blinds, the deck;
 - `app.lock`: there while the program runs, so that a second start finds
   the first.
@@ -251,7 +301,7 @@ addresses (`/api/view`, `/api/intent`, `/api/advice`, `/api/ping`),
 `static/` is the page. The design notes are in `docs/table-app/`.
 
 ```bash
-python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about 450 tests, a minute and a half
+python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about 485 tests, three minutes
 ```
 
 **Limits.**
@@ -262,6 +312,10 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
   it built and asks it for the page, the fonts and an answer in each mode,
   and says what failed. If it does not start, the text in the black window
   says why; if the page misbehaves, the browser's console (F12) does.
+- Window sizes, in that same browser only: 960x600, 853x533 and 683x650
+  show the whole nine-seat table. 560x600 hides the two seats at the
+  table's upper edge until you scroll its box. Under about 480 high the
+  table's box is a strip, and under 544 wide the page scrolls sideways.
 - Advice after the flop is heuristic: your equity against an estimated
   range, then rules. It is a baseline, not a solver.
 - A dead small blind cannot be entered.
@@ -414,7 +468,9 @@ python3 -m poker_coach tag-sheet --players 8      # or 7, or 6
 ```
 
 The raise, call and re-raise lists are the engine's own answers for each of
-the 169 hands, far from the money. The all-in lists are the all-in or fold
+the 169 hands, far from the money. Each list is the answer at one stack,
+named in the sheet (against a raise: 60 big blinds). The all-in lists first
+in and over a raise, and the calls of an all-in, are the all-in or fold
 tournament tables. The rules are in [PLAYBOOK.md](PLAYBOOK.md). The lists
 were rebuilt after the engine changed: PDF sheets printed before that are
 older, and where they differ this text is right.
@@ -565,7 +621,7 @@ you play.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests        # about 590 tests, four minutes
+python3 -m unittest discover -s tests        # about 630 tests, five and a half minutes
 ```
 
 The data files in `poker_coach/data/` are generated:

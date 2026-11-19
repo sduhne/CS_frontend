@@ -30,11 +30,13 @@
      Keys handled here: Enter in a field (sends it) and the arrow keys inside the mode tabs, the table
      and the hand line (they move the focus; the event is then defaultPrevented). Every other key is yours.
 
-   WHAT THE PAGE MEASURES (it reads its own layout in three places, all in section 12)
+   WHAT THE PAGE MEASURES (it reads its own layout in four places, all in section 12)
      measureScrollBar   once: the room a thin scroll bar takes here (--sbw, for the advice column)
      fitStrip           after every draw and on resize: when the strip is too short, the average stack, the
                         wordmark, the ante text and then places paid leave it, so no value is cut in half
      bleed              with it: how far the window reaches beyond the page (--bleed, for the header's rules)
+     restTable          after every draw, in a window shorter than the page only (app.css, section 16): the
+                        box around the table rests at its lower end, and shows a seat that is aimed at
 
      op              arguments                                        comes from
      set_mode        mode: tournament | spin | aof                    the mode tabs
@@ -704,11 +706,15 @@
     return words.filter(Boolean).join(" \u00b7 ");
   }
 
-  function slabHtml(content, mode) {
+  // `opens`: what the line under the slab opens ("Why and range", "Why"), or "" when there is nothing to open.
+  // In a window shorter than the page that line gives its row to the table, and its button stands in the
+  // slab's first row (app.css, section 16); everywhere else this button is not shown.
+  function slabHtml(content, mode, opens) {
     const how = mode ? `<button class="mode" data-fk="coach-mode" title="${esc("Style and moves: " + mode + ". Change them in the settings")}"` +
                        ` aria-label="${esc("Style and moves: " + mode + ". Open the settings")}"${emit({ui: only({sheet: "settings"})})}>${esc(mode)}</button>` : "";
+    const why = opens ? `<button class="whybtn" data-fk="why" title="${esc(opens)}" aria-label="${esc(opens)}"${emit({ui: only({sheet: "why"})})}>Why${icon("chevron")}</button>` : "";
     return `<div class="slab ${esc(content.tone)}${content.qualifier ? " has-pill" : ""}">
-      <div class="head"><span class="eyebrow">${esc(content.eyebrow)}</span>${how}${content.live ? sureHtml(content.sure) : ""}</div>
+      <div class="head"><span class="eyebrow">${esc(content.eyebrow)}</span>${how}${content.live ? sureHtml(content.sure) : ""}${why}</div>
       <div class="act">${verbHtml(content.verb, content.live && content.tone !== "wait")}
         ${content.size ? sizeHtml(content.size) : ""}
         ${content.qualifier ? `<span class="pill" title="${esc(content.qualifier)}">${esc(content.qualifier)}</span>` : ""}</div>
@@ -806,9 +812,10 @@
     const stands = (advice || before || {}).context || {};
     const firstLine = content.live ? advice.reason : (stands.fold_clock || stands.stage || "");
     // The row is kept even when there is nothing to open, so the table below never moves (a toast also lands on it).
-    const whyline = why || chart || where
+    const opens = why || chart || where ? (chart ? "Why and range" : "Why") : "";
+    const whyline = opens
       ? `<button class="whyline"${emit({ui: only({sheet: "why"})})}><span class="text">${prose(firstLine || "The reasons")}</span>` +
-        `<span class="more">${chart ? "Why and range" : "Why"}${icon("chevron")}</span></button>`
+        `<span class="more">${opens}${icon("chevron")}</span></button>`
       : `<div class="whyline"></div>`;
     let panel = ui.panel === "range" ? "range" : "why";
     if (!chart) panel = "why";
@@ -817,7 +824,7 @@
           <button class="tab" role="tab" aria-selected="${panel === "why"}"${emit({ui: {panel: "why"}})}>Why</button>
           <button class="tab" role="tab" aria-selected="${panel === "range"}"${emit({ui: {panel: "range"}})}>Range</button></div>`
       : "";
-    return {panel: panel, html: slabHtml(content, coachMode(view)) + whyline + tabs + why + chart + where};
+    return {panel: panel, html: slabHtml(content, coachMode(view), opens) + whyline + tabs + why + chart + where};
   }
 
   /* ---------- 5. Table ---------- */
@@ -861,7 +868,7 @@
   /* A finished hand that is still on screen keeps the seat names and the dealer button it was played
      with (view.hand.positions, view.hand.button), so "CO wins" points at the pod called CO. The table
      already stands for the next deal (view.table.button, seat.pos); the pods switch to that at the next
-     deal, or as soon as the user moves the button or changes a seat. */
+     deal, or as soon as the user moves the button or changes a seat (and back, when that is undone). */
   let settledSeen = null;      // the finished hand on screen, and the table as it stood when it was first drawn
   function tableSignature(view) {
     return view.table.button + "|" + (view.table.seats || []).map((seat) => seat.seat + (seat.empty ? "-" : ":" + seat.pos)).join(",");
@@ -872,8 +879,11 @@
     const key = view.mode + ":" + hand.no;
     const signature = tableSignature(view);
     if (!settledSeen || settledSeen.key !== key) settledSeen = {key: key, signature: signature, moved: false};
-    // The button was moved or a seat changed: from then on the next hand's names, also if it is moved back.
+    // The button was moved or a seat changed: from then on the next hand's names, also if it is moved back
+    // by hand ([ then ]: the button must not jump about). An Undo that brings the table back as it stood
+    // after the hand is another matter: everything is as it was then, the names beside the result too.
     if (settledSeen.signature !== signature) settledSeen.moved = true;
+    else if (view.toast && view.toast.redo) settledSeen.moved = false;
     if (settledSeen.moved) return null;
     return {positions: hand.positions, button: hand.button};
   }
@@ -1151,7 +1161,8 @@
        2 - 5  fold, check or call, bet or raise, all-in: always for the player the first row names
        6      Rest fold (Rest check, Skip the board)
      On top of that a pointer click on a bar button that was not at that place 400 ms earlier is
-     ignored (see barClickTooEarly): a double-click records one action. Keys are not affected. */
+     ignored (see barClickTooEarly): a double-click records one action. A move button is another
+     button once it records for another player, also when its word is the same. Keys are not affected. */
 
   // A button of the bar: the word with its key, and under it the amount when there is one.
   // `slot` is its place in the row of fixed slots: "1" ... "6", or a span such as "1 / 6".
@@ -1162,7 +1173,9 @@
     const sub = opts.sub ? `<span class="sub${opts.subClass ? " " + opts.subClass : ""}">${opts.sub}</span>` : "";
     const place = opts.slot ? ` style="grid-column:${opts.slot}"` : "";
     const title = opts.title ? ` title="${esc(opts.title)}"` : "";
-    return `<button class="${cls}"${place}${opts.fk ? ` data-fk="${opts.fk}"` : ""}${title}${opts.off ? " disabled" : ""}${emit(opts.send)}>` +
+    // (`seat`: the player a move button records for; part of what makes it "the same button" for the 400 ms rule)
+    const whom = opts.seat != null ? ` data-for="${opts.seat}"` : "";
+    return `<button class="${cls}"${place}${opts.fk ? ` data-fk="${opts.fk}"` : ""}${whom}${title}${opts.off ? " disabled" : ""}${emit(opts.send)}>` +
            `<span class="label">${esc(opts.label)}${key}</span>${sub}</button>`;
   }
   // The first row: a word in small capitals, who or what, and a note.
@@ -1392,17 +1405,17 @@
     // Slots 2 to 5: the moves of the player the first row names. (All-In or Fold has two moves: each
     // takes two of the four slots, so there is no hole in the bar.)
     const two = isAof(view);
-    const fold = barButton({label: "Fold", key: "F", fk: "fold-" + who, slot: two ? "4 / 6" : "", off: !can("fold"), send: act("fold")});
+    const fold = barButton({label: "Fold", key: "F", fk: "fold-" + who, seat: seat, slot: two ? "4 / 6" : "", off: !can("fold"), send: act("fold")});
     const callSub = known && legal.call != null ? esc(mainText(view, legal.call, hand.to_call_bb)) : "";
     const passive = known && legal.check
-      ? barButton({label: "Check", key: "X", fk: "check-" + who, send: act("check")})
-      : barButton({label: "Call", key: "C", fk: "call-" + who, sub: callSub, off: !can("call"), send: act("call")});
+      ? barButton({label: "Check", key: "X", fk: "check-" + who, seat: seat, send: act("check")})
+      : barButton({label: "Call", key: "C", fk: "call-" + who, seat: seat, sub: callSub, off: !can("call"), send: act("call")});
     const betting = known ? !!legal.bet : !hand.to_call;
     const raise = betting
-      ? barButton({label: "Bet", key: "B", fk: "bet-" + who, off: !can("bet"), send: ask("bet")})
-      : barButton({label: "Raise", key: "R", fk: "raise-" + who, off: !can("raise"), send: ask("raise")});
+      ? barButton({label: "Bet", key: "B", fk: "bet-" + who, seat: seat, off: !can("bet"), send: ask("bet")})
+      : barButton({label: "Raise", key: "R", fk: "raise-" + who, seat: seat, off: !can("raise"), send: ask("raise")});
     const allinSub = known && legal.allin != null ? esc(chipsOnlyText(view, legal.allin, true)) : "";
-    const allin = barButton({label: "All-in", key: "A", fk: "allin-" + who, slot: two ? "2 / 4" : "", sub: allinSub, off: !can("allin"),
+    const allin = barButton({label: "All-in", key: "A", fk: "allin-" + who, seat: seat, slot: two ? "2 / 4" : "", sub: allinSub, off: !can("allin"),
                              title: known ? allInWords(view, legal, isHero) : "", send: act("allin")});
 
     // Slot 6: the rest take the passive default. Hero's own action is always typed, so while the plain
@@ -1423,7 +1436,7 @@
     // All-In or Fold has two moves. A call of an all-in is an all-in.
     if (isAof(view)) {
       const shove = known && legal.call != null
-        ? barButton({label: "Call", key: "C", fk: "call-" + who, slot: "2 / 4", sub: callSub, send: act("call")})
+        ? barButton({label: "Call", key: "C", fk: "call-" + who, seat: seat, slot: "2 / 4", sub: callSub, send: act("call")})
         : allin;
       return barHtml(whose, first + shove + fold + rest, true);
     }
@@ -2266,7 +2279,33 @@
     keepTyped(halfTyped);
     keepRefused(ui);
     fitStrip();
+    restTable(view, ui);
     noteBar();
+  }
+
+  /* A window shorter than the page (app.css, section 16): the box around the table scrolls, and the
+     answer above it and the action bar below it stay where they are. The box rests at its lower end,
+     where the user's own cards, the board and the pot are. A seat the user aims at (its digit, or a
+     click) is brought into sight; when that is over, and with every new hand, new street and new turn
+     of the user, the lower end comes back. What the user scrolled by hand is left alone until then. */
+  let restKey = "";            // the hand, what it waits for and whose turn it is, when the box was last put to rest
+  let lifted = false;          // the box was moved to show an aimed seat
+  function restTable(view, ui) {
+    const box = part("scroll");
+    if (!box || !view || getComputedStyle(box).display === "contents") { restKey = ""; lifted = false; return; }
+    const hand = view.hand;
+    const key = [view.mode, hand ? hand.no : 0, hand ? hand.needs : "", hand ? (hand.board || []).length : 0, heroToAct(view)].join(":");
+    const aim = ui.seatMenu != null ? ui.seatMenu : ui.target;
+    const pod = aim != null ? part("table").querySelector('[data-seat="' + aim + '"]') : null;
+    if (pod) {
+      const room = box.getBoundingClientRect(), at = pod.getBoundingClientRect();
+      if (at.top < room.top + 4) { box.scrollTop += at.top - room.top - 4; lifted = true; }
+      else if (at.bottom > room.bottom - 4) { box.scrollTop += at.bottom - room.bottom + 4; lifted = true; }
+    } else if (lifted || key !== restKey) {
+      box.scrollTop = 0;       // (the box is laid out from its lower end: 0 is where the user's cards are)
+      lifted = false;
+    }
+    restKey = key;
   }
 
   /* The strip never cuts a value in half. Its widths are chosen so the usual numbers fit (app.css); when
@@ -2357,9 +2396,10 @@
   }
 
   /* The 400 ms rule of the action bar. A pointer click on a bar button counts only when that button
-     (the same word, for the same side: hero or an opponent) has been at that place for 400 ms. A
-     double-click therefore records one action: the button that turns up under the pointer after the
-     first click (Next hand where Follow was) is not pressed by the second. Keys are not affected.
+     (the same word, for the same player) has been at that place for 400 ms. A double-click therefore
+     records one action: the button that turns up under the pointer after the first click (Next hand
+     where Follow was, or the same Fold for the next player) is not pressed by the second. A row of
+     folds is what Rest fold and the keys are for. Keys are not affected.
      (The second click can also come before the program has answered the first, while the old bar is
      still drawn: the controller drops a bar click made while a change is on its way.) */
   const BAR_WAIT_MS = 400;
@@ -2367,7 +2407,8 @@
   function barId(button) {
     const box = button.getBoundingClientRect();
     const label = button.querySelector(".label");
-    const name = button.dataset.fk || (label ? label.textContent : button.textContent);
+    const name = (button.dataset.fk || (label ? label.textContent : button.textContent)) +
+                 (button.dataset.for ? "/seat " + button.dataset.for : "");
     // (its place on the page, not in the window: scrolling the page does not make a button a new one)
     return name + "@" + Math.round(box.left + window.scrollX) + "," + Math.round(box.top + window.scrollY) + "," + Math.round(box.width);
   }

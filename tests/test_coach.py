@@ -680,6 +680,108 @@ class Preflop(unittest.TestCase):
         adv = self.play([40] * 8, 5, "QQ", [(0, "raise", 2.2), (4, "raise", 7)], left=400)
         self.assertTrue(any("3-bettor's range ~3" in line or "3-bettor's range ~4" in line for line in adv.numbers), adv.numbers)
 
+    # ---- the verifier's engine candidates (E3), one test each -----------------------------------
+
+    def test_e3_a_a_raise_before_the_flop_is_shown_as_an_amount_that_can_be_put_in(self):
+        # The engine sizes a raise in tenths of a big blind ("RAISE to 2.3bb"); the table app shows it in chips.
+        # At 300/600 that is 1,380.  At 10/25 it would be 57.5: the app must show a whole chip, the two numbers
+        # of its headline must agree, and the table must take the amount when the user follows it.
+        from poker_coach.app import advice as A
+        from poker_coach.app.model import Session
+
+        def table(sb, bb, ante, stack_bb, hero, cards, acts=()):
+            n = 8
+            seat = lambda index: (index - hero) % n + 1                     # noqa: E731  (hero is seat 1)
+            s = Session(save=False)
+            s.do("new_session", mode="tournament", size=n, start_stack=10000, button=seat(n - 3))
+            s.do("set_level", text=f"{sb}/{bb}/{ante}")
+            s.do("set_stacks", values=[stack_bb * bb] * n)
+            s.do("set_tournament", remaining=400, paid=150, entrants=1000, start_stack="")
+            s.do("deal", hero_cards=cards)
+            for index, kind, amount in acts:
+                s.do("act", seat=seat(index), kind=kind, amount=amount)
+            return s
+
+        seen = set()
+        for sb, bb, ante in ((300, 600, 75), (10, 25, 3), (4, 8, 1), (6, 12, 2), (35, 75, 10), (60, 125, 15), (1, 3, 0)):
+            spots = [(stack, 5, "AsKd", ()) for stack in (60, 30, 20)]          # the button raises first
+            spots.append((60, 5, "AsAd", ((3, "raise", int(round(2.2 * bb))),)))   # ... and re-raises a raise
+            spots.append((60, 7, "AsAd", ((1, "call", None), (2, "call", None))))  # the big blind raises two callers
+            for stack, hero, cards, acts in spots:
+                s = table(sb, bb, ante, stack, hero, cards, acts)
+                head = A.advise(s)["headline"]
+                where = (sb, bb, ante, stack, cards, head)
+                self.assertIn(head["verb"], ("RAISE", "RE-RAISE"), where)
+                to = head["follow"]["to"]
+                self.assertEqual(to, int(to), where)                                # a whole number of chips
+                self.assertTrue(head["size_text"].endswith(f"{int(to):,}"), where)   # the chips on the screen
+                shown = float(re.search(r"TO ([\d.]+)BB", head["size_text"]).group(1))
+                self.assertAlmostEqual(shown, to / bb, delta=0.051, msg=where)       # ... and their big blinds
+                if (2.2 * bb) % 1 or (2.3 * bb) % 1:
+                    seen.add(bb)
+                s.do("act", seat=1, kind="raise", amount=to)                        # the table takes it
+        self.assertEqual(seen, {25, 8, 12, 75, 125, 3})       # levels where 2.2bb or 2.3bb is not a whole chip
+        # the engine's own sentence stays in tenths of a big blind
+        self.assertRegex(self.go("AKo", 60, "BTN", players=8).action, r"^RAISE to \d+\.\dbb$")
+
+    def test_e3_b_the_big_blind_calls_in_the_order_of_equity_not_of_rank(self):
+        # The sweep's two spots: 8 players on the bubble, 12 and 18bb, under the gun raises to 2bb and the big
+        # blind folds 94s where it calls 93s.  That is the price test, not a slip of a rule: against a range that
+        # holds A5s and A4s but no A3s, 93s has the better equity (the four is dominated and one of them is
+        # gone), and the price falls between the two.  Within one kind of hand a call never has less equity
+        # than a fold, so no hand is ever folded where a hand that is weaker AGAINST THIS RANGE calls.
+        from poker_coach.preflop import _hand_kind
+        from poker_coach.ranges import villain_open_range
+        opened = villain_open_range(7)
+        equity = {hand: eq_vs_range(HAND_INDEX[hand], opened)[0] for hand in HANDS}
+        self.assertTrue(parse_range("A5s-A4s")[HAND_INDEX["A4s"]] and format_range(opened).count("A5s-A4s"))
+        self.assertGreater(equity["93s"], equity["94s"])
+        self.assertLess(equity["93s"] - equity["94s"], 0.003)                  # by a sixth of a point
+        # the suited hands ten-high and lower (the price falls among them), and three offsuit ones
+        low = [h for h in HANDS if h.endswith("s") and h[0] in "T98765432"] + ["T9o", "98o", "87o"]
+        self.assertTrue(all(_hand_kind(HAND_INDEX[h]) in ("suited", "suited_conn") for h in low[:-3]))
+        for stack, hands in ((12, low), (18, ["95s", "94s", "93s", "92s"])):
+            got = {hand: self.play([stack] * 8, 7, hand, [(0, "raise", 2.0)], left=160) for hand in hands}
+            self.assertEqual((got["94s"].action, got["93s"].action), ("FOLD", "CALL"), stack)
+            self.assertLess(abs(got["94s"].data["bb_call_edge"]), 0.002)       # 94s misses the price by 0.07 points
+            suited = [h for h in hands if h.endswith("s")]
+            calls = [equity[h] for h in suited if got[h].action == "CALL"]
+            folds = [equity[h] for h in suited if got[h].action == "FOLD"]
+            self.assertEqual(len(calls) + len(folds), len(suited), stack)       # (nothing ten-high moves all-in here)
+            self.assertGreater(min(calls), max(folds), stack)
+            # and every call or fold is the price test's own verdict
+            for hand, adv in got.items():
+                self.assertEqual(adv.action == "CALL", adv.data["bb_call_edge"] >= 0, (stack, hand))
+
+    def test_e3_c_a_fold_beside_a_positive_shove_number_says_it_is_the_charts(self):
+        # Small blind, first in, 22bb, A2o: the engine prints the all-in's number (it solves the small blind's
+        # all-in up to 25bb) and folds.  The fold is a rule: above 20bb the small blind raises or folds from its
+        # chart, and A2o is not on it (A4o+).  The reason has to say so beside a number that says "+1.16bb".
+        adv = self.go("A2o", 22, "SB", players=8)
+        self.assertEqual(adv.action, "FOLD")
+        number = [line for line in adv.numbers if line.startswith("shove EV")][0]
+        self.assertRegex(number, r"shove EV \+\d")
+        self.assertIn("outside the TAG opening range", adv.why[0])          # the table app shows the first reason
+        rule = [line for line in adv.why if "the plan is raise or fold" in line]
+        self.assertEqual(len(rule), 1, adv.why)
+        self.assertIn(re.search(r"shove EV (\+\d+\.\d+)bb", number).group(1), rule[0])    # the same number
+        self.assertTrue(adv.data.get("fold_by_chart"))
+        self.assertNotRegex(" ".join(adv.why), r"\b(do not|never) fold\b")  # (the app reads those words as a plan)
+        # with 20bb the same hand is the all-in the number promises, and nothing needs explaining
+        short = self.go("A2o", 20, "SB", players=8)
+        self.assertEqual(short.action, "ALL-IN")
+        self.assertFalse(any("raise or fold" in line for line in short.why))
+        # a hand of the chart raises, a hand whose all-in loses folds: neither gets the sentence
+        for hand, action in (("A4o", "RAISE"), ("72o", "FOLD")):
+            other = self.go(hand, 22, "SB", players=8)
+            self.assertTrue(other.action.startswith(action), (hand, other.action))
+            self.assertFalse(any("raise or fold" in line for line in other.why), (hand, other.why))
+            self.assertFalse(other.data.get("fold_by_chart"))
+        # the other seats have the same rule from 17 to 20bb
+        utg = self.go("A9s", 17, "UTG", players=8)
+        self.assertEqual(utg.action, "FOLD")
+        self.assertTrue(any("the plan is raise or fold" in line for line in utg.why), utg.why)
+
 
 class Postflop(unittest.TestCase):
     def go(self, hero, board, pot, to_call=0.0, stack=40.0, vs="call:BB", line="", **kw):
@@ -2052,14 +2154,124 @@ class TagSheet(unittest.TestCase):
         else:
             self.assertEqual(stored, built, where)
 
+    # ---- the engine asked directly, in the builder's setting ------------------------------------
+
+    @staticmethod
+    def answer(players, hero_nb, stack, acts, hand):
+        """The engine's action: equal stacks, the table's ante on the big blind, chips only (as the builder asks)."""
+        from poker_coach.icm import Prizes as P
+        from poker_coach.preflop import Act, Spot
+        setup = HandSetup([float(stack)] * players, 0.5, 1.0, 0.0, players * 0.125)
+        sp = Spot(setup=setup, hero=players - 1 - hero_nb, hand=hand, prizes=P(), field_prizes=P())
+        sp.acts = [Act(players - 1 - nb, kind, amount) for nb, kind, amount in acts]
+        return advise(sp).action
+
+    @staticmethod
+    def kind_of(action: str) -> str:
+        """An action as the list it belongs on: value (a re-raise or an all-in), bluff, call, raise or fold."""
+        if "semi-bluff" in action:
+            return "bluff"
+        if action.startswith(("3-BET", "4-BET")) or "ALL-IN" in action:
+            return "value"
+        if action.startswith("RAISE"):
+            return "raise"
+        return {"CALL": "call", "FOLD": "fold", "CHECK": "fold"}.get(action, action)
+
+    @staticmethod
+    def weights(text: str) -> list:
+        return parse_range(text) if text and text != "nothing" else [0.0] * 169
+
+    RAISE_LISTS = ("value", "bluff", "call", "setmine", "button")       # the lists of a row of part 3
+    # the hands part 4 (a raise and a re-raise) and part 5 (you were re-raised) are asked about here: every
+    # hand on one of their lists, and the hands next to them
+    PREMIUMS = "TT+, AQs+, AKo"
+    STRONG = "22+, ATs+, KQs, AQo+"
+
+    def raise_rows(self, players):
+        """(key, row, hero's seat, [the seat the row is asked for, the other seats of its group], the raise)."""
+        from poker_coach.ranges import open_size_bb
+        build = self.builder()
+        seats = dict(build.raiser_groups(players))
+        for key, row in self.T.table(players)["vs_raise"].items():
+            group, where = key.split("|")
+            raisers = [seats[group]] + [int(nb) for nb in row["seats"]]
+            yield key, row, {"ip": 2, "sb": 1, "bb": 0}[where], raisers, \
+                lambda stack, nb, group=group: open_size_bb(stack, 1 if group == "sb" else nb)
+
+    def no_hole_and_no_double_entry(self):
+        """Every row of every part, at the stack it is asked at: a hand the engine plays is on exactly one
+        list of its row, and a hand it folds is on none."""
+        T = self.T
+        stack = T.ASKED["vs_raise"]
+        low, mid = T.CALL_FROM
+        for players in T.TABLES:
+            t = T.table(players)
+            # part 3: one question with 60bb for every row, and for every seat of the raiser's group
+            for key, row, h_nb, raisers, size in self.raise_rows(players):
+                on = {name: self.weights(row.get(name, "")) for name in self.RAISE_LISTS}
+                for nb in raisers:
+                    other = row["seats"].get(str(nb), {})
+                    more, less = self.weights(other.get("more", "")), self.weights(other.get("less", ""))
+                    for h in range(169):
+                        lists = [name for name in self.RAISE_LISTS if on[name][h] >= 0.5]
+                        where = (players, key, f"raise from seat {nb}", HANDS[h], lists)
+                        self.assertLessEqual(len(lists), 1, where)                        # no double entry
+                        if less[h] >= 0.5:
+                            self.assertEqual(lists, ["call"], where)                      # a call of the row ...
+                            lists = []                                                    # ... not against this seat
+                        if more[h] >= 0.5:
+                            self.assertEqual(lists, [], where)
+                            lists = ["call"]
+                        got = self.kind_of(self.answer(players, h_nb, stack, [(nb, "raise", size(stack, nb))], h))
+                        want = "fold" if not lists else "call" if lists[0] in ("call", "setmine", "button") else lists[0]
+                        self.assertEqual(got, want, where)                                # no hole, nothing extra
+                # ... and the calls are on the list of the stack they start at
+                rep = raisers[0]
+                for h in range(169):
+                    name = next((n for n in ("call", "setmine", "button") if on[n][h] >= 0.5), None)
+                    if name is None:
+                        continue
+                    at_low = self.answer(players, h_nb, low, [(rep, "raise", size(low, rep))], h)
+                    at_mid = self.answer(players, h_nb, mid, [(rep, "raise", size(mid, rep))], h)
+                    self.assertEqual((at_low == "CALL", at_mid == "CALL"),
+                                     {"call": (True, True), "setmine": (False, True), "button": (False, False)}[name],
+                                     (players, key, HANDS[h], name))
+            # part 1: the raise lists against the engine at their two stacks.  With 50bb every hand; with 22bb
+            # every hand that is not on the list (a hole would be there) and one that is (a raise costs the
+            # engine two solved all-ins: the plan under it); the small blind solves its own all-in for every
+            # hand up to 25bb, so it is asked about four hands.
+            deep, short = T.ASKED["first_in"]
+            for nb in T.seats(players):
+                lists = [self.weights(text) for text in t["first_in"][str(nb)]["raise"]]
+                for h in range(169):
+                    got = self.kind_of(self.answer(players, nb, deep, [], h))
+                    self.assertEqual(got, "raise" if lists[0][h] >= 0.5 else "fold", (players, nb, deep, HANDS[h]))
+                listed = [h for h in range(169) if lists[1][h] >= 0.5]
+                unlisted = [h for h in range(169) if lists[1][h] < 0.5]
+                hands = unlisted + [listed[(7 * players + nb) % len(listed)]]
+                if nb == 1:
+                    hands = [listed[0], listed[-1], unlisted[0], unlisted[-1]]
+                for h in hands:
+                    got = self.kind_of(self.answer(players, nb, short, [], h))
+                    self.assertEqual(got, "raise" if lists[1][h] >= 0.5 else "fold", (players, nb, short, HANDS[h]))
+            # parts 2, 4 and 5: one question for each cell (the builder stops on an action no list takes, and
+            # the cells are compared with it below); here the lists of one question share no hand
+            for nb, row in t["limpers"].items():
+                for k, text in enumerate(row["raise"]):
+                    both = [HANDS[h] for h in range(169) if self.weights(text)[h] >= 0.5 and self.weights(row["call"][k])[h] >= 0.5]
+                    self.assertEqual(both, [], (players, "limpers", nb, k))
+            for group, row in t["reraised"].items():
+                both = [HANDS[h] for h in range(169) if self.weights(row["fourbet"])[h] >= 0.5 and self.weights(row["call"])[h] >= 0.5]
+                self.assertEqual(both, [], (players, "reraised", group))
+
     def test_l8_every_cell_is_what_the_builder_gets_from_the_engine(self):
         # tag.json against tools/build_tag.py, for 6, 7 and 8 players.  The cells that need no question to the
-        # engine are compared whole.  The others (players only called, a raise before you, a raise and a
-        # re-raise, you raised and were re-raised) ask the engine about every hand in the build; here each
-        # of them is asked about 13 hands, a different 13 for every part and table size, so that every cell
-        # is checked and every hand is checked somewhere.
+        # engine are compared whole.  "Players only called" and "a raise before you" are built again whole, with
+        # all 169 hands.  "A raise and a re-raise" and "you raised and were re-raised" cost a solved all-in for
+        # every hand: they are built again for the hands on their lists and the hands next to them.
         T, B, build = self.T, self.B, self.builder()
-        asked = set()
+        premiums = [h for h in range(169) if parse_range(self.PREMIUMS)[h] >= 0.5]
+        strong = [h for h in range(169) if parse_range(self.STRONG)[h] >= 0.5]
         try:
             for players in T.TABLES:
                 t = T.table(players)
@@ -2069,17 +2281,34 @@ class TagSheet(unittest.TestCase):
                 self.assertEqual(t["shoved_on"], build.shoved_on(players), players)
                 self.assertEqual(t["reshove"], {k: v[:4] for k, v in b["reshove"]["before"].items()}, players)
                 self.assertEqual(t["call"], b["call"], players)
-                for k, part in enumerate(("limpers", "vs_raise", "cold", "reraised")):
-                    hands = [h for h in range(169) if h % 13 == (4 * (players - 6) + k) % 13]
-                    asked.update(hands)
+                build.HANDS_ASKED = list(range(169))
+                self.assertEqual(t["limpers"], build.limpers(players), players)
+                self.assertEqual(t["vs_raise"], build.vs_raise(players), players)
+                for part, hands, make in (("cold", premiums, build.cold), ("reraised", strong, build.reraised)):
+                    listed = [text for row in t[part].values() for text in (row if isinstance(row, list) else row.values())]
+                    for text in listed:                           # (no hand of these lists goes unasked)
+                        self.assertTrue(self.inside(text, self.PREMIUMS if part == "cold" else self.STRONG), (players, part, text))
                     build.HANDS_ASKED = hands
-                    made = {"limpers": build.limpers, "vs_raise": build.vs_raise, "cold": build.cold,
-                            "reraised": build.reraised}[part](players)
-                    self.same_for(hands, t[part], made, (players, part))
+                    self.same_for(hands, t[part], make(players), (players, part))
         finally:
             build.HANDS_ASKED = list(range(169))
-        self.assertGreaterEqual(len(asked), 150)
-        # the builder's three rules (L8): the big blind's short calls use the engine's points, ...
+        # A hole or a double entry (E1): the builder cannot make one (a row is one question at one stack, and
+        # ``place`` stops the build on an action no list takes), and the data file is asked again here.
+        with self.assertRaises(RuntimeError):
+            build.place({"call": [1.0] * 169}, {"play": ("allin", "reraise")}, "a call nobody lists")
+        self.no_hole_and_no_double_entry()
+        # ... and that check does fail on the hole that was found (KQs on no list of the big blind's row against
+        # a late raise), on a double entry and on a hand the engine folds
+        from unittest import mock
+        late = T.table(6)["vs_raise"]["late|bb"]
+        self.assertEqual(late["value"], "TT+, AJs+, KQs, AQo+")
+        for name, text in (("value", "TT+, AJs+, AQo+"), ("call", late["call"] + ", KQs"), ("call", late["call"] + ", 72o")):
+            broken = copy.deepcopy(T.data())
+            broken["tables"]["6"]["vs_raise"]["late|bb"][name] = text
+            with mock.patch.object(T, "data", lambda broken=broken: broken):
+                with self.assertRaises(AssertionError, msg=(name, text)):
+                    self.no_hole_and_no_double_entry()
+        # the builder's other rules (L8): the big blind's short calls use the engine's points, ...
         from poker_coach.preflop import _hand_kind, bb_call_points
         from poker_coach.ranges import villain_open_range
         for players in T.TABLES:
@@ -2092,16 +2321,144 @@ class TagSheet(unittest.TestCase):
                 for h in range(169):
                     price = eq_vs_range(h, opened)[0] - need - bb_call_points(_hand_kind(h)) >= 0
                     self.assertEqual(calls[h] >= 0.5, price and all_in[h] < 0.5, (players, key, HANDS[h]))
-            # ... no hand the engine re-raises or moves all-in with at 30bb is also a hand to play for a set
-            # with, or a call for the button only ...
-            for key, row in t["vs_raise"].items():
-                value = parse_range(row["value"])
-                for name in ("setmine", "button"):
-                    if row.get(name):
-                        both = [HANDS[h] for h, w in enumerate(parse_range(row[name])) if w >= 0.5 and value[h] >= 0.5]
-                        self.assertEqual(both, [], (players, key, name))
         # ... and the "you were re-raised" rows are asked with the big blind as the re-raiser
         self.assertIn("big blind as the player who re-raised", build.reraised.__doc__)
+
+    def test_e1_every_row_of_the_sheet_is_one_question_at_one_stated_stack(self):
+        # The hole that was found: KQs in the big blind against a raise from the cutoff or the button was on no
+        # list at 6, 7 and 8 players (the re-raises were asked with 30bb, the big blind's calls with 60bb, and
+        # KQs calls at one depth and re-raises at the other).  Now a row is one question with 60bb, the sheet
+        # says so, and what it says about the other stacks is true.
+        T = self.T
+        hand = HAND_INDEX["KQs"]
+        for players in T.TABLES:
+            row = T.table(players)["vs_raise"]["late|bb"]
+            self.assertEqual([name for name in self.RAISE_LISTS if self.has(row.get(name, ""), "KQs")], ["value"], players)
+            for raiser in (3, 2):
+                got = [self.answer(players, 0, stack, [(raiser, "raise", 2.2 if stack < 40 else 2.3)], hand) for stack in (30, 40, 60)]
+                # never a fold: with 30 and 40bb a call (an all-in where that clearly earns), with 60bb a re-raise
+                self.assertTrue(all(a in ("CALL", "ALL-IN") for a in got[:2]) and got[2].startswith("3-BET to"), (players, raiser, got))
+            got = [self.answer(players, 0, stack, [(3, "raise", 2.2 if stack < 40 else 2.3)], hand) for stack in (30, 40)]
+            self.assertEqual(got, ["CALL", "CALL"], players)                    # against the cutoff, as it was found
+        # the stack of every list is in the sheet, and is the one the data was asked at
+        for players in T.TABLES:
+            text = T.sheet_text(players)
+            for words in ("what the coach answers with 60bb to a raise of 2.3bb (3bb from the small blind)",
+                          "on one list of the row", "what the coach answers with 50bb and with 22bb",
+                          "what the coach answers with 40bb; in brackets, what changes with 20bb",
+                          "answers in the big blind with 20bb, 40bb and 100bb",
+                          "answers with 35bb and with 70bb to a re-raise from the big blind"):
+                self.assertIn(words, text, players)
+        self.assertEqual(T.ASKED, {"first_in": (50.0, 22.0), "limpers": (40.0, 20.0), "vs_raise": 60.0,
+                                   "cold": (20.0, 40.0, 100.0), "reraised": (35.0, 70.0)})
+        self.assertEqual(T.data()["version"], 2)
+
+        def at(players, key, h_nb, raiser, size, eff, h, caller=None):
+            """The engine's answer with ``eff`` big blinds effective (the big blind has posted the table's ante)."""
+            stack = eff + (players * 0.125 if h_nb == 0 else 0.0)
+            acts = [(raiser, "raise", size(stack, raiser))] + ([(caller, "call", size(stack, raiser))] if caller else [])
+            return self.kind_of(self.answer(players, h_nb, stack, acts, h))
+
+        # Part 3, the words under the rows, at other stacks than the row's (all rows at 8 players, the rows
+        # that changed at 6 and 7).  A sample of each list: its best, its worst and one between.
+        def some(text):
+            hands = [h for h in range(169) if self.weights(text)[h] >= 0.5]
+            return hands if len(hands) <= 3 else [hands[0], hands[len(hands) // 2], hands[-1]]
+
+        for players in T.TABLES:
+            for key, row, h_nb, raisers, size in self.raise_rows(players):
+                if players != 8 and not key.startswith("late"):
+                    continue
+                rep, where = raisers[0], key.split("|")[1]
+                for h in [h for h in range(169) if self.weights(row["value"])[h] >= 0.5]:
+                    # more than 45bb: every hand on a re-raise list re-raises small
+                    for eff in (46, 80):
+                        self.assertEqual(at(players, key, h_nb, rep, size, eff, h), "value", (players, key, eff, HANDS[h]))
+                    self.assertTrue(self.answer(players, h_nb, 80, [(rep, "raise", size(80, rep))], h).startswith("3-BET to"))
+                    # 25 to 45bb: a small re-raise, an all-in or a call; a fold only in the small blind
+                    for eff in (28, 40):
+                        got = at(players, key, h_nb, rep, size, eff, h)
+                        self.assertIn(got, ("value", "call", "fold") if where == "sb" else ("value", "call"), (players, key, eff, HANDS[h]))
+                for h in some(row["bluff"]):
+                    self.assertEqual(at(players, key, h_nb, rep, size, 46, h), "bluff", (players, key, HANDS[h]))
+                    for eff in (28, 45):      # a bluff list folds; in the big blind it calls
+                        self.assertEqual(at(players, key, h_nb, rep, size, eff, h), "call" if where == "bb" else "fold",
+                                         (players, key, eff, HANDS[h]))
+                for h in some(row["call"]):
+                    for eff in (26, 36, 46, 100):
+                        self.assertEqual(at(players, key, h_nb, rep, size, eff, h), "call", (players, key, eff, HANDS[h]))
+                for h in some(row.get("setmine", "")):          # 15 times the raise: 33bb against 2.2bb
+                    self.assertEqual([at(players, key, h_nb, rep, size, eff, h) for eff in (30, 35, 100)],
+                                     ["fold", "call", "call"], (players, key, HANDS[h]))
+                for h in some(row.get("button", "")):           # on the button or after a caller, 50bb or more
+                    self.assertEqual([at(players, key, h_nb, rep, size, eff, h) for eff in (49, 50, 100)],
+                                     ["fold", "call", "call"], (players, key, HANDS[h]))
+                    if rep > 4:                                 # from the cutoff: only after a caller
+                        self.assertEqual(at(players, key, 3, rep, size, 60, h), "fold", (players, key, HANDS[h]))
+                        self.assertEqual(at(players, key, 3, rep, size, 60, h, caller=4), "call", (players, key, HANDS[h]))
+        # the big blind calls by the price: a smaller raise, more hands; a bigger one, fewer; a caller, more
+        calls = {}
+        for raise_to, caller in ((2.0, None), (2.3, None), (3.0, None), (2.3, 2)):
+            acts = [(3, "raise", raise_to)] + ([(caller, "call", raise_to)] if caller else [])
+            calls[raise_to, caller] = {h for h in range(169) if self.answer(8, 0, 60, acts, h) == "CALL"}
+        self.assertTrue(calls[3.0, None] < calls[2.3, None] < calls[2.0, None])
+        self.assertTrue(calls[2.3, None] < calls[2.3, 2])
+        self.assertEqual(calls[2.3, None], {h for h in range(169) if self.weights(T.table(8)["vs_raise"]["late|bb"]["call"])[h] >= 0.5})
+        # the other seat of a group has its own line where the big blind's calls differ
+        text = T.sheet_text(8)
+        self.assertIn("if the raise came from LJ, do not call: K8o-K6o, Q9o, J9o, T9o", text)
+        self.assertIn("if the raise came from BTN, call as well: K2o, Q7o-Q4o, J8o-J7o, T8o-T7o, 97o+, 87o", text)
+        self.assertNotIn("if the raise came from UTG+1", text)             # (the same lists as against UTG)
+
+        # Part 2: what a raise list loses with 17 to 24bb is in brackets, taken from the data
+        limpers = T.table(8)["limpers"]
+        self.assertEqual(T.short_stack_note(limpers["3"], 0), " (17 to 24bb: without T8s, 98s, 87s, 76s)")   # the cutoff
+        self.assertEqual(T.short_stack_note(limpers["6"], 0), " (17 to 24bb: without T9s)")                  # UTG+1
+        self.assertEqual(T.short_stack_note(limpers["2"], 0), "")                                            # the button
+        self.assertNotIn("without the suited connectors below T9s", text)
+        self.assertIn("three callers", text)
+        self.assertNotIn("three or more", text)
+        for nb, row in limpers.items():
+            for k in range(len(row["raise"])):
+                self.assertTrue(self.inside(row["mid"][k], row["raise"][k]), (nb, k))
+        # ... with 20bb nobody calls along, and with four callers the list shrinks again, never below the floor
+        acts = [(3, "limp", 1.0)]
+        self.assertEqual(self.answer(8, 2, 40, acts, HAND_INDEX["54s"]), "CALL (limp behind)")
+        self.assertEqual(self.answer(8, 2, 20, acts, HAND_INDEX["54s"]), "FOLD")
+        four = [(nb, "limp", 1.0) for nb in (7, 6, 5, 4)]
+        three_callers = T.table(8)["limpers"]["0"]["raise"][2]
+        for name in ("AA", "99", "AJs", "AQo", "KQs", "55", "98s", "66", "T9s", "72o"):
+            raised = self.answer(8, 0, 40, four, HAND_INDEX[name]).startswith("RAISE")
+            if self.has(T.ALWAYS_OVER_CALLERS, name):
+                self.assertTrue(raised, name)
+            if raised:
+                self.assertTrue(self.has(three_callers, name), name)
+        self.assertFalse(self.answer(8, 0, 40, four, HAND_INDEX["55"]).startswith("RAISE"))    # (55 is raised behind three)
+        self.assertTrue(self.has(three_callers, "55"))
+
+    def test_e2_the_second_re_raise_is_said_the_way_the_engine_makes_it(self):
+        # The sheet's own sentences disagreed: "Second re-raise ... with more than 60bb" (the sizes) and "more
+        # than 45bb: re-raise KK+" (part 5).  The engine does both, in two different spots:
+        # your own raise was re-raised: a small second re-raise with more than 45bb, all-in with less; ...
+        T = self.T
+        kings = HAND_INDEX["KK"]
+        reraised = [(3, "raise", 2.2), (0, "raise", 8.4)]                  # the cutoff raises, the big blind re-raises
+        for stack, want in ((46, "ALL-IN"), (47, "4-BET to 19bb"), (61, "4-BET to 19bb"), (100, "4-BET to 19bb")):
+            self.assertEqual(self.answer(8, 3, stack, reraised, kings), want, stack)      # (the big blind has 1bb less)
+        # ... a raise and a re-raise came before you: all-in up to 60bb, a small re-raise with more
+        cold = [(7, "raise", 2.2), (4, "raise", 6.6)]                      # under the gun raises, the hijack re-raises
+        for stack, want in ((40, "ALL-IN"), (60, "ALL-IN"), (61, "4-BET to 15bb"), (100, "4-BET to 15bb")):
+            self.assertEqual(self.answer(8, 2, stack, cold, kings), want, stack)
+        sizes = dict(T.SIZES)["Second re-raise"]
+        self.assertIn("2.3 times their re-raise", sizes)                   # 2.3 x 8.4 = 19bb, 2.3 x 6.6 = 15bb
+        self.assertIn("Your own raise was re-raised: with more than 45bb", sizes)
+        self.assertIn("A raise and a re-raise came before you: with more than 60bb", sizes)
+        self.assertIn("With less, all-in", sizes)
+        self.assertNotIn("re-raise with more than 60bb. With less", sizes)
+        text = T.sheet_text(8)
+        self.assertIn("Second re-raise: " + sizes, text)
+        self.assertIn("A raise and a re-raise before you: all-in (re-raise with more than 60bb) with", text)      # part 4
+        self.assertIn("45bb or less all-in with TT+, AQs+, AKo; more than 45bb re-raise KK+", text)              # part 5
 
     def test_sheet_cli_and_playbook(self):
         import io

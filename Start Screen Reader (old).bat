@@ -2,7 +2,7 @@
 rem Starts the older program, the one that reads the poker table from the screen (play-money tables only).
 rem The table app, where you type the table yourself, is "Start Poker Coach.bat".
 setlocal
-title Poker Coach screen reader
+title Menlo Coach screen reader
 cd /d "%~dp0"
 if not exist "poker_coach\live\wizard.py" goto nofiles
 set "PY=python"

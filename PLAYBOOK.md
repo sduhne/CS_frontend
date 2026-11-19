@@ -88,10 +88,12 @@ Sizes: 2x under 25bb, 2.2x to 40bb, 2.3-2.5x deeper, 3x from the small blind.
   open only 9% (77+, ATs+, AJo+, KQs).
 - **A raise and a re-raise in front:** KK+ only; QQ/AK only when both players
   are loose or stacks are short.
-- **You opened and got 3-bet:** under 45bb it is shove or fold: QQ+/AK shove,
-  the rest folds unless the 3-bettor is wild. Deeper than 45bb QQ+ and AK
-  never fold to one re-raise: KK+ re-raise again; QQ and AK call in position,
-  and out of position move all-in with 60bb or less and call when deeper.
+- **You opened and got 3-bet:** with 45bb or less it is all-in or fold, by
+  the seat you raised from: KK+ and AKs from UTG or UTG+1; QQ+ and AK from
+  LJ or HJ; TT+, AQs+ and AKo from CO, BTN or SB. The rest folds unless the
+  3-bettor is wild. Deeper than 45bb QQ+ and AK never fold to one re-raise:
+  KK+ re-raise again; QQ and AK call in position, and out of position move
+  all-in with 60bb or less and call when deeper.
 
 ## Push/fold: how wide to shove (9-handed, with antes)
 
@@ -135,7 +137,9 @@ strong: 99+, AQ+. On the bubble subtract most of that.
 - **Heads-up as the preflop raiser:** bet small (1/3 pot) on dry high boards
   (K72, A83, Q-Q-5) with everything; check boards that hit callers (9-8-7
   two-tone) unless you have a hand or a draw.
-- **Multi-way:** bet only real hands and strong draws.
+- **Multi-way:** bet only real hands and strong draws. A strong draw is 12
+  outs or more: bet it when you raised before the flop or act last, away
+  from the bubble.
 - **Value bet** top pair good kicker or better; size up (2/3 pot) on wet
   boards and on the turn. A bet that would take two thirds or more of what
   is behind is made as the all-in. Top pair's small bet as the raiser is a
@@ -474,6 +478,10 @@ late entry earns about the same at every table size in the model (turbo:
 - **Big blind, no raise:** check. After the flop move all-in with top pair or
   better, or a draw with 12 outs, when the stack is 4 pots or less;
   otherwise check, and fold to a bet.
+- **A cheap call of an all-in:** the call tables read the size of the
+  all-in, not the price. When the play with all moves calls, for less than
+  a third of your stack and at 3 to 1 or better (or with 15 points of
+  equity to spare), the table app calls in this plan too.
 - **How the numbers were made.** Before the money: the play that earns the
   most prize money in the late-registration model (blinds to pay until the
   bubble, opponents who call as they usually do). In the money and for
@@ -491,13 +499,13 @@ what has happened before you act. Stacks are effective, in big blinds.
 
 | Before you act | 17bb or more | 16bb or less |
 |---|---|---|
-| Nobody has entered | Raise the opening range of your seat (17 to 24bb: without the small suited connectors) | All-in with the all-in or fold hands of your seat. QQ+ and AK may raise 2bb at 12 to 16bb and call any all-in |
-| Players only called | Raise to 3bb plus 1bb per caller (4bb plus 1bb from the blinds) with the opening range of the seat one line tighter for each caller, and always with 99+, AJs+, AQo+, KQs. Otherwise fold; the big blind checks | All-in with the all-in hands of the seat before yours (big blind: the small blind's). Otherwise fold; the big blind checks |
+| Nobody has entered | Raise the opening range of your seat (17 to 24bb: a little tighter up to the cutoff, mainly without the small suited connectors; the button and the small blind keep theirs) | All-in with the all-in or fold hands of your seat. QQ+ and AK may raise 2bb at 12 to 16bb and call any all-in |
+| Players only called | Raise to 3bb plus 1bb per caller (4bb plus 1bb from the blinds) with the opening range of the seat one line tighter for each caller (from the blinds: counted from the cutoff's line), and always with 99+, AJs+, AQo+, KQs. With 17 to 24bb the lists lose T8s and the suited connectors below T9s (UTG+1 also T9s; the button keeps them). Four callers or more: fewer hands again with each caller. Otherwise fold; the big blind checks | All-in with the all-in hands of the seat before yours (big blind: the small blind's). Otherwise fold; the big blind checks |
 | One raise | 25bb or more: re-raise, call or fold by where the raise came from and where you sit | 24bb or less: all-in or fold, from the raise table of the all-in or fold section |
 | A raise and a call | The same hands; the re-raise is one raise bigger for each caller | The same all-in hands |
 | A raise and a re-raise | The table below | The table below |
 | You raised and were re-raised | The table below | (you do not raise small this short) |
-| You raised and met an all-in | Call with the hands of your opening range that beat the pot odds by 6 points, 16 on the bubble. Against 7bb or less: every hand you raised | |
+| You raised and met an all-in | Call with the hands of your opening range that beat the pot odds by 6 points, 16 on the bubble. Against 7bb or less: every hand you raised (on the bubble without the smallest suited connectors) | |
 | An all-in, or two | The call tables of the all-in or fold section, by the size of the all-in | The same |
 
 A raise and a re-raise before you (everything else folds):
@@ -536,24 +544,40 @@ AKs and AKo move all-in with 46 to 60bb instead of calling.
   or small blind. The sheet keeps the part that makes top pair or a real
   draw. In the table app a close call before the money stays only for a
   hand on this list (with 25bb or more it must also be on the sheet's own
-  list for the big blind).
+  list for the big blind). "Close" is said there when the hand has fewer
+  than 7 points over what the call needs; with more, a hand on the list is
+  a plain call and a hand off it is the sheet's fold.
+- **Big blind against one raise, with 25bb or more:** the sheet's lists are
+  the answers to a raise of 2.3bb from UTG, HJ and CO. Against LJ a few
+  offsuit calls go (K8o-K6o, Q9o, J9o, T9o at eight players), against the
+  button a few come (K2o, Q7o-Q4o, J8o-J7o, T8o-T7o, 97o+, 87o); the sheet
+  prints both. The call goes by the price: a smaller raise adds a few
+  hands, a bigger one takes some away.
 - **You only called and a player raised:** fold. With a pair and 15 times
-  the raise behind you may call once.
+  the raise behind you may call once. The table app also calls, whatever
+  the hand, a raise that costs a fifth of the pot or less (5 to 1 or
+  better): the rule is for a real raise.
 - **Where the hands come from.** The raise, call and re-raise lists are what
   `advise` answers far from the money for each of the 169 hands; a test
-  checks it. Against a raise the re-raise lists are the answers with 30bb,
-  where some of those hands move all-in ("Facing a raise" has the rule);
-  deeper than 45bb the engine re-raises a few more hands (AJs and KQs
-  against a late raise). Every all-in list is taken from the all-in or fold
-  section, so it is tighter than the chip-EV push/fold table earlier in this
-  playbook.
+  checks it. Each list is the answer at one stack, which the sheet names:
+  first in 50 and 22bb, behind callers 40 and 20bb, against a raise 60bb, a
+  raise and a re-raise 20, 40 and 100bb, re-raised 35 and 70bb. Against a
+  raise every row is one question, so each hand played there is on one
+  list; with 26 to 45bb the hands of a re-raise list that cannot call an
+  all-in move all-in or call ("Facing a raise" has the rule), and the bluff
+  lists fold. The all-in lists first in and over one raise, and the calls
+  of an all-in, are taken from the all-in or fold section, so they are
+  tighter than the chip-EV push/fold table earlier in this playbook.
   That chip-EV table is still what opponents are assumed to play, and what
   the coach leans to when survival does not matter.
-- **Limits.** Stacks are taken as equal and every player posts an ante.
-  Three stack columns stand for every stack under 17bb. With the table
-  tracked, `advise` prices the real stacks and prizes. The PDF sheets were
-  printed before these lists were rebuilt: where they differ, the text from
-  `tag-sheet` is right.
+- **Limits.** Stacks are taken as equal. The ante is an eighth of a big
+  blind for each player; for the raise, call and re-raise lists the big
+  blind posts it for the table. Three stack columns stand for every stack
+  under 17bb, and a list that stands for a band of stacks or a pair of
+  seats is exact only at the stack and seat it was asked for. With the
+  table tracked, `advise` prices the real stacks and prizes. The PDF sheets
+  were printed before these lists were rebuilt: where they differ, the text
+  from `tag-sheet` is right.
 
 ## Spins: three players, one prize
 

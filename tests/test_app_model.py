@@ -6,10 +6,12 @@ table: seats 1 to 6 with 10,000 each, blinds 100/200, no ante, button on
 seat 1, so LJ is seat 4, HJ 5, CO 6, BTN 1 (hero), SB 2, BB 3.
 """
 
+import ast
 import copy
 import json
 import os
 import random
+import re
 import shutil
 import tempfile
 import unittest
@@ -2892,8 +2894,8 @@ class Rob1ForgottenCaller(unittest.TestCase):
         s = self.the_reviewers_hand()
         total = chips(s)
         view = s.do("act", seat=3, kind="bet", amount=600)          # the big blind, who had called, leads
-        self.assertEqual(toast_of(view), "BB was folded before the flop on the record: now he called there, "
-                                         "and bets 600 here. Backspace takes it back.")
+        self.assertEqual(toast_of(view), "BB was folded before the flop on the record: now they called there, "
+                                         "and bet 600 here. Backspace takes it back.")
         hand = view["hand"]
         self.assertEqual((hand["phase"], hand["to_call"], hand["target_is_hero"], hand["board"]),
                          ("flop", 600, True, ["Ks", "7d", "2c"]))
@@ -2907,14 +2909,14 @@ class Rob1ForgottenCaller(unittest.TestCase):
     def test_rob_1_a_check(self):
         s = self.the_reviewers_hand()
         view = s.do("act", seat=3, kind="check")
-        self.assertIn("now he called there, and checks here", toast_of(view))
+        self.assertIn("now they called there, and check here", toast_of(view))
         self.assertEqual((marked(s)[-3:], view["hand"]["phase"], view["hand"]["pot"]),
                          (["BB call~", "Ks 7d 2c", "BB check"], "flop", 1750))
 
     def test_rob_1_an_all_in(self):
         s = self.the_reviewers_hand()
         view = s.do("act", seat=3, kind="allin")
-        self.assertIn("now he called there, and moves all-in here", toast_of(view))
+        self.assertIn("now they called there, and move all-in here", toast_of(view))
         self.assertEqual((view["hand"]["phase"], view["hand"]["to_call"]), ("flop", 19475))
         self.assertEqual(marked(s)[-1], "BB all-in 97.4bb")
 
@@ -3140,7 +3142,7 @@ class T1ABetWhileCardsAreWanted(unittest.TestCase):
             for seat in (2, 3, 4, 5):                               # the blinds, and two players passed by in front
                 err = refused(s, "act", seat=seat, kind=kind, amount=amount)
                 self.assertEqual(err.message, f"Type the flop first (K S 7 D 2 C), then record the {word}.", (kind, seat))
-                self.assertEqual(err.fix, "A bet or raise he made before the flop: select his fold on the hand line, "
+                self.assertEqual(err.fix, "A bet or raise they made before the flop: select their fold on the hand line, "
                                           "then Raised.", (kind, seat))
         self.assertEqual(state(s).phase, "flop")
         self.assertFalse([e for e in state(s).log if e["kind"] in ("bet", "raise") and e["seat"] != 6])
@@ -3158,7 +3160,7 @@ class T1ABetWhileCardsAreWanted(unittest.TestCase):
         refused(s, "act", seat=3, kind="bet", amount=600)
         s.do("set_cards", board="Ks7d2c")
         view = s.do("act", seat=3, kind="bet", amount=600)
-        self.assertIn("now he called there, and bets 600 here", toast_of(view))
+        self.assertIn("now they called there, and bet 600 here", toast_of(view))
         self.assertEqual([(e["street"], e["kind"]) for e in state(s).log if e["seat"] == 3],
                          [("preflop", "call"), ("flop", "bet")])
 
@@ -3171,7 +3173,7 @@ class T1ABetWhileCardsAreWanted(unittest.TestCase):
         self.assertEqual((s.view()["hand"]["phase"], s.view()["hand"]["needs"]), ("turn", "board"))
         err = refused(s, "act", seat=6, kind="bet", amount=700)     # the cutoff's check on the flop was implied
         self.assertEqual((err.message, err.fix), ("Type the turn first (5 H), then record the bet.",
-                                                  "A bet or raise he made on the flop: undo to that point (Backspace)."))
+                                                  "A bet or raise they made on the flop: undo to that point (Backspace)."))
         err = refused(s, "act", seat=2, kind="allin")               # folded before the flop on the record
         self.assertEqual(err.message, "Type the turn first (5 H), then record the all-in.")
         self.assertIn("on the flop: undo to that point", err.fix)
@@ -3499,8 +3501,8 @@ class D6AFoldForAnImpliedCheckWhileCardsAreWanted(unittest.TestCase):
         for seat in (3, 6, 1):                                      # the big blind, the cutoff, and your own seat
             err = refused(s, "act", seat=seat, kind="fold")
             self.assertEqual(err.message, "Type the turn first (5 H), then record the fold.", seat)
-            he = "you" if seat == 1 else "he"
-            self.assertEqual(err.fix, f"On the record {he} checked on the flop, where a check was free: "
+            they = "you" if seat == 1 else "they"
+            self.assertEqual(err.fix, f"On the record {they} checked on the flop, where a check was free: "
                                       "a fold now is on the turn.", seat)
         self.assertEqual((marked(s), s.rev), before)                # nothing changed: the flop round did not open again
         self.assertEqual((s.view()["hand"]["phase"], s.view()["hand"]["needs"]), ("turn", "board"))
@@ -3519,7 +3521,7 @@ class D6AFoldForAnImpliedCheckWhileCardsAreWanted(unittest.TestCase):
         s.do("close_round")
         err = refused(s, "act", seat=6, kind="fold")
         self.assertEqual((err.message, err.fix), ("Type the river first (9 C), then record the fold.",
-                                                  "On the record he checked on the turn, where a check was free: "
+                                                  "On the record they checked on the turn, where a check was free: "
                                                   "a fold now is on the river."))
 
     def test_d6_what_stays_as_it_was(self):
@@ -3596,7 +3598,7 @@ class T2AFoldForAPlayerAlreadyFolded(unittest.TestCase):
         s.do("deal", hero_cards="AhKh")
         play(s, "6 raise 500, 1 call")
         s.do("set_cards", board="Ks7d2c")
-        self.assertIn("now he called there, and checks here", toast_of(s.do("act", seat=3, kind="check")))
+        self.assertIn("now they called there, and check here", toast_of(s.do("act", seat=3, kind="check")))
         # and a fold on the street being played still takes the place of the one nobody typed
         s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
         s.do("deal", hero_cards="AhKh")
@@ -3768,6 +3770,82 @@ class SeenInPassing(unittest.TestCase):
         s.do("act", seat=5, kind="raise", amount=500)
         view = s.do("skip_hand", hero_in=True)                      # hero was still in: that one is not recorded
         self.assertEqual((view["history"][0]["skipped"], view["history"][0]["net"]), (True, None))
+
+
+class CloseT4APlayerIsTheyNeverHe(unittest.TestCase):
+    """A player whose gender is not known is "they" in every sentence the user reads; "you" stays "you"."""
+
+    WORDS = re.compile(r"\b(he|his|him|himself|she|her|hers|herself)\b", re.IGNORECASE)
+    APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "poker_coach", "app")
+
+    def test_close_t4_the_sentences_of_the_model(self):
+        s = new_table(size=6, blinds="100/200/25", away=(4,), deal=False)
+        s.do("rename", seat=4, name="Bob")
+        s.do("deal", hero_cards="AhKh")
+        err = refused(s, "act", seat=4, kind="call")                # a player sitting out
+        self.assertEqual((err.message, err.fix), ("Bob is sitting out: the defaults are their actions.",
+                                                  "Mark the player as back first."))
+        s = new_table(size=6, blinds="100/200/25", away=(1,), deal=False)
+        s.do("deal", hero_cards="AhKh")
+        self.assertEqual(refused(s, "act", seat=1, kind="call").message,
+                         "You are sitting out: the defaults are your actions.")
+        # must have called: "they" takes the verb as "you" does
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        s.do("set_cards", board="Ks7d2c")
+        said = [toast_of(s.do("act", seat=3, kind="raise", amount=600))]
+        for kind in ("check", "allin"):
+            s.do("undo")
+            said.append(toast_of(s.do("act", seat=3, kind=kind)))
+        self.assertEqual(said, ["BB was folded before the flop on the record: now they called there, and "
+                                + words + " here. Backspace takes it back."
+                                for words in ("bet 600", "check", "move all-in")])
+        # cards wanted: the two refusals that name the player
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        s.do("close_round")                                         # the flop is wanted; the blinds' folds are implied
+        self.assertEqual(refused(s, "act", seat=3, kind="raise", amount=2000).fix,
+                         "A bet or raise they made before the flop: select their fold on the hand line, then Raised.")
+        play(s, "3 call")
+        s.do("set_cards", board="Ks7d2c")
+        s.do("close_round")                                         # the turn is wanted; the checks were implied
+        self.assertEqual(refused(s, "act", seat=3, kind="fold").fix,
+                         "On the record they checked on the flop, where a check was free: a fold now is on the turn.")
+        self.assertEqual(refused(s, "act", seat=1, kind="fold").fix,
+                         "On the record you checked on the flop, where a check was free: a fold now is on the turn.")
+        self.assertEqual(refused(s, "act", seat=6, kind="bet", amount=700).fix,
+                         "A bet or raise they made on the flop: undo to that point (Backspace).")
+
+    def test_close_t4_no_sentence_in_the_program_or_the_page_says_he(self):
+        """Every text of model.py, server.py, amounts.py, defaults.py and the page: comments and docstrings aside."""
+        found = []
+        for name in ("model.py", "server.py", "amounts.py", "defaults.py"):
+            with open(os.path.join(self.APP, name), encoding="utf-8") as fh:
+                tree = ast.parse(fh.read())
+            docs = set()
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body \
+                        and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant):
+                    docs.add(id(node.body[0].value))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs \
+                        and self.WORDS.search(node.value):
+                    found.append((name, node.lineno, node.value))
+        static = os.path.join(self.APP, "static")
+        for name in sorted(os.listdir(static)):
+            if not name.endswith((".js", ".html", ".css")):
+                continue
+            with open(os.path.join(static, name), encoding="utf-8") as fh:
+                text = fh.read()
+            text = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.DOTALL)
+            text = re.sub(r"<!--.*?-->", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.DOTALL)
+            for number, line in enumerate(text.split("\n"), 1):
+                line = re.sub(r"(^|[^:'\"])//.*$", r"\1", line)        # a comment, not the // of an address
+                if self.WORDS.search(line):
+                    found.append((name, number, line.strip()))
+        self.assertEqual(found, [])
 
 
 if __name__ == "__main__":

@@ -836,6 +836,148 @@ class D7TheSavedExamplesOfThePage(unittest.TestCase):
         self.assertIn(said, fixtures)
 
 
+class CloseT1AWindowShorterThanThePage(unittest.TestCase):
+    """T1: in a window shorter than the page the answer stays at the top and the action bar at the foot.
+
+    The page is a column of fixed heights, so "shorter than the page" is a number per width: 713px under
+    1024 wide, 605 from 1024, 577 from 1280.  Under those the box around the table (index.html,
+    #region-scroll) takes the room that is left and scrolls; before that the table takes a shorter form.
+    What happens on screen is checked in the browser (short.js: a hand by keys and one by mouse at nine
+    sizes; sizes.js: no overlap in the short windows).  Here: the pieces are there and their numbers agree.
+    """
+
+    def read(self, name: str) -> str:
+        with open(os.path.join(server.STATIC_FOLDER, name), encoding="utf-8") as fh:
+            return fh.read()
+
+    def px(self, css: str, rule: str, what: str) -> int:
+        """The first ``what:NNpx`` of the first rule that starts with ``rule``."""
+        import re
+        body = css[css.index(rule):]
+        return int(re.search(re.escape(what) + r":(\d+)px", body[:body.index("}")]).group(1))
+
+    def test_close_t1_the_table_has_a_box_that_can_scroll(self):
+        page = self.read("index.html")
+        parts = [page.index(f'id="region-{name}"') for name in ("header", "advice", "scroll", "table", "line", "actions")]
+        self.assertEqual(parts, sorted(parts))                      # the order on the page is as it was
+        box = page[page.index('<div id="region-scroll" class="scroll">'):page.index('<div id="region-line"')]
+        self.assertIn('<section id="region-table" class="table"', box)
+        self.assertEqual(box.count("</div>"), 1)                    # the table and nothing else is in it
+        css = self.read("app.css")
+        before_media = css[:css.index("@media", css.index(".scroll{display:contents}"))]
+        self.assertTrue(before_media.rstrip().endswith(".scroll{display:contents}"))    # no box while the window is tall enough
+
+    def test_close_t1_short_is_one_pixel_under_what_the_page_needs(self):
+        css = self.read("app.css")
+        root = css[css.index(":root{"):]
+        token = lambda name, text=root: self.px(text, ":root{", name)
+        # under 1024: header (bar, strip, its rule), slab, the line under it, table, hand line, action bar, five gaps, 8 under the bar
+        bar, strip = self.px(css, ".bar{", "height"), self.px(css, ".strip{", "height")
+        slab, whyline = self.px(css, ".slab{", "height"), self.px(css, ".whyline{", "min-height")
+        # (the hand line is 44 high and gives 4 back above and below)
+        line, caption, button = self.px(css, "\n.line{display", "height") - 8, self.px(css, ".actions .whose{", "height"), self.px(css, "\n.btn{", "min-height")
+        narrow = bar + strip + 1 + slab + whyline + token("--table-h") + line + caption + 4 + button + 5 * token("--gap") + 8
+        self.assertEqual(narrow, 713)
+        self.assertIn(f"@media (max-width:1023px) and (max-height:{narrow - 1}px),", css)
+        # from 1024: two columns, the header 52 + 52 + 1, table 360, gaps of 12: the action bar ends at 605
+        wide = css[css.index("@media (min-width:1024px){"):]
+        middle = 52 + strip + 1 + self.px(wide, ":root{", "--table-h") + line + caption + 4 + button + 3 * self.px(wide, ":root{", "--gap")
+        self.assertEqual(middle, 605)
+        self.assertIn(f"(min-width:1024px) and (max-width:1279px) and (max-height:{middle + 7}px),", css)
+        # from 1280 (and under 630 high, where the table is the middle one): one header row of 64 + 1, gaps of 16: 577
+        large = 64 + 1 + 360 + line + caption + 4 + button + 3 * 16
+        self.assertEqual(large, 577)
+        self.assertIn(f"(min-width:1280px) and (max-height:{large + 7}px){{", css)
+        # the shorter forms end where their numbers say: one column 357 around the table, two columns 237, from 1024 253 and 225
+        self.assertIn("--table-h:clamp(292px,calc(100vh - 357px),304px)", css)
+        self.assertEqual(narrow - token("--table-h") - whyline - token("--gap"), 357)
+        self.assertIn("--table-h:clamp(292px,calc(100vh - 237px),360px)", css)
+        self.assertEqual(bar + strip + 1 + line + caption + 4 + button + 3 * token("--gap") + 8, 237)
+        self.assertIn("--table-h:clamp(304px,calc(100vh - 253px),360px)", css)
+        self.assertEqual(middle - 360 + 8, 253)
+        self.assertIn("--table-h:clamp(304px,calc(100vh - 225px),360px)", css)
+        self.assertEqual(large - 360 + 8, 225)
+
+    def test_close_t1_the_box_rests_at_its_lower_end_and_the_reasons_stay_one_click_away(self):
+        css, page = self.read("app.css"), self.read("render.js")
+        short = css[css.index("/* ---------- 16. A window shorter than the page"):css.index("/* ---------- 17. Motion")]
+        self.assertIn("flex-direction:column-reverse", short)       # laid out from its lower end: the user's cards
+        self.assertIn(".app:not(.first)", short)                    # the first-run form scrolls as a page
+        self.assertIn("position:fixed", short)                      # a menu on the table is not cut by the box
+        self.assertIn(".whyline{display:none}", short)              # one column: the line under the slab gives its row ...
+        self.assertIn(".slab .whybtn{display:inline-flex}", short)  # ... and its button stands in the slab
+        self.assertIn(".slab .whybtn{display:none", css[:css.index(short)])
+        self.assertIn('<button class="whybtn" data-fk="why"', page)
+        self.assertIn('emit({ui: only({sheet: "why"})})}>Why${icon("chevron")}</button>', page)
+        self.assertIn("    restTable(view, ui);\n", page)           # after every draw
+        self.assertIn("box.scrollTop = 0;", page)
+        # nothing of this hides the page from a poker client or reads the screen: it is layout only
+        for word in ("setContentProtection", "getDisplayMedia", "captureStream"):
+            self.assertNotIn(word, page)
+
+
+class CloseT2AMoveButtonBelongsToItsPlayer(unittest.TestCase):
+    """T2: a pointer click on a bar button is dropped for 400 ms after the bar changed the player it records for.
+
+    Fold for the hijack and Fold for the cutoff stand at the same place with the same word.  The rule
+    (render.js barClickTooEarly) knows a button by its name and its place; the name now carries the
+    seat the button records for.  What happens on screen is checked in the browser (close.js, T2).
+    """
+
+    def test_close_t2_the_buttons_name_carries_the_seat_it_records_for(self):
+        with open(os.path.join(server.STATIC_FOLDER, "render.js"), encoding="utf-8") as fh:
+            page = fh.read()
+        start = page.index("  function actBar(view, advice, ui) {")
+        bar = page[start:page.index("\n  }\n", start)]
+        moves = [line for line in bar.split("\n") if "barButton({label:" in line
+                 and any(f'label: "{word}"' in line for word in ("Fold", "Check", "Call", "Bet", "Raise", "All-in"))]
+        self.assertEqual(len(moves), 7)                             # fold, check, call, bet, raise, all-in; All-In or Fold's call
+        for line in moves:
+            self.assertIn("seat: seat,", line)
+            self.assertIn("-\" + who", line)                        # (and hero's button is still not an opponent's)
+        self.assertIn('const whom = opts.seat != null ? ` data-for="${opts.seat}"` : "";', page)
+        start = page.index("  function barId(button) {")
+        name = page[start:page.index("\n  }\n", start)]
+        self.assertIn('(button.dataset.for ? "/seat " + button.dataset.for : "")', name)
+        self.assertIn("const BAR_WAIT_MS = 400;", page)
+        # a click by pointer only: Enter or Space on a focused button, and the keys, are not held back
+        self.assertIn('const onBar = event.detail > 0 && element.tagName === "BUTTON" && !!element.closest("#region-actions");', page)
+
+
+class CloseT5TheNamesOfAFinishedHandAfterAnUndo(unittest.TestCase):
+    """T5 (UNDONAMES): a finished hand, a seat change and its undo.
+
+    The pods of a finished hand keep that hand's seat names until the user moves the button or changes a
+    seat; from then on they show the next hand's (render.js finishedHandNames).  An undo that brings the
+    table back used to leave the next hand's names on the pods while the slab still said "You (UTG) win".
+    The view of an undo carries toast.redo; with the table as it stood, the hand's own names come back.
+    On screen: close.js, T5.  (AKEY, the other small one, was left: see the closing notes.)
+    """
+
+    def test_close_t5_an_undo_brings_the_hands_own_names_back(self):
+        with open(os.path.join(server.STATIC_FOLDER, "render.js"), encoding="utf-8") as fh:
+            page = fh.read()
+        start = page.index("  function finishedHandNames(view) {")
+        rule = page[start:page.index("\n  }\n", start)]
+        self.assertIn("if (settledSeen.signature !== signature) settledSeen.moved = true;\n"
+                      "    else if (view.toast && view.toast.redo) settledSeen.moved = false;", rule)
+        # the model says so in the view of an undo, and only there
+        tmp = tempfile.mkdtemp(prefix="menlo-close-t5-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        session = Session(folder=tmp)
+        session.apply({"op": "new_session", "mode": "tournament", "size": 8, "start_stack": 20000, "level": "300/600/75", "button": 6})
+        session.apply({"op": "deal", "hero_cards": "AhKh"})
+        session.apply({"op": "act", "seat": 1, "kind": "raise", "amount": 1200})
+        over = session.apply({"op": "close_round"})
+        self.assertEqual((over["hand"]["needs"], over["hand"]["positions"]["1"], over["table"]["seats"][0]["pos"]), ("next", "UTG", "BB"))
+        changed = session.apply({"op": "clear_seat", "seat": 3})
+        self.assertFalse((changed["toast"] or {}).get("redo"))
+        undone = session.apply({"op": "undo"})
+        self.assertTrue(undone["toast"]["redo"])
+        self.assertEqual((undone["hand"]["positions"], undone["table"]["button"]), (over["hand"]["positions"], over["table"]["button"]))
+        self.assertEqual([seat["pos"] for seat in undone["table"]["seats"]], [seat["pos"] for seat in over["table"]["seats"]])
+
+
 class Saving(ServerCase):
     def test_the_session_survives_a_restart(self):
         self.do("new_session", size=6, start_stack=10000, button=1, level="300/600/75")

@@ -38,7 +38,11 @@
 <div id="app" class="app">
   <header id="region-header" class="header"></header>
   <section id="region-advice" class="advice" aria-live="polite" aria-label="Coach"></section>
-  <section id="region-table" class="table" aria-label="Table" data-arrows></section>
+  <!-- The box around the table does nothing while the window is as tall as the page. In a shorter window
+       it is what scrolls: the answer above it and the action bar below it stay in sight (app.css, section 16). -->
+  <div id="region-scroll" class="scroll">
+    <section id="region-table" class="table" aria-label="Table" data-arrows></section>
+  </div>
   <div id="region-line" class="line"></div>
   <div id="region-actions" class="actions" tabindex="-1" role="group" aria-label="Actions"></div>
   <main id="region-first" class="first-run" hidden></main>

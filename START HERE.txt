@@ -1,16 +1,16 @@
-POKER COACH
+MENLO COACH
 ===========
 
 TO START (Windows)
   Unpack the whole zip, then double-click "Start Poker Coach.bat" in the unpacked folder.
   It needs Python 3.10 or newer and nothing else: nothing is installed, no internet is used.
-  No Python yet: get it from https://www.python.org/downloads/ and tick
-  "Add python.exe to PATH" in the installer.
+  No Python yet: get it from https://www.python.org/downloads/ and tick "Add python.exe to PATH".
   If Windows asks whether to run the file, choose Run.
   Not yet tried on a Windows computer: if it does not start, the black window says why.
 
 WHAT OPENS
-  A black window, which must stay open, and a page in your browser called Menlo Coach.
+  A black window titled Menlo Coach, which must stay open, and a page in your browser with
+  that name. Menlo Coach is the program; its files keep "Poker Coach" in their names.
   On the page you type or click what happens at your table, and the coach answers.
   Three modes: Tournament, Spin & Gold, All-In or Fold. Press ? on the page for the keys.
   Nothing reads your screen, nothing clicks for you, nothing is sent anywhere.

@@ -669,7 +669,7 @@
       if (now && (now.needs === "cards" || now.needs === "board")) state.ui.pickerOff = false;
       if (now && now.needs === "cards") toast("Your cards first.", "Type them: A K S, or A H K D.");
       else if (now && now.needs === "board") toast("The cards of this street first.", "Type them: K S 7 D 2 C. Enter skips the board.");
-      else if (now && now.needs === "result") toast("The betting is over.", "W or L says who won. A forgotten caller: his seat number, then C.");
+      else if (now && now.needs === "result") toast("The betting is over.", "W or L says who won. A forgotten caller: their seat number, then C.");
       return;
     }
     const plain = !aimed && state.ui.target == null;

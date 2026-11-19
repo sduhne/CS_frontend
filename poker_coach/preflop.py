@@ -475,6 +475,12 @@ def first_in(spot: Spot) -> Advice:
             adv.confidence = "close"
             adv.alt.append("a raise is fine if the players behind are tight or sitting out")
         adv.why.append(f"outside the TAG opening range for {spot.pos(hero)} with {behind_txt}")
+        if sol is not None and sol.ev_bb(hand) >= 0.005:
+            # The shove's number is printed above this fold (the small blind's up to 25bb), and it is positive.
+            # The fold is the chart's rule, not a slip: say so, or the two lines read as a contradiction.
+            adv.why.append(f"a shove would earn {sol.ev_bb(hand):+.2f}bb on paper, but it puts {eff:.0f}bb at risk "
+                           "to win the blinds: at this depth the plan is raise or fold, and this hand is not a raise")
+            adv.data.update(fold_by_chart=True)
     reshovers = [j for j in behind if 8 <= spot.bbs(live[j]) <= 22]
     if adv.action.startswith("RAISE") and len(reshovers) >= 2 and eff > 25:
         adv.warnings.append(f"{len(reshovers)} re-shove stacks (8-22bb) behind you: decide now which shoves you call")

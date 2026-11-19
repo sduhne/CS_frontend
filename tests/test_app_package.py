@@ -218,6 +218,22 @@ class TheLaunchers(unittest.TestCase):
         self.assertIn("sys.version_info >= (3, 10)", text)              # the engine needs Python 3.10
         self.assertIn("goto oldpython", text)
 
+    def test_t3_the_starters_say_menlo_coach(self):
+        """The window's title and the line it prints carry the program's name; only file names keep the old one."""
+        start = lines_of(START)
+        self.assertIn("title " + server.PROGRAM, start)
+        self.assertEqual(server.PROGRAM, "Menlo Coach")
+        said = [line for line in start if line.startswith("echo ") and "the page opens in your browser" in line]
+        self.assertEqual(said, ["echo Menlo Coach: the page opens in your browser. Keep this window open while you use it."])
+        self.assertIn("title Menlo Coach screen reader", lines_of(OLD_READER))
+        for name in (START, OLD_READER, BUILD):
+            with self.subTest(name):
+                for line in lines_of(name):
+                    # "Poker Coach" is left only as part of a file's name
+                    self.assertEqual(re.sub(r'Start Poker Coach\.bat', "", line).count("Poker Coach"), 0, line)
+                    if line.startswith("title "):
+                        self.assertTrue(line.startswith("title Menlo Coach"), line)
+
     def test_the_old_screen_reader_keeps_its_own_starter(self):
         text = "\r\n".join(lines_of(OLD_READER))
         self.assertIn("%PY% -m poker_coach live-app", self.command_lines(OLD_READER))
