@@ -241,6 +241,40 @@ class Preflop(unittest.TestCase):
         self.assertEqual(self.go("KK", 40, "BTN", "UTG raise 2.2bb, HJ raise 6.5bb").action, "ALL-IN")
         self.assertEqual(self.go("AJo", 40, "BTN", "UTG raise 2.2bb, HJ raise 6.5bb").action, "FOLD")
 
+    def test_a_re_raise_and_an_all_in_behind_my_raise(self):
+        """I raise, one player re-raises and another moves all-in over both: the narrowest range before the
+        flop.  (It was priced as a plain all-in over my raise, a range four times as wide: tens moved all-in.)"""
+        line = "hero raise 2.3bb, SB raise 8.7bb, BB allin"
+        for hand in ("AA", "KK"):
+            self.assertNotEqual(self.go(hand, 40, "CO", line).action, "FOLD", hand)
+        for hand in ("JJ", "TT", "AKo", "AQs", "KQs"):
+            self.assertEqual(self.go(hand, 40, "CO", line).action, "FOLD", hand)
+        adv = self.go("KQs", 40, "CO", line)
+        self.assertLess(adv.data["villain_pct"], 4)
+        self.assertIn("narrowest", " ".join(adv.why))
+        self.assertIn("re-raiser still to act", " ".join(adv.numbers))
+        # shorter, that all-in is wider: jacks and ace-king go with it, tens do not
+        short = "hero raise 2bb, SB raise 7.6bb, BB allin"
+        for hand in ("JJ", "AKo"):
+            self.assertNotEqual(self.go(hand, 20, "CO", short).action, "FOLD", hand)
+        self.assertEqual(self.go("TT", 20, "CO", short).action, "FOLD")
+        # from an early seat it is tighter still, and a deep stack goes on with aces and kings only
+        self.assertEqual(self.go("QQ", 40, "UTG", line).action, "FOLD")
+        self.assertEqual(self.go("QQ", 100, "CO", line).action, "FOLD")
+        self.assertNotEqual(self.go("KK", 100, "CO", line).action, "FOLD")
+        # the last raise need not be all-in: it is priced as one
+        self.assertEqual(self.go("JJ", 100, "CO", "hero raise 2.3bb, SB raise 9bb, BB raise 22bb").action, "FOLD")
+        self.assertEqual(self.go("AA", 100, "CO", "hero raise 2.3bb, SB raise 9bb, BB raise 22bb").action, "ALL-IN")
+        # a loose player's all-in is wider, a tight player's narrower
+        def typed(kind, hand):
+            h, cards = parse_hand(hand)
+            spot = quick_spot(h, cards, 40, 9, "CO", line)
+            spot.types = [kind] * 9
+            return advise(spot)
+        self.assertEqual((typed("unknown", "QQ").action, typed("unknown", "QQ").confidence), ("ALL-IN", "close"))
+        self.assertEqual((typed("loose", "QQ").action, typed("loose", "QQ").confidence), ("ALL-IN", "clear"))
+        self.assertEqual(typed("tight", "QQ").action, "FOLD")
+
     def test_facing_all_in(self):
         self.assertEqual(self.go("A9o", 15, "BB", "SB allin").action, "CALL")
         self.assertEqual(self.go("T4o", 15, "BB", "SB allin").action, "FOLD")

@@ -79,6 +79,89 @@ def _ladder(level: int) -> tuple[float, ...]:
     return tuple(parse_range(_RFI_LADDER[level], list(allin_order())))
 
 
+# --------------------------------------------------------------------------
+# The style of the charts
+# --------------------------------------------------------------------------
+# "tag": the tight-aggressive rows above.  It is the coach's default everywhere (the command line, the
+#        table app, the sheets), and nothing changes it there.
+# "win": the rows of a modern raise-first-in chart with antes in play, a few points wider in every seat
+#        (every row holds the tight row of its seat), and the same rows for the opponents.  The quick
+#        guide's tables are built with it (tools/build_guide.py).
+# The style is set for a whole run (``use_style``), not per spot.
+
+STYLES = ("tag", "win")
+_style = "tag"
+
+# By players behind (8 = first to act at a full table of nine ... 2 = button, 1 = small blind), then two
+# wider rungs for a steal against tight blinds.  Percent of hands: 13, 17, 20, 23, 27, 36, 49; the small
+# blind 50; the wider rungs 64 and 80.
+_RFI_WIN = {
+    8: "55+, A9s+, A5s-A3s, KTs+, QTs+, J9s+, T9s, 98s, AJo+, KQo",
+    7: "44+, A7s+, A5s-A2s, K9s+, Q9s+, J9s+, T9s, 98s, 87s, ATo+, KJo+",
+    6: "33+, A2s+, K8s+, Q9s+, J9s+, T8s+, 98s, 87s, 76s, ATo+, KJo+, QJo",
+    5: "22+, A2s+, K7s+, Q8s+, J8s+, T8s+, 97s+, 87s, 76s, 65s, ATo+, KTo+, QJo",
+    4: "22+, A2s+, K5s+, Q8s+, J8s+, T8s+, 97s+, 86s+, 76s, 65s, 54s, A9o+, KTo+, QTo+, JTo",
+    3: "22+, A2s+, K2s+, Q6s+, J7s+, T7s+, 96s+, 86s+, 75s+, 65s, 54s, A7o+, A5o, K9o+, Q9o+, J9o+, T9o",
+    2: "22+, A2s+, K2s+, Q2s+, J4s+, T6s+, 95s+, 85s+, 74s+, 64s+, 53s+, A2o+, K7o+, Q8o+, J8o+, T8o+, 98o, 87o",
+    1: "22+, A2s+, K2s+, Q2s+, J4s+, T6s+, 96s+, 85s+, 75s+, 64s+, 54s, A2o+, K5o+, Q8o+, J8o+, T8o+, 98o",
+    0: "22+, A2s+, K2s+, Q2s+, J2s+, T4s+, 95s+, 84s+, 74s+, 63s+, 53s+, 43s, A2o+, K2o+, Q5o+, J7o+, T7o+, "
+       "97o+, 86o+, 76o",
+    -1: "80%",
+}
+_WIN_ORDER = (8, 7, 6, 5, 4, 3, 2, 0, -1)       # tightest first; the small blind's row (1) is a side branch
+
+
+def style() -> str:
+    return _style
+
+
+def set_style(name: str) -> str:
+    """Choose the charts for this run; returns the style that was set before."""
+    global _style
+    if name not in STYLES:
+        raise ValueError(f"unknown style {name!r}: one of {', '.join(STYLES)}")
+    before, _style = _style, name
+    return before
+
+
+class use_style:
+    """``with use_style("win"): ...`` and the style is put back afterwards."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __enter__(self):
+        self.before = set_style(self.name)
+        return self
+
+    def __exit__(self, *exc) -> None:
+        set_style(self.before)
+
+
+@lru_cache(maxsize=None)
+def _win_rung(level: int) -> tuple[float, ...]:
+    return tuple(parse_range(_RFI_WIN[level], list(allin_order())))
+
+
+def _win_row(n_behind: int, shift: int) -> tuple[float, ...]:
+    """The "win" row of a seat, ``shift`` rungs tighter (+) or looser (-)."""
+    if n_behind <= 1 and shift == 0:
+        return _win_rung(1)
+    # the small blind tightens along button -> cutoff ..., and loosens to the two wide rungs
+    at = _WIN_ORDER.index(2 if n_behind <= 1 else min(8, n_behind))
+    if n_behind <= 1 and shift > 0:
+        shift -= 1                              # one notch tighter than the small blind's row is the button's
+    at = max(0, min(len(_WIN_ORDER) - 1, at - shift))
+    return _win_rung(_WIN_ORDER[at])
+
+
+def _row(n_behind: int, shift: int) -> tuple[float, ...]:
+    """A seat's raise-first-in row in the style of this run."""
+    if _style == "win":
+        return _win_row(n_behind, shift)
+    return _ladder(_shift_level(n_behind, shift))
+
+
 def _wider_level(level: int) -> int:
     """Next looser rung.  The SB rung (1) is a side branch, not looser than BTN."""
     if level <= 2:
@@ -105,9 +188,11 @@ def rfi_range(n_behind: int, eff_bb: float = 100.0, shift: int = 0) -> list[floa
     about 25bb the speculative part of the range is dropped: those hands are
     either shoves (decided by the solver) or folds.
     """
-    weights = list(_ladder(_shift_level(n_behind, shift)))
+    weights = list(_row(n_behind, shift))
     if eff_bb <= 25 and n_behind >= 3:
         drop = "98s, 87s, 76s, 65s, 54s, 97s, 86s, 75s, T8s, J8s"
+        if _style == "win":             # the wider rows hold more of them: every small suited hand goes
+            drop += ", J7s-J2s, T7s-T2s, 96s-92s, 85s-82s, 74s-72s, 64s-62s, 53s-52s, 43s-42s, 32s"
         if n_behind >= 6:
             drop += ", 22-55, T9s"
         elif n_behind >= 4:
@@ -171,7 +256,7 @@ def norm_type(ptype: str | None) -> str:
 def villain_open_range(n_behind: int, ptype: str = "unknown", eff_bb: float = 100.0) -> list[float]:
     """Estimated open-raise range of an opponent from a given seat."""
     shift = PLAYER_TYPES[norm_type(ptype)]["open_shift"]
-    return list(_ladder(_shift_level(max(1, n_behind), shift)))
+    return list(_row(max(1, n_behind), shift))
 
 
 def villain_limp_range(n_behind: int, ptype: str = "unknown") -> list[float]:
