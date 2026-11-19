@@ -707,7 +707,12 @@ def _isolate(spot: Spot, adv: Advice, shover: int, rng: list[float], bets: dict[
     others = "with a caller in the pot" if live_callers else "with players still to act"
     note = _value_note(spot)
     counted = (f"{note}, " if note else "") + "the players still in the hand counted"
-    if stack_bb <= _ISOLATE_ALLIN_BB or live[hero] <= _ISOLATE_ALLIN_X * live[shover]:
+    # the sized re-raise: about 2.5 times the all-in, never under the smallest legal raise, in half big blinds
+    before = max(raise_to, hero_open, bb)
+    smallest = level + max(bb, level - before)
+    size_bb = max(_ISOLATE_SIZE_X * short_bb, spot.bbs(smallest))
+    size_bb = int(size_bb * 2 + 0.999) / 2.0
+    if stack_bb <= _ISOLATE_ALLIN_BB or live[hero] <= _ISOLATE_ALLIN_X * live[shover] or size_bb >= stack_bb - 1:
         ev = _isolate_ev(spot, shover, rng, bets, behind, live_callers, raiser)
         if ev > _ISOLATE_EV_ALLIN:
             adv.action = "RE-RAISE ALL-IN (isolate)"
@@ -718,11 +723,6 @@ def _isolate(spot: Spot, adv: Advice, shover: int, rng: list[float], bets: dict[
             adv.why.append(f"just call: this hand is not strong enough to move all-in for {stack_bb:.0f}bb "
                            f"{others}")
         return
-    # deeper: about 2.5 times the all-in, never under the smallest legal raise, in half big blinds
-    before = max(raise_to, hero_open, bb)
-    smallest = level + max(bb, level - before)
-    size_bb = max(_ISOLATE_SIZE_X * short_bb, spot.bbs(smallest))
-    size_bb = int(size_bb * 2 + 0.999) / 2.0
     if size_bb * 3 >= stack_bb:
         # a third of the stack goes in: the re-raise is for stacks if a player behind wakes up
         ev = _isolate_ev(spot, shover, rng, bets, behind, live_callers, raiser)

@@ -1411,7 +1411,7 @@
       ${popHead("New table", "", {menu: null, newTable: null})}
       <p class="hint">You were moved: you stay seat 1, the tournament stays. The seats count clockwise from you.</p>
       <div class="choice"><span>Seats</span><div class="tabs" role="radiogroup" aria-label="Seats at the new table">${sizes}</div></div>
-      <div class="choice"><span>Button on seat</span><div class="tabs" role="radiogroup" aria-label="The seat with the dealer button">${seats}</div></div>
+      <div class="choice"><span>Button</span><div class="tabs" role="radiogroup" aria-label="The seat with the dealer button">${seats}</div></div>
       <div class="row"><button type="button" class="menu-btn" data-fk="nt-start" data-autofocus` +
         `${emit({op: "new_table", size: size, button: button, ui: {menu: null, newTable: null}, after: {sheet: "stacks"}})}>Sit down: type the stacks ${keycap("Enter")}</button></div>
     </div>`;

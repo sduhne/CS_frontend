@@ -375,6 +375,7 @@ button.pod:hover{border-color:var(--grey)}
 .menu-btn:disabled{color:var(--grey);border-color:var(--line)}
 .menu-count{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:6px;font:600 13px/1 var(--body);color:var(--soft);white-space:nowrap}
 .menu-count .num{font-size:20px;color:var(--white)}
+.pop .choice .tab{min-width:36px;padding:0 6px}          /* the New table menu: up to nine seats in one row */
 .pop-tools{display:flex;margin:-4px -6px -4px 0}
 .pop-tools .tool{margin:0}
 .pop .hint{font-size:12px;color:var(--soft)}
