@@ -1141,11 +1141,12 @@
            `<span class="label">${esc(opts.label)}${key}</span>${sub}</button>`;
   }
   // The first row: a word in small capitals, who or what, and a note.
-  function whoseHtml(eyebrow, text, note, name) {
-    // (the note is cut with an ellipsis where the bar is narrow: the full sentence is its tooltip;
-    //  `name`: a player's name, written as it was typed, not in capitals)
+  function whoseHtml(eyebrow, text, note, name, brief) {
+    // (`name`: a player's name, written as it was typed, not in capitals; `brief`: the note in fewer
+    //  words, shown where the bar is narrow (under 1280) so that it is not cut; the full sentence is the tooltip)
     const who = name ? `<span class="who"> \u00b7 ${esc(name)}</span>` : "";
-    return `<span class="eyebrow">${esc(eyebrow)}</span>${text ? `<b>${esc(text)}${who}</b>` : ""}${note ? `<span class="note" title="${esc(note)}">${esc(note)}</span>` : ""}`;
+    const words = brief && brief !== note ? `<span class="long">${esc(note)}</span><span class="brief">${esc(brief)}</span>` : esc(note);
+    return `<span class="eyebrow">${esc(eyebrow)}</span>${text ? `<b>${esc(text)}${who}</b>` : ""}${note ? `<span class="note" title="${esc(note)}">${words}</span>` : ""}`;
   }
   // (a row of five buttons or more is marked "many": where the bar is narrow its buttons go without keycaps)
   function barHtml(whose, buttons, slots) {
@@ -1322,11 +1323,12 @@
     let whose;
     if (isHero) {
       // Players in front of hero who have not acted take the passive default when he acts.
-      const names = before.map((other) => other.pos || `Seat ${other.seat}`).join(", ");
-      const note = before.length && known
-        ? `before you: ${names} ${before.length === 1 ? (hand.to_call ? "folds" : "checks") : (hand.to_call ? "fold" : "check")} unless you press ${before.length === 1 ? "that seat's" : "their seat"} number first`
-        : "";
-      whose = whoseHtml("Your action", "", note);
+      const each = before.map((other) => other.pos || `Seat ${other.seat}`);
+      const say = (names) => `before you: ${names} ${before.length === 1 ? (hand.to_call ? "folds" : "checks") : (hand.to_call ? "fold" : "check")} unless you press ${before.length === 1 ? "that seat's" : "their seat"} number first`;
+      const note = before.length && known ? say(each.join(", ")) : "";
+      // Four players or more in front: where the bar is narrow they are named as a run ("UTG to CO").
+      const brief = note && each.length >= 4 ? say(`${each[0]} to ${each[each.length - 1]}`) : note;
+      whose = whoseHtml("Your action", "", note, "", brief);
     } else {
       whose = whoseHtml("Recording", player ? seatWords(player) : `Seat ${seat}`, !plain ? "this action only" : "", player && player.name);
     }

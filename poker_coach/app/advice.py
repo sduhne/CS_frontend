@@ -105,8 +105,8 @@ COMMIT_SHARE = 1 / 3            # the guard looks at plays that can lose this sh
 RAISE_IS_ALLIN = 1 / 3          # a raise of this share of the raiser's stack is read as an all-in in the tables
 # The guard in the style "Survive, then win" only folds a thin edge.  Thin is: an all-in (or a raise that
 # commits) the engine values below this many big blinds against folding ...
-THIN_EV_BB_FAR = 0.30           # ... far from the money
-THIN_EV_BB_CLOSE = 0.50         # ... from "close to the money" on
+THIN_EV_BB_FAR = 0.20           # ... far from the money
+THIN_EV_BB_CLOSE = 0.20         # ... from "close to the money" on (the points for a call are what differs)
 # ... and a call of an all-in (or a call that commits) with fewer points of equity than this over what it needs:
 THIN_EDGE_POINTS_FAR = 4
 THIN_EDGE_POINTS_CLOSE = 7
