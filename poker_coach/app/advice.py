@@ -71,8 +71,22 @@ from .model import HERO, average_stack, goal_for, icm_level, imply_until, postfl
 # Numbers a reader may want to change
 # --------------------------------------------------------------------------
 
-COMMIT_SHARE = 1 / 3            # the guard looks at plays that put this share of the stack in before the flop
+COMMIT_SHARE = 1 / 3            # the guard looks at plays that can lose this share of what hero has left before the flop
 RAISE_IS_ALLIN = 1 / 3          # a raise of this share of the raiser's stack is read as an all-in in the tables
+# The guard in the style "Survive, then win" only folds a thin edge.  Thin is: an all-in (or a raise that
+# commits) the engine values below this many big blinds against folding ...
+THIN_EV_BB_FAR = 0.30           # ... far from the money
+THIN_EV_BB_CLOSE = 0.50         # ... from "close to the money" on
+# ... and a call of an all-in (or a call that commits) with fewer points of equity than this over what it needs:
+THIN_EDGE_POINTS_FAR = 4
+THIN_EDGE_POINTS_CLOSE = 7
+GOOD_PRICE = 0.25               # the guard never folds a call at 3 to 1 or better (pot odds of 25% or less) ...
+CLEAR_EQUITY_POINTS = 15        # ... nor one with this many points of equity over what it needs
+SHEET_RAISE_BB = 17             # first in from this stack up, the guard's fold of an all-in becomes the sheet's small raise
+PLAN_COMMITS_BB = 45            # up to this stack a re-raise the engine will not fold is judged as the whole stack
+SMALL_RAISE_BB = 2.5            # "a small raise": the big blind's sheet calls, and the spin tables' raise rows
+BB_CALL_BB = (9, 24)            # the stacks at which the sheet lets the big blind call a small raise instead of folding
+ENGINE_CLOSE_POINTS = 2         # the engine calls a call "close" within this many points (plan lines use it)
 # Players left per paid place from which the money is "close", and from which it is the bubble:
 CLOSE_TO_MONEY = {"regular": (1.5, 1.2)}    # on the regular blind ladder ...
 CLOSE_TO_MONEY_DEFAULT = (2.0, 1.3)         # ... and on every other one (turbo speed or faster)
@@ -89,6 +103,9 @@ CHART_SOLVER_WORK = 72          # a solver chart may cost about this many (round
 
 PASSIVE_TYPES = ("nit", "tight", "loose", "station")        # their big bets and raises are rarely bluffs
 LOOSE_TYPES = ("loose", "station", "maniac", "lag")         # they call with far more than the charts
+# A read lifts the guard only when it makes the play safer:
+FOLDS_TOO_MUCH = ("nit", "tight")                           # ... behind hero, for an all-in when nobody has raised
+RAISES_TOO_WIDE = ("lag", "loose", "maniac")                # ... on the player whose raise or all-in hero plays against
 SPIN_TYPE = {"solid": "unknown", "loose": "loose", "very-loose": "station"}    # table-wide setting -> engine type
 
 SEAT_WORDS = {"UTG": "under the gun", "UTG+1": "in UTG+1", "UTG+2": "in UTG+2", "LJ": "in the lojack",
@@ -566,11 +583,13 @@ def read_money(session) -> Money:
     desperate = bool(hero_bb is not None and (
         (clock and clock.get("verdict") == "short" and hero_bb <= 6)
         or (hero_bb <= 3 and (to_money is None or to_money > 3))))
+    # The bubble: by players left per paid place, and in a small field also when the engine's own stage says
+    # so (two places or fewer from the money: 4 left of 3 paid is 1.33 a place, and one bust from the money).
+    bubble = not in_money and ((ratio is not None and ratio < bubble_at) or stage["code"] == "bubble")
+    close = not in_money and (bubble or (ratio is not None and ratio <= close_at))
     return Money(state=state, goal=goal, level="off" if prizes.chip_ev else icm_level(data), prizes=prizes,
                  field_prizes=field_prizes, stage=stage, clock=clock, ratio=ratio, in_money=in_money,
-                 final_table=stage["code"] == "final_table",
-                 close=not in_money and ratio is not None and ratio <= close_at,
-                 bubble=not in_money and ratio is not None and ratio < bubble_at, desperate=desperate)
+                 final_table=stage["code"] == "final_table", close=close, bubble=bubble, desperate=desperate)
 
 
 def standing_warnings(data: dict, money: Money, now: float) -> list:
@@ -623,6 +642,8 @@ def context_lines(data: dict, money: Money | None) -> dict:
         return {"stage": "", "gear": "", "fold_clock": ""}
     stage = money.stage
     line = STAGE_LINES.get(stage["code"], STAGE_LINES["unknown"])
+    if stage.get("to_money") is None:           # players left or places paid are missing: the engine's code is a guess
+        line = STAGE_LINES["unknown"]
     if stage["code"] in ("approach", "near_bubble", "bubble") and stage.get("to_money"):
         line = f"{stage['to_money']} from the money. " + line
     return {"stage": line, "gear": gear_line(data, stage.get("hero_bb")), "fold_clock": fold_clock_line(data, money)}
@@ -641,6 +662,16 @@ def gear_line(data: dict, hero_bb) -> str:
     return ""
 
 
+def clock_gives_a_verdict(money: Money) -> bool:
+    """The fold clock judges (can fold, tight, cannot fold) only near the bubble and on it.
+
+    Further out the bubble is hours away for every short stack, so "cannot
+    fold into the money" would be on screen all the time; there the clock
+    gives its numbers and the tables decide.
+    """
+    return money.stage["code"] in ("near_bubble", "bubble")
+
+
 def fold_clock_line(data: dict, money: Money) -> str:
     """Can hero fold into the money?  Orbits and minutes of blinds against the time the bubble needs."""
     clock = money.clock
@@ -650,7 +681,11 @@ def fold_clock_line(data: dict, money: Money) -> str:
     lasts = f"{orbits:.1f} orbits of blinds, about {minutes:.0f} minutes"
     verdict, eta = clock.get("verdict"), clock.get("eta")
     needs = f"the bubble needs about {eta:.0f} minutes" if eta is not None else ""
-    if verdict == "safe":
+    if verdict in ("safe", "tight", "short") and not clock_gives_a_verdict(money):
+        # far from the bubble: the facts only, no verdict (and never "find an all-in" beside a fold)
+        text = f"The blinds give you about {orbits:.1f} orbits, about {minutes:.0f} minutes"
+        text += f"; the bubble is about {eta:.0f} minutes away." if eta is not None else "."
+    elif verdict == "safe":
         text = f"You can fold into the money: {lasts}; {needs}."
     elif verdict == "tight":
         text = f"Folding into the money is tight: {lasts}; {needs}."
@@ -708,8 +743,9 @@ class Play:
     plans: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     source: str = ""            # where the answer comes from (the prize level is put in front of it)
-    guard: str = "none"         # agrees, survival, off or none
+    guard: str = "none"         # agrees, survival, edge, close, off or none
     chart: dict | None = None
+    facts: dict = field(default_factory=dict)       # the engine's numbers by name (``engine_facts``)
 
 
 def choose_play(seen: Seen, money: Money | None) -> Play:
@@ -791,13 +827,16 @@ def engine_tiles(facts: dict, kind: str, value_note: str) -> list:
     if kind == "call" and "pot_odds" in facts and "my_equity" in facts and "need" not in facts:
         tiles.append(tile("Price / equity", f"{facts['pot_odds']:.0f}% / {facts['my_equity']:.0f}%",
                           "pot odds; your equity against their range"))
-    if "ev" in facts:
+    # A raise or an all-in the engine makes by rule (aces and kings after a raise and a re-raise) while its own
+    # all-in number is a loss: that number, and the fold share that goes with it, would contradict the headline.
+    by_rule = kind in ("raise", "allin") and facts.get("ev", 0.0) < 0
+    if "ev" in facts and not by_rule:
         tiles.append(tile("All-in against folding", signed_bb(facts["ev"]), value_note, sign_of(facts["ev"])))
     if "need" in facts and "equity" in facts:
         counted = "pot odds alone" if value_note == "chip EV" else "the price and ICM are counted"
         tiles.append(tile("Need / have", f"{percent(facts['need'])} / {percent(facts['equity'])}",
                           "equity: " + counted))
-    if "all_fold" in facts:
+    if "all_fold" in facts and not by_rule:
         called = f"called: you have {facts['when_called']:.0f}%" if "when_called" in facts else ""
         tiles.append(tile("Everybody folds", f"{facts['all_fold']:.0f}%", called))
     if "villain_pct" in facts:
@@ -812,6 +851,10 @@ def engine_tiles(facts: dict, kind: str, value_note: str) -> list:
     return tiles[:3]
 
 
+PLAN_LINE = re.compile(r"If (.+) \((\d+)bb\) moves all-in: (CALL|FOLD) \(need (\d+)%, have (\d+)%\)")
+NEVER_FOLDS = re.compile(r"\b(do not|never) fold\b", re.IGNORECASE)      # "do not fold to a 4-bet at this depth"
+
+
 def plan_lines(seen: Seen, adv) -> list:
     """"If BB (28bb) moves all-in: FOLD": the engine's plan against an all-in over hero's raise."""
     plans = []
@@ -824,7 +867,16 @@ def plan_lines(seen: Seen, adv) -> list:
         plans.append(f"If {who} ({stack}bb) moves all-in: {verdict} (need {need}, have {have})")
     if "call any all-in" in adv.action:
         plans.append("If anybody moves all-in: CALL")
+    elif will_not_fold(adv):
+        plans.append("If anybody re-raises: do not fold. At this depth the chips go in")
     return plans
+
+
+def will_not_fold(adv) -> bool:
+    """A raise over a raise that the engine does not fold to another raise ("do not fold to a 4-bet at this depth")."""
+    action = adv.action.strip()
+    sized = re.search(r"to \d+(?:\.\d+)?bb", action) and "ALL-IN" not in action
+    return bool(sized) and not action.startswith("RAISE") and any(NEVER_FOLDS.search(text) for text in adv.why)
 
 
 def play_from_engine(seen: Seen, adv, value_note: str) -> Play:
@@ -834,7 +886,7 @@ def play_from_engine(seen: Seen, adv, value_note: str) -> Play:
     play = Play(verb=verb, kind=kind, to=to, qualifier=qualifier, sure=adv.confidence,
                 reason=sentence(plain(adv.why[0])) if adv.why else "",
                 tiles=engine_tiles(facts, kind, value_note),
-                also=sentence(plain(adv.alt[0])) if adv.alt else "", plans=plan_lines(seen, adv))
+                also=sentence(plain(adv.alt[0])) if adv.alt else "", plans=plan_lines(seen, adv), facts=facts)
     for text in adv.warnings:
         play.warnings.append(warning("engine", sentence(plain(text))))
     if "need" in facts and "breakeven_pct" in facts:
@@ -858,14 +910,20 @@ def call_flip(facts: dict, verb: str) -> str:
 
 
 def engine_summary(play: Play) -> str:
-    """An engine play in a few words, for a second line: "ALL-IN +0.15bb", "CALL, 60% against 53%"."""
-    number = next((t for t in play.tiles if t["label"] in ("All-in against folding", "Need / have")), None)
+    """An engine play in a few words, for a second line: "ALL-IN +0.15bb", "CALL, 60% against 53%".
+
+    The all-in's value is added to an all-in only (and to a raise that puts
+    the chips in): beside a CHECK or a FOLD it would read as that play's value.
+    """
+    moves_in = play.kind == "allin" or "all-in" in play.qualifier
+    labels = ("All-in against folding",) if moves_in else ()
+    number = next((t for t in play.tiles if t["label"] in labels + ("Need / have", "Price / equity")), None)
     if number is None:
         return play.verb
-    if number["label"] == "Need / have":
-        need, have = number["value"].split(" / ")
-        return f"{play.verb}, {have} against {need}"
-    return f"{play.verb} {number['value']}"
+    if number["label"] == "All-in against folding":
+        return f"{play.verb} {number['value']}"
+    need, have = number["value"].split(" / ")
+    return f"{play.verb}, {have} against {need}"
 
 
 # ==========================================================================
