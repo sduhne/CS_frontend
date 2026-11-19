@@ -374,9 +374,10 @@ def result_line(view: dict) -> str:
         amount = bb_number(winner["amount"]) + "bb" if view["mode"] == "aof" else chips_text(winner["amount"])
         position = positions.get(str(winner["seat"])) or winner.get("pos") or ""
         if winner["seat"] == HERO:
-            parts.append(f"You{' (' + position + ')' if position else ''} win {amount}")
+            parts.append(f"{'you' if parts else 'You'}{' (' + position + ')' if position else ''} win {amount}")
         else:
-            parts.append(f"Seat {winner['seat']}{' (' + position + ')' if position else ''} wins {amount}")
+            parts.append(f"{'seat' if parts else 'Seat'} {winner['seat']}{' (' + position + ')' if position else ''} "
+                         f"wins {amount}")
     return ", ".join(parts) + "."
 
 
@@ -388,7 +389,7 @@ def next_hand_line(view: dict) -> str:
     if not hero or not hero.get("pos") or hero.get("status") == "away":
         return "Press N for the next hand."
     where = SEAT_WORDS.get(hero["pos"], "in " + hero["pos"])
-    return f"The button moves to seat {table['button']} and you are {where}: press N for the next hand."
+    return f"The button is now on seat {table['button']} and you are {where}: press N for the next hand."
 
 
 # ==========================================================================

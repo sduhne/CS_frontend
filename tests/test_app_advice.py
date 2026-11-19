@@ -2089,15 +2089,24 @@ class AfterTheFlopFindings(unittest.TestCase):
         a = A.advise(s)
         self.assertEqual(a["status"], "none")
         # the seat names on the table are already the next hand's: the line gives the finished hand's
-        self.assertEqual(a["spot"], f"Seat {winner} (BB) wins 81,000. The button moves to seat {winner - 1} and you "
-                                    "are in the hijack: press N for the next hand.")
+        self.assertEqual(a["spot"], f"Seat {winner} (BB) wins 81,000. The button is now on seat {winner - 1} and "
+                                    "you are in the hijack: press N for the next hand.")
         self.assertEqual(s.view()["table"]["seats"][winner - 1]["pos"], "SB")
         # hero wins: "You (CO) win"
         s, seat = six_handed([40] * 6, 2, "AhKd")
         s.do("act", seat=1, kind="raise", amount=2200)
         s.do("act", seat=seat(5), kind="call")
         flop(s, "Ks7d2c", (seat(5), "check"), (1, "bet", 2000), (seat(5), "fold"))
-        self.assertTrue(A.advise(s)["spot"].startswith("You (CO) win 5,650. The button moves to seat"))
+        self.assertTrue(A.advise(s)["spot"].startswith("You (CO) win 5,650. The button is now on seat"))
+        # a split pot names both
+        s, seat = six_handed([40] * 6, 2, "AhKd")
+        s.do("act", seat=1, kind="raise", amount=2200)
+        s.do("act", seat=seat(5), kind="call")
+        for cards in ("Ks7d2c", "3h", "9s"):
+            flop(s, cards, (seat(5), "check"), (1, "check"))
+        s.do("award", ranking=[[1, seat(5)]])
+        self.assertTrue(A.advise(s)["spot"].startswith(f"You (CO) win 2,825, seat {seat(5)} (BB) wins 2,825. "),
+                        A.advise(s)["spot"])
 
     def test_ops_16_without_chips_the_line_says_what_to_do_and_stays(self):
         s, winner = self.lost_all_in(30)

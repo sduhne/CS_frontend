@@ -1815,7 +1815,7 @@
       const words = parts ? `<b>${esc(parts[1])}</b><small>${esc(parts[2])}</small>` : `<b>${esc(choice.label)}</b>`;
       return `<button class="tab" role="radio" aria-checked="${choice.value === current}" aria-label="${esc(choice.label)}"${emit(send(choice.value))}>${words}</button>`;
     });
-    return `<div class="choice stack"><span>${esc(label)}</span><div class="tabs" role="radiogroup" aria-label="${esc(label)}">${buttons}</div></div>`;
+    return `<div class="choice tall"><span>${esc(label)}</span><div class="tabs" role="radiogroup" aria-label="${esc(label)}">${buttons}</div></div>`;
   }
   function checkHtml(label, on, send) {
     return `<label class="check"><input type="checkbox"${on ? " checked" : ""} data-name="value"${emit(send)}><span>${esc(label)}</span></label>`;
@@ -2495,7 +2495,8 @@
   // about 10px on Windows. The advice column keeps that much room free in the page's margin (app.css, --sbw).
   function measureScrollBar() {
     const probe = document.createElement("div");
-    probe.style.cssText = "position:absolute;top:-99px;left:0;width:60px;height:30px;overflow-y:scroll;scrollbar-width:thin";
+    // (measured the way the advice column uses it: the room kept free for a bar that is not there yet)
+    probe.style.cssText = "position:absolute;top:-99px;left:0;width:60px;height:30px;overflow-y:auto;scrollbar-gutter:stable;scrollbar-width:thin";
     document.body.appendChild(probe);
     const width = probe.offsetWidth - probe.clientWidth;
     probe.remove();

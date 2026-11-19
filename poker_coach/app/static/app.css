@@ -452,6 +452,7 @@ button.pod:hover{border-color:var(--grey)}
 .sheet-body{padding:14px 16px 16px;overflow-y:auto;display:flex;flex-direction:column;gap:18px;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
 .sheet-body .panel{background:none;border:0;padding:0;border-radius:0}
 .section{display:flex;flex-direction:column;gap:8px}
+.sheet-body > *,.section > *{flex:none}          /* the sheet scrolls: nothing in it is squeezed to make it fit */
 /* (a section's heading is a small heading in the display face, so it does not read as one more field label) */
 .section > h3{font:italic 800 16px/1 var(--display);letter-spacing:.01em;text-transform:uppercase;color:var(--white)}
 .notice{font-size:13px;color:var(--soft);padding:10px 12px;border:1px solid var(--line-strong);border-radius:var(--r-in)}
@@ -460,11 +461,11 @@ button.pod:hover{border-color:var(--grey)}
 .choice > span{font-size:14px;color:var(--soft)}
 .choice .tabs{flex:0 1 auto;min-width:0;flex-wrap:wrap;justify-content:flex-end;border-radius:22px}
 /* A choice whose options each carry a line of words: the label over the track, the options side by side. */
-.choice.stack{flex-direction:column;align-items:stretch;gap:6px}
-.choice.stack .tabs{flex-wrap:nowrap}
-.choice.stack .tab{flex:1 1 0;min-width:0;height:auto;min-height:48px;padding:6px 10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;white-space:normal}
-.choice.stack .tab b{font-weight:600}
-.choice.stack .tab small{font:500 12px/1.2 var(--body)}
+.choice.tall{flex-direction:column;align-items:stretch;gap:6px}
+.choice.tall .tabs{flex-wrap:nowrap}
+.choice.tall .tab{flex:1 1 0;min-width:0;height:auto;min-height:48px;padding:6px 10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;white-space:normal}
+.choice.tall .tab b{font-weight:600}
+.choice.tall .tab small{font:500 12px/1.2 var(--body)}
 /* A field with its label on a line over it. */
 .over{display:flex;flex-direction:column;gap:4px;min-width:0}
 .over .eyebrow{overflow:hidden;text-overflow:ellipsis}
@@ -580,9 +581,13 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .first-run{grid-column:1/-1}
   /* From 1024 the toast lies in the table column, over the hand line: straight above the action bar,
      where the eyes are. What to do instead follows on the same line, so the toast keeps to that row. */
-  .toasts{grid-column:1;grid-row:3;align-self:end}
+  /* (It takes no room of its own: the row keeps the hand line's height, so the action bar does not move
+     when a toast comes or goes.) */
+  .toasts{grid-column:1;grid-row:3;align-self:end;position:relative;height:0}
+  .toasts .toast{position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:max-content}
   .toast .text small{display:inline;margin-left:8px}
-  .app.first .toasts{grid-column:1/-1;grid-row:3}
+  .app.first .toasts{grid-column:1/-1;grid-row:3;height:auto}
+  .app.first .toasts .toast{position:static;transform:none;width:auto}
   .whyline{display:none}
   .advice-tabs{display:flex}
   .advice[data-panel=why] > .why,.advice[data-panel=why] > .where{display:flex}
