@@ -5,6 +5,7 @@ import io
 import json
 import os
 import random
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -268,6 +269,250 @@ class Preflop(unittest.TestCase):
         self.assertTrue(self.go("Q7s", 30, "SB", players=2).action.startswith("RAISE"))
         self.assertNotEqual(self.go("AKs", 25, "UTG", players=4).action, "FOLD")
 
+    # ---- the review findings (PRE-n), one test each ---------------------------------------------
+
+    @staticmethod
+    def table(stacks, hero, hand, acts=(), left=None, paid=150, entrants=1000, away=(), types=None, ante=0.125):
+        """A spot with real stacks (big blinds, in acting order); ``left`` players turns ICM on."""
+        from poker_coach.preflop import Act, Spot
+        setup = HandSetup([float(x) for x in stacks], 0.5, 1.0, ante, 0.0)
+        n = len(stacks)
+        prizes = field = Prizes()
+        if left:
+            prizes = Prizes(default_payouts(entrants, paid), max(0, left - n), sum(stacks) / n)
+            field = Prizes(prizes.raw_payouts, prizes.field_n, prizes.field_stack)
+        acts = [Act(i, kind, setup.live[i] if kind == "allin" else min(float(amount), setup.live[i]))
+                for i, kind, amount in acts]
+        return Spot(setup=setup, hero=hero, hand=HAND_INDEX[hand], prizes=prizes, field_prizes=field, acts=acts,
+                    away=[i in away for i in range(n)], types=list(types) if types else [])
+
+    def play(self, *args, **kw):
+        return advise(self.table(*args, **kw))
+
+    def opens(self, stacks, hero, away=()):
+        out = set()
+        for hand in HANDS:
+            action = self.play(stacks, hero, hand, away=away).action
+            if action.startswith("RAISE") or "ALL-IN" in action:
+                out.add(hand)
+        return out
+
+    def test_pre_1_the_big_blind_has_one_price_test_for_every_hand(self):
+        from poker_coach.preflop import _hand_kind, bb_call_points
+        from poker_coach.ranges import villain_open_range
+        strong, weak = ("ATs", "AJo", "KQo", "KTs"), ("T2s", "32s", "72s")
+        # chips only, far from the money, close to it, the bubble, in the money, a final table
+        for stack in (30, 50):
+            for left in (None, 400, 185, 152, 100, 8):
+                for raiser, size in ((5, 2.2), (6, 3.0), (0, 2.2)):
+                    got = {hand: self.play([stack] * 8, 7, hand, [(raiser, "raise", size)], left=left).action
+                           for hand in strong + weak}
+                    for hand in strong:
+                        self.assertNotEqual(got[hand], "FOLD", (stack, left, raiser, hand, got))
+        # every hand, in the money and close to it: a fold is never 15 points above the price, and no
+        # folded hand has more equity than a called hand that needs as many points
+        for left, raiser, size in ((100, 5, 2.2), (185, 5, 2.2), (100, 6, 3.0), (None, 0, 2.2)):
+            opened = villain_open_range(7 - raiser)
+            dead = 8 * 0.125 + (1.0 if raiser == 6 else 1.5)                     # antes and the blinds
+            price = (size - 1.0) / (dead + size + size - 1.0)
+            rows = {}
+            for index, hand in enumerate(HANDS):
+                adv = self.play([30] * 8, 7, hand, [(raiser, "raise", size)], left=left)
+                rows[hand] = (adv.action, eq_vs_range(index, opened)[0], _hand_kind(index))
+                self.assertAlmostEqual(adv.data["bb_call_need"] + adv.data["bb_call_edge"], rows[hand][1], places=6)
+            folds = {h: r for h, r in rows.items() if r[0] == "FOLD"}
+            calls = {h: r for h, r in rows.items() if r[0] == "CALL"}
+            self.assertTrue(len(calls) > 40 and len(folds) > 20, (left, raiser))
+            for hand, (_action, equity, kind) in folds.items():
+                self.assertLess(equity, price + 0.15, (left, raiser, hand))
+                for other, (_a, other_equity, other_kind) in calls.items():
+                    if bb_call_points(kind) <= bb_call_points(other_kind):
+                        self.assertLess(equity, other_equity, (left, raiser, hand, other))
+        # the points: offsuit hands that are not two big cards need the most, nothing needs more than 15
+        self.assertLess(bb_call_points("suited"), bb_call_points("broadway_off"))
+        self.assertLess(bb_call_points("broadway_off"), bb_call_points("off"))
+        self.assertEqual(bb_call_points("suited"), bb_call_points("suited_conn"))
+        self.assertGreater(bb_call_points("suited", 0.08), bb_call_points("suited"))       # ICM asks for more
+        self.assertEqual(max(bb_call_points(kind, 0.5, 2) for kind in ("pair", "suited", "broadway_off", "off")), 0.15)
+        # 25bb or less is the same test: no stronger hand folds where a weaker one calls
+        got = {hand: self.play([20] * 8, 7, hand, [(5, "raise", 2.0)], left=400).action for hand in strong + weak}
+        self.assertFalse(any(got[hand] == "FOLD" for hand in strong), got)
+
+    def test_pre_2_the_best_hands_never_fold_to_one_reraise_when_deep(self):
+        import re
+        # the review's hand: cutoff raises, the button re-raises to 7bb, hero holds AKo out of position
+        for depth, want in ((46, "ALL-IN"), (50, "ALL-IN"), (60, "ALL-IN"), (61, "CALL"), (100, "CALL")):
+            adv = self.play([depth] * 8, 4, "AKo", [(4, "raise", 2.3), (5, "raise", 7.0)])
+            self.assertEqual(adv.action, want, depth)
+        for left in (None, 152):                                                 # chips only, and on the bubble
+            for depth in (46, 60, 61, 100):
+                # out of position against the button; in position against the big blind, from the button and UTG
+                for hero, villain, three, in_position in ((4, 5, 7.0, False), (5, 7, 9.0, True), (0, 7, 9.0, True)):
+                    for hand in ("AA", "KK", "QQ", "AKs", "AKo"):
+                        adv = self.play([depth] * 8, hero, hand, [(hero, "raise", 2.3), (villain, "raise", three)],
+                                        left=left)
+                        key = (left, depth, hero, hand, adv.action)
+                        number = float(re.search(r"shove EV ([+-][\d.]+)bb", " ".join(adv.numbers)).group(1))
+                        self.assertNotEqual(adv.action, "FOLD", key)
+                        if adv.action.startswith("4-BET"):
+                            self.assertIn(hand, ("AA", "KK"), key)
+                        elif in_position or depth > 60:
+                            self.assertEqual(adv.action, "CALL", key)
+                        elif abs(number) >= 0.01:                                # out of position, 60bb or less
+                            self.assertEqual(adv.action, "ALL-IN" if number > 0 else "CALL", key)
+        # the hands below them still fold, and 45bb or less stays all-in or fold
+        self.assertEqual(self.play([50] * 8, 4, "AJo", [(4, "raise", 2.3), (5, "raise", 7.0)]).action, "FOLD")
+        self.assertEqual(self.play([40] * 8, 4, "AKo", [(4, "raise", 2.3), (5, "raise", 7.0)]).action, "ALL-IN")
+
+    def test_pre_3_a_committed_raiser_is_an_all_in_only_heads_up(self):
+        # the button (3bb) raises to 2.2bb, the small blind (30bb) calls, hero is the big blind with 16bb
+        stacks = [20, 20, 20, 20, 20, 3, 30, 16]
+        acts = [(5, "raise", 2.2), (6, "call", 2.2)]
+        for left in (100, None):
+            got = {hand: self.play(stacks, 7, hand, acts, left=left) for hand in ("72o", "J4o", "T9s", "A9s")}
+            for hand, adv in got.items():
+                self.assertIn(adv.action, ("CALL", "FOLD"), (left, hand))
+                self.assertLess(adv.data["need"], 0.30, (left, hand))            # the price of what hero adds
+            self.assertEqual((got["72o"].action, got["T9s"].action), ("FOLD", "CALL"), left)
+        # all-in only with a hand that plays for its whole stack against the caller: TT+ and AK
+        got = {hand: self.play(stacks, 7, hand, acts, left=100).action for hand in ("KK", "TT", "99", "AQs")}
+        self.assertEqual(got, {"KK": "RE-RAISE ALL-IN (isolate)", "TT": "RE-RAISE ALL-IN (isolate)",
+                               "99": "CALL", "AQs": "CALL"})
+        # heads-up it stays an all-in: nobody else is in the pot and nobody is left to act
+        self.assertEqual(self.play(stacks, 7, "J4o", [(5, "raise", 2.2)], left=100).action, "ALL-IN")
+        # players still to act behind hero: UTG (5bb) raises to 2bb, hero on the button with 30bb
+        got = {hand: self.play([5, 30, 30, 30, 30, 30, 30, 30], 5, hand, [(0, "raise", 2.0)], left=400).action
+               for hand in ("72o", "KJo", "99", "KK")}
+        self.assertEqual(got, {"72o": "FOLD", "KJo": "CALL", "99": "RE-RAISE to 12.5bb (isolate)", "KK": "CALL"})
+
+    def test_pre_9_isolating_all_in_only_with_a_short_stack(self):
+        allin = [(5, "allin", 0)]
+        # small blind 35bb, the button is all-in for 6bb, the big blind has 35bb behind
+        got = {hand: self.play([35, 35, 35, 35, 35, 6, 35, 35], 6, hand, allin, left=400)
+               for hand in ("K9s", "66", "TT", "A8o", "72o")}
+        for hand, adv in got.items():
+            self.assertNotIn("ALL-IN", adv.action, hand)
+            if adv.action.startswith("RE-RAISE"):
+                self.assertEqual(adv.action, "RE-RAISE to 15bb (isolate)", hand)  # 2.5 times the 6bb
+                self.assertFalse(any("shove EV" in line for line in adv.numbers), hand)
+        self.assertEqual((got["K9s"].action, got["72o"].action), ("CALL", "FOLD"))
+        self.assertTrue(got["66"].action.startswith("RE-RAISE to") and got["TT"].action.startswith("RE-RAISE to"))
+        # the all-in is hero's raise with 20bb or less, or with 2.5 times the all-in or less
+        short = [20, 20, 20, 20, 20, 6, 16, 30]
+        adv = self.play(short, 6, "K9s", allin, left=400)
+        self.assertEqual(adv.action, "RE-RAISE ALL-IN (isolate)")
+        self.assertGreater(adv.data["isolate_ev_bb"], 0.15)
+        self.assertTrue(any("shove EV +" in line for line in adv.numbers), adv.numbers)   # the number of this all-in
+        self.assertEqual(self.play(short, 6, "T9s", allin, left=400).action, "CALL")       # that all-in loses: call
+        self.assertEqual(self.play([20, 20, 20, 20, 20, 12, 28, 40], 6, "TT", allin).action, "RE-RAISE ALL-IN (isolate)")
+        for stack in (22, 40, 100):                                               # deeper: never the all-in
+            for hand in ("TT", "KJo"):
+                adv = self.play([stack] * 5 + [6, stack, stack], 6, hand, allin)
+                self.assertNotIn("ALL-IN", adv.action, (stack, hand))
+                size = re.search(r"RE-RAISE to ([\d.]+)bb", adv.action)
+                self.assertTrue(size is None or float(size.group(1)) == 15.0, (stack, hand, adv.action))
+        # very deep the re-raise is small against the stack: UTG all-in for 8bb, hero in the cutoff with 100bb
+        deep = [8] + [100] * 7
+        self.assertEqual(self.play(deep, 4, "TT", [(0, "allin", 0)]).action, "RE-RAISE to 20bb (isolate)")
+        self.assertEqual(self.play(deep, 4, "KQo", [(0, "allin", 0)]).action, "FOLD")
+
+    def test_pre_10_a_caller_with_chips_is_not_a_second_all_in(self):
+        # the button is all-in for 3bb, the small blind (30bb) calls, hero is the big blind with 16bb
+        stacks = [20, 20, 20, 20, 20, 3, 30, 16]
+        acts = [(5, "allin", 0), (6, "call", 2.875)]
+        got = {hand: self.play(stacks, 7, hand, acts, left=100) for hand in ("T9s", "A9s", "99", "72o", "TT", "AKo")}
+        for hand in ("T9s", "A9s", "99"):
+            self.assertEqual(got[hand].action, "CALL", hand)
+        # hero adds 1.9bb to a pot of 7.75bb: about 19%, plus the points for the caller still in
+        self.assertTrue(0.22 < got["T9s"].data["need"] < 0.30, got["T9s"].data)
+        self.assertEqual(got["72o"].action, "FOLD")
+        for hand in ("TT", "AKo"):                                               # the raise is considered
+            self.assertTrue(got[hand].action.startswith("RE-RAISE"), (hand, got[hand].action))
+        self.assertFalse(any("multi-way all-in" in text for adv in got.values() for text in adv.warnings))
+        # hero on the button with 25bb, UTG all-in for 4bb, the cutoff (40bb) calls
+        stacks = [4, 20, 20, 20, 40, 25, 20, 20]
+        acts = [(0, "allin", 0), (4, "call", 3.875)]
+        got = {hand: self.play(stacks, 5, hand, acts, left=100).action for hand in ("AKo", "TT", "AQs", "76s")}
+        self.assertEqual(got, {"AKo": "RE-RAISE to 10bb (isolate)", "TT": "RE-RAISE to 10bb (isolate)",
+                               "AQs": "CALL", "76s": "FOLD"})
+        # a caller who is all-in himself is still a second all-in
+        adv = self.play([20, 20, 20, 20, 20, 3, 2.5, 16], 7, "T9s", [(5, "allin", 0), (6, "call", 2.375)], left=100)
+        self.assertTrue(any("multi-way all-in" in text for text in adv.warnings), adv.warnings)
+
+    def test_pre_11_an_all_in_over_a_reraise_is_a_narrow_range(self):
+        # the button (30bb) re-raises the cutoff's raise to 6.6bb and the cutoff moves all-in
+        stacks = [30] * 8
+        line = [(4, "raise", 2.2), (5, "raise", 6.6), (4, "allin", 0)]
+        adv = self.play(stacks, 5, "AQo", line, left=400)
+        self.assertEqual(adv.action, "FOLD")                                     # was a "clear" call for 23bb
+        self.assertLess(adv.data["villain_pct"], 5.0)                            # was 17% of hands
+        self.assertTrue(any("[TT+, AQs+, AKo]" in text for text in adv.numbers), adv.numbers)
+        self.assertEqual(self.play(stacks, 5, "QQ", line, left=400).action, "CALL")
+        # a little wider for loose players and for short stacks, tighter for tight ones
+        def width(stack, kind):
+            types = ["unknown"] * 8
+            types[4] = kind
+            return self.play([stack] * 8, 5, "QQ", line, types=types).data["villain_pct"]
+        self.assertLess(width(30, "nit"), width(30, "tight"))
+        self.assertLess(width(30, "tight"), width(30, "unknown"))
+        self.assertLess(width(30, "unknown"), width(30, "loose"))
+        self.assertLess(width(30, "loose"), width(30, "maniac"))
+        self.assertLess(width(30, "unknown"), width(20, "unknown"))
+        self.assertLess(width(20, "maniac"), 12.0)
+        # a raise the user opened with is still answered as before: a re-shove over an opening range
+        opened = self.play(stacks, 5, "AQo", [(5, "raise", 2.2), (7, "allin", 0)], left=400)
+        self.assertGreater(opened.data["villain_pct"], 8.0)
+        # the first answer and the one after the all-in never disagree, and with 45bb or less a
+        # re-raise that is not all-in is made only with a hand that calls that all-in
+        seen = set()
+        for stack in (30, 40, 60):
+            for hero, opener, size in ((5, 4, 2.2), (6, 5, 2.2)):
+                for hand in ("QQ", "JJ", "TT", "AKo", "AQo", "KQs", "A5s"):
+                    first = self.play([stack] * 8, hero, hand, [(opener, "raise", size)], left=400)
+                    key = (stack, hero, hand, first.action)
+                    small = re.match(r"3-BET to ([\d.]+)bb", first.action)
+                    if stack <= 45:
+                        self.assertNotIn("semi-bluff", first.action, key)
+                    if not small or "semi-bluff" in first.action:
+                        seen.add(first.action.split()[0])
+                        continue
+                    plans = [text for text in first.numbers if text.startswith("if ")]
+                    self.assertEqual(len(plans), 1, key)
+                    promised = "do not fold to a 4-bet at this depth" in first.why
+                    second = self.play([stack] * 8, hero, hand, [(opener, "raise", size),
+                                       (hero, "raise", float(small.group(1))), (opener, "allin", 0)], left=400)
+                    self.assertEqual(second.action == "CALL", promised, key)
+                    self.assertEqual(" shoves: CALL " in plans[0], promised, key)
+                    self.assertIn(second.action, ("CALL", "FOLD"), key)
+                    if stack <= 45:
+                        self.assertTrue(promised, key)
+                    seen.add("small, calls" if promised else "small, folds")
+        self.assertTrue({"ALL-IN", "CALL", "FOLD", "small, calls", "small, folds"} <= seen, seen)
+        # the review's hands on the button at 30bb: no re-raise of a fifth of the stack that then folds
+        for hand in ("KQs", "AJs", "AQo", "TT"):
+            self.assertNotIn("3-BET to", self.play(stacks, 5, hand, [(4, "raise", 2.2)], left=400).action, hand)
+        # the small blind has no call to fall back on: all-in when that clearly earns, else fold
+        self.assertEqual(self.play([40] * 8, 6, "AQo", [(5, "raise", 2.2)], left=400).action, "ALL-IN")
+        self.assertEqual(self.play([40] * 8, 6, "KQs", [(5, "raise", 2.2)], left=400).action, "FOLD")
+
+    def test_pre_18_a_blind_sitting_out_never_tightens_the_opening_range(self):
+        for players in (8, 6):
+            button, small, big = players - 3, players - 2, players - 1
+            stacks = [50] * players
+            own = self.opens(stacks, button)
+            for away in ({big}, {small}):
+                self.assertTrue(own <= self.opens(stacks, button, away), (players, away))
+            cutoff = self.opens(stacks, button - 1)
+            one_away = self.opens(stacks, button - 1, {big})
+            self.assertTrue(cutoff < one_away, players)                          # one opponent fewer: wider
+            # fewer active players behind never means fewer hands
+            self.assertTrue(one_away <= self.opens(stacks, button - 1, {button, big}), players)
+        # the hands the review saw folded on the button, at 30bb; the small blind itself keeps its own row
+        for hand in ("K3s", "Q5s", "K8o", "54s", "A3o", "A2o"):
+            for away in ({7}, {6}):
+                self.assertTrue(self.play([30] * 8, 5, hand, away=away).action.startswith("RAISE"), (hand, away))
+        self.assertEqual(self.play([30] * 8, 6, "K3s").action, "FOLD")
+
 
 class Postflop(unittest.TestCase):
     def go(self, hero, board, pot, to_call=0.0, stack=40.0, vs="call:BB", line="", **kw):
@@ -293,6 +538,78 @@ class Postflop(unittest.TestCase):
         self.assertEqual(parse_line("flop=call turn=bet66"), [("flop", "call", None), ("turn", "bet", 0.66)])
         with self.assertRaises(ValueError):
             parse_line("flop=dance")
+
+    @staticmethod
+    def spot(hero, board, pot, to_call, stack, specs, vstack=None, in_position=False, **kw):
+        villains = []
+        for spec in specs:
+            w, label = range_from_spec(spec, 9, "unknown", 0)
+            villains.append(Villain(w, "unknown", [], label))
+        return PostflopSpot(tuple(parse_cards(hero)), parse_cards(board), pot, to_call, stack, vstack, villains,
+                            in_position, False, **kw)
+
+    def test_post_3_a_cheap_call_is_never_folded_with_the_pot_odds(self):
+        # the reviewer's hands: the last 4bb into a pot of 86bb, and the last 0.7bb into 70bb
+        adv = advise_postflop(self.spot("8d7s", "8cJd5c", 18045, 826, 826, ["flat:BTN", "limp:UTG", "flat:BTN", "3bet"],
+                                        vstack=0.0, bb=200, risk_premium=0.004))
+        self.assertEqual(adv.action, "CALL")
+        adv = advise_postflop(self.spot("7d8s", "Js8c5c", 42050, 425, 425, ["open:UTG", "flat:BTN"], vstack=0.0, bb=600,
+                                        risk_premium=0.02))
+        self.assertEqual(adv.action, "CALL")
+        # the points added to the pot odds shrink with the price: none up to a tenth of the pot, all from half
+        seen = []
+        for hero, board in (("7d8s", "Js8c5c"), ("Ah2h", "Js8c5c"), ("KcQd", "As7h4d"), ("9h3h", "Kd9s4c2h"),
+                            ("QhTd", "Qs8d3c7h2s")):
+            for rp in (0.0, 0.12):
+                last = None
+                for share in (0.03, 0.06, 0.10, 0.15, 0.25, 0.35, 0.5, 0.75, 1.0):
+                    pot = 40.0
+                    call = pot * share
+                    adv = advise_postflop(self.spot(hero, board, pot + call, call, call, ["open:UTG", "flat:BTN"],
+                                                    risk_premium=rp))
+                    d = adv.data
+                    key = (hero, board, rp, share)
+                    self.assertAlmostEqual(d["call_share"], share, places=6)
+                    added = d["safety_pts"] + d["icm_pts"]
+                    self.assertAlmostEqual(d["need_total"], d["pot_odds"] + added, places=6, msg=key)   # no draws here
+                    if share <= 0.10:
+                        self.assertEqual(added, 0.0, key)
+                        if d["equity"] >= d["pot_odds"]:
+                            self.assertNotEqual(adv.action, "FOLD", key)
+                    if last is not None:
+                        self.assertGreaterEqual(added, last - 1e-9, key)          # a dearer call, never fewer points
+                    last = added
+                    if share >= 0.5 and board != "Qs8d3c7h2s":
+                        # out of position (2) and several players (3), in full; the river has its own points
+                        self.assertAlmostEqual(d["safety_pts"], 0.05, places=6, msg=key)
+                    if rp == 0.0:
+                        self.assertEqual(d["icm_pts"], 0.0)
+                        self.assertFalse(any("ICM" in text for text in adv.why), (key, adv.why))   # nothing to blame
+                    if adv.action == "FOLD" and d["equity"] >= d["pot_odds"]:
+                        seen.append(key)
+                        self.assertGreater(added, 0.0, key)
+                        self.assertEqual(len(adv.why), 2, (key, adv.why))         # the fold says which points did it
+                        self.assertEqual("ICM" in adv.why[1], d["icm_pts"] > 0, (key, adv.why))
+        self.assertTrue(any(k[2] == 0.0 for k in seen) and any(k[2] > 0 for k in seen), seen)
+
+    def test_post_9_a_flop_bet_from_a_caller_is_not_a_continuation_bet(self):
+        def facing(hero, board, size, pfr):
+            w, label = range_from_spec("limp:SB", 3, "unknown", 0)
+            v = Villain(w, "unknown", [], label, pfr)
+            return advise_postflop(PostflopSpot(tuple(parse_cards(hero)), parse_cards(board), 2.0 + 2.0 * size,
+                                                2.0 * size, 30.0, 30.0, [v], True, False))
+
+        self.assertIsNone(Villain([1.0] * 169).pfr)                              # not known: as before
+        for hero, board in (("QhTd", "As7h4d"), ("KcJd", "As7h4d"), ("Kh2d", "Tc6d2s")):
+            unknown, raiser, caller = (facing(hero, board, 1.0, pfr).data["equity"] for pfr in (None, True, False))
+            self.assertEqual(unknown, raiser, (hero, board))
+            # the bet of a player who only called before the flop holds less air
+            self.assertLess(caller, unknown - 0.01, (hero, board))
+        # queen high, no pair, no draw, against a pot-sized bet from the small blind who only called: fold
+        self.assertEqual(facing("QhTd", "As7h4d", 1.0, False).action, "FOLD")
+        # made hands still continue
+        for hero in ("Ad5c", "7s7d"):
+            self.assertNotEqual(facing(hero, "As7h4d", 1.0, False).action, "FOLD", hero)
 
 
 class StateAndCli(unittest.TestCase):

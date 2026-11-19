@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .cards import HANDS, format_range, parse_range, range_combos, range_pct
-from .equity import eq_vs_range, hand_equity, preflop_equity
+from .cards import HANDS, format_range, parse_range, range_combos, range_pct, top_percent
+from .equity import allin_order, eq_vs_range, hand_equity, preflop_equity
 from .icm import Prizes
 from .pushfold import (HandSetup, _call_req, build_shove_spot, solve_open_shove, solve_reshove,
                        solve_shove, _unit)
@@ -280,8 +280,21 @@ def first_in(spot: Spot) -> Advice:
         return _finish_first_in(spot, adv, behind)
 
     # raise / fold with real stacks
-    rfi = rfi_range(nb_eff, eff, shift) if not heads_up else list(_ladder(-1))
-    wider = rfi_range(nb_eff, eff, shift - 1) if not heads_up else rfi
+    own_nb = spot.nb(hero)
+
+    def open_row(sh: int) -> list[float]:
+        """The opening row for the active players behind, never tighter than this seat's own row."""
+        # the small blind's row is tighter than the button's because it plays out of position:
+        # it is for the small blind only, not for a later seat with one active player behind
+        row = rfi_range(nb_eff if nb_eff != 1 or own_nb == 1 else 2, eff, sh)
+        if nb_eff < own_nb:
+            own = rfi_range(own_nb, eff, sh)
+            if range_pct(own) > range_pct(row):
+                row = own
+        return row
+
+    rfi = open_row(shift) if not heads_up else list(_ladder(-1))
+    wider = open_row(shift - 1) if not heads_up else rfi
     size = open_size_bb(eff, spot.nb(hero), spot.has_ante)
     if heads_up:
         size = 2.0 if eff < 25 else 2.2   # heads-up the small blind is the button: raise small
@@ -294,7 +307,7 @@ def first_in(spot: Spot) -> Advice:
         adv.alt.append(f"raising to {size:.1f}bb and folding to a shove is the lower-variance option")
     elif rfi[hand] >= 0.5:
         adv.action = f"RAISE to {size:.1f}bb"
-        adv.confidence = "clear" if rfi_range(nb_eff, eff, shift + 2)[hand] >= 0.5 else "standard"
+        adv.confidence = "clear" if open_row(shift + 2)[hand] >= 0.5 else "standard"
         adv.why.append(f"inside the TAG opening range for {spot.pos(hero)} with {nb_eff} players behind")
         if eff <= 40:
             adv.numbers += _reshove_plan(spot, size * spot.bb, rfi)
@@ -437,6 +450,48 @@ def _call_numbers(spot: Spot, shover: int, bets: dict[int, float]) -> tuple[floa
     return need, chip
 
 
+# A player who moves all-in over a re-raise holds a narrow range, tightest first.  A player with
+# no read (or tagged solid) uses the third line; tight players the lines before it, loose and
+# aggressive ones the lines after it, and with under 25bb everybody is one line wider.
+_ALLIN_OVER_RERAISE = ("QQ+, AKs", "JJ+, AKs, AKo", "TT+, AQs+, AKo", "99+, AJs+, AQo+, KQs",
+                       "77+, ATs+, AJo+, KQs", "55+, A8s+, ATo+, KJs+, KQo")
+_ALLIN_OVER_RERAISE_LINE = {"nit": 0, "tight": 1, "unknown": 2, "tag": 2, "station": 2, "loose": 3, "lag": 3,
+                            "maniac": 4}
+# 26 to 45bb, a hand that may not re-raise small (it would fold to an all-in): it moves all-in
+# instead when that clearly earns.  The bar is this many bb; when the hand can call instead
+# (in position, or in the big blind) the bar is also at least this share of the stack at risk.
+_RESHOVE_CLEARLY = 1.0
+_RESHOVE_CLEARLY_SHARE = 0.04
+
+
+def _allin_over_reraise(spot: Spot, shover: int, first_raiser: int | None) -> tuple[list[float], float]:
+    """Range of a player who moves all-in over hero's re-raise: (weights, percent of hands).
+
+    When he is the player hero re-raised (``first_raiser``) it is his opening range narrowed
+    to the hands that play for stacks; a re-shove solved over hero's opening range would be
+    several times too wide."""
+    eff = min(spot.setup.live[spot.hero], spot.setup.live[shover]) / spot.bb
+    line = _ALLIN_OVER_RERAISE_LINE[spot.types[shover]] + (1 if eff < 25 else 0)
+    rng = parse_range(_ALLIN_OVER_RERAISE[min(line, len(_ALLIN_OVER_RERAISE) - 1)])
+    if first_raiser is not None and first_raiser == shover:
+        opened = villain_open_range(spot.nb(shover), spot.types[shover])
+        narrowed = [min(a, b) for a, b in zip(rng, opened)]
+        if range_combos(narrowed) > 0:
+            rng = narrowed
+    return rng, range_pct(rng)
+
+
+def _call_allin_over_reraise(spot: Spot, shover: int, hero_to: float, first_raiser: int | None) -> dict:
+    """Hero re-raised to ``hero_to`` and ``shover`` moves all-in: equity, price and the range.
+
+    ``vs_open`` asks it before a re-raise (the plan) and ``vs_shove`` when the all-in has
+    come, so the two answers of one hand cannot disagree."""
+    rng, pct = _allin_over_reraise(spot, shover, first_raiser)
+    eq = eq_vs_range(spot.hand, rng)[0]
+    need, chip = _call_numbers(spot, shover, {spot.hero: hero_to, shover: spot.setup.live[shover]})
+    return {"eq": eq, "need": need, "chip_need": chip, "edge": eq - need, "pct": pct, "range": rng}
+
+
 def _call_vs_reshove(spot: Spot, shover: int, open_to: float, hero_range: list[float]) -> dict:
     sol = _shover_solution(spot, shover, spot.hero, open_to, hero_range)
     rng, pct = _scaled_range(sol, spot.types[shover])
@@ -446,19 +501,68 @@ def _call_vs_reshove(spot: Spot, shover: int, open_to: float, hero_range: list[f
             "sol": sol}
 
 
+# Raising over a short all-in to play it heads-up ("isolate").  The all-in is the raise only for a
+# stack of _ISOLATE_ALLIN_BB or less, or one no bigger than _ISOLATE_ALLIN_X times the short
+# all-in; a deeper stack re-raises to about _ISOLATE_SIZE_X times the all-in instead.
+_ISOLATE_ALLIN_BB = 20.0
+_ISOLATE_ALLIN_X = 2.5
+_ISOLATE_SIZE_X = 2.5
+_ISOLATE_EV_ALLIN = 0.15      # bb the all-in must earn against folding, the players behind counted
+_ISOLATE_EV_COMMIT = 0.5      # the same for a re-raise that puts a third of the stack in
+_ISOLATE_EDGE = 0.05          # a deeper re-raise: equity above the price against the short stack
+_CALLER_MARGIN = 0.04         # a player who called and has chips behind is still in the pot
+_CALLER_SHARE = 0.75          # his range: this share of the solved calling range ...
+_CALLER_WIDEST = 50.0         # ... and never more than this many percent of hands
+_RAISE_OVER_CALLER = parse_range("TT+, AKs, AKo")
+
+
+def _isolate_ev(spot: Spot, shover: int, rng: list[float], bets: dict[int, float], behind: list[int],
+                live_callers: dict[int, list[float]], raiser: int | None) -> float:
+    """What hero's own all-in over a short all-in earns against folding, in big blinds.
+
+    The players still to act and the callers with chips behind may call it; the short stack
+    is in the pot whatever happens."""
+    setup, hero = spot.setup, spot.hero
+    prizes = Prizes() if spot.desperate else spot.prizes
+    priors = {shover: rng, **live_callers}
+    order = list(behind)
+    if raiser is not None and raiser not in live_callers:
+        priors[raiser] = villain_open_range(spot.nb(raiser), spot.types[raiser])
+        order.append(raiser)
+    order += list(live_callers) + [shover]
+    v_fold, v_steal, callers = build_shove_spot(
+        setup, hero, prizes, caller_prizes=spot.field_prizes, types=spot.types, away=spot.away, bets=bets,
+        priors=priors, caller_order=order, fold_winner=shover, extra_req={j: 0.02 for j in behind})
+    return solve_shove(v_fold, v_steal, callers, unit=_unit(prizes, setup, hero)).ev_bb(spot.hand)
+
+
 def vs_shove(spot: Spot, shover: int, *, raiser: int | None = None, raise_to: float = 0.0,
-             hero_open: float = 0.0, callers: list[int] | None = None) -> Advice:
+             hero_open: float = 0.0, callers: list[int] | None = None, committed: float = 0.0,
+             reraised: int | None = None) -> Advice:
     """Hero faces one all-in.
 
     ``raiser`` is another player who raised before the shove and is still in;
     ``hero_open`` is hero's own raise if the shove came over the top of it.
+    ``reraised`` says that raise of hero's was a re-raise, over the raise of
+    this player: an all-in over a re-raise is a narrow range.
+    ``callers`` are players who called the all-in and still have chips: they are
+    priced as callers (their chips are in the pot, hero adds what he is asked
+    for), not as a second all-in.  ``committed`` is the raise of a player who is
+    not all-in yet but has put 40% or more of his stack in: he is priced as
+    all-in, and only heads-up does the answer become an all-in of hero's own.
     """
     setup, hero, hand = spot.setup, spot.hero, spot.hand
     live = setup.live
     n = setup.n
-    callers = callers or []
+    level = min(committed, live[shover]) if committed else live[shover]      # the bet hero faces
+    callers = [j for j in (callers or []) if j not in (hero, shover)]
     shove_bb = spot.bbs(live[shover])
-    if hero_open:
+    sol = None
+    if hero_open and reraised is not None:
+        rng, pct = _allin_over_reraise(spot, shover, reraised)
+        sit = _situation(spot, f"you re-raised to {spot.bbs(hero_open):.1f}bb, {spot.who(shover)} moved all-in "
+                               f"for {shove_bb:.1f}bb")
+    elif hero_open:
         hero_range = rfi_range(max(1, spot.nb(hero)), min(live[hero], live[shover]) / spot.bb)
         sol = _shover_solution(spot, shover, hero, hero_open, hero_range)
         sit = _situation(spot, f"you opened, {spot.who(shover)} moved all-in for {shove_bb:.1f}bb")
@@ -469,54 +573,174 @@ def vs_shove(spot: Spot, shover: int, *, raiser: int | None = None, raise_to: fl
     else:
         sol = _shover_solution(spot, shover, None, 0.0, None)
         sit = _situation(spot, f"{spot.who(shover)} moved all-in for {shove_bb:.1f}bb")
-    rng, pct = _scaled_range(sol, spot.types[shover])
+    if sol is not None:
+        rng, pct = _scaled_range(sol, spot.types[shover])
+        strength = sol.ev                     # which hands a wider or narrower all-in range holds
+    else:
+        strength = [0.0] * 169
+        for k, h in enumerate(allin_order()):
+            strength[h] = -float(k)
 
+    # callers with chips behind: the range they call a short all-in with.  The solved calling
+    # range goes by the pot odds alone and can be any two cards; a player who just calls with
+    # others still in the hand is taken as tighter than that (three quarters of it, at most half
+    # of all hands), which is the careful side for hero's call and for a re-raise.
+    live_callers: dict[int, list[float]] = {}
+    for j in callers:
+        if live[j] > level + 1e-9:
+            c = sol.caller(j) if sol is not None else None
+            if c and range_combos(c.call_range) > 0:
+                width = min(_CALLER_WIDEST, _CALLER_SHARE * range_pct(c.call_range))
+                live_callers[j] = top_percent(width, list(allin_order()))
+            else:
+                live_callers[j] = parse_range("TT+, AQs+, AKo")
+    if live_callers:
+        names = " and ".join(spot.who(j) for j in live_callers)
+        sit = sit.replace(" | ", f", {names} called | ", 1) if " | " in sit else f"{sit}, {names} called"
+
+    # the short stack is priced as all-in for all of it; what the others put in is in the pot
     bets = {shover: live[shover]}
     if hero_open:
         bets[hero] = hero_open
     if raiser is not None:
         bets[raiser] = raise_to
+    for j in callers:
+        bets[j] = min(live[j], live[shover])
     need, chip_need = _call_numbers(spot, shover, bets)
     fresh_behind = [j for j in range(hero + 1, n)
-                    if j not in (shover, raiser) and not spot.away[j] and live[j] > 0] if not hero_open else []
-    margin = 0.008 * len(fresh_behind) + (0.03 if raiser is not None else 0.0)
-    eq = eq_vs_range(hand, rng)[0]
-    edge = eq - need - margin
+                    if j not in (shover, raiser) and j not in callers and not spot.away[j] and live[j] > 0] \
+        if not hero_open else []
+    raiser_to_act = raiser is not None and raiser not in callers
+    others_live = bool(fresh_behind or live_callers or raiser_to_act)
+    margin = 0.008 * len(fresh_behind) + (0.03 if raiser_to_act else 0.0) \
+        + (_CALLER_MARGIN if live_callers else 0.0)
+    if live_callers:
+        eq = preflop_equity(hand, spot.cards, [rng] + list(live_callers.values()), iters=12000)
+    else:
+        eq = eq_vs_range(hand, rng)[0]
+    raise_edge = eq - need - margin                 # for an answer that puts the short stack all-in
+    # A committed raiser with other players live: the answer may be a plain call of the raise.
+    # That call is priced as what hero adds now against the pot as it stands; the raiser's last
+    # chips go in after the flop, when hero can still fold, so they count for half.
+    rest = 0.0
+    if committed and others_live and live[shover] > level + 1e-9:
+        now = setup.invested({**bets, shover: level, **{j: min(live[j], level) for j in callers}})
+        to_call = max(0.0, min(live[hero], level) - now[hero])
+        plain = to_call / (sum(setup.antes) + sum(now) + to_call)
+        if plain < chip_need:
+            rest = (chip_need - plain) / 2
+            need, chip_need = need - (chip_need - plain), plain
+    edge = eq - need - margin - rest
 
     adv = Advice("CALL" if edge >= 0 else "FOLD", _conf(edge, 0.05, 0.02), sit)
     adv.numbers.append(f"their range ~{pct:.0f}% [{format_range(rng)}]")
-    adv.numbers.append(f"your equity {_pct(eq)}; you need {_pct(need + margin)} "
+    added = "players still in or to act add" if live_callers else "players still to act add"
+    adv.numbers.append(f"your equity {_pct(eq)}{' against all of them' if live_callers else ''}; "
+                       f"you need {_pct(need + margin + rest)} "
                        f"(pot odds alone {_pct(chip_need)}"
                        + (f", ICM adds {100 * (need - chip_need):+.0f} pts" if abs(need - chip_need) >= 0.005 else "")
-                       + (f", players still to act add {100 * margin:.0f} pts" if margin >= 0.005 else "") + ")")
-    # how wide must the shove be for a call to break even?
-    be = None
-    for p in (2, 3, 4, 5, 6, 8, 10, 12, 15, 18, 22, 26, 30, 35, 40, 50, 60, 75, 100):
-        if eq_vs_range(hand, scale_range(sol.ev, p))[0] >= need + margin:
-            be = p
-            break
-    if be is None:
-        adv.numbers.append("no realistic shoving range makes this a call")
+                       + (f", {added} {100 * margin:.0f} pts" if margin >= 0.005 else "")
+                       + (f", the raiser's chips behind add {100 * rest:.0f} pts" if rest >= 0.005 else "") + ")")
+    adv.data.update(equity=eq, need=need + margin + rest, villain_pct=pct)
+    if committed and live[shover] > level + 1e-9:
+        adv.numbers.append(f"{spot.pos(shover)} has {spot.bbs(live[shover] - level):.1f}bb behind the raise: "
+                           + ("they go in after the flop" if rest else "priced as all-in"))
+    if live_callers:
+        for j, r in live_callers.items():
+            adv.numbers.append(f"{spot.pos(j)} called with chips behind: about {range_pct(r):.0f}% of hands "
+                               f"[{format_range(r)}]")
     else:
-        adv.numbers.append(f"calling is right whenever they shove at least ~{be}% of hands here")
-    adv.data.update(equity=eq, need=need + margin, villain_pct=pct, breakeven_pct=be)
+        # how wide must the shove be for a call to break even?
+        be = None
+        for p in (2, 3, 4, 5, 6, 8, 10, 12, 15, 18, 22, 26, 30, 35, 40, 50, 60, 75, 100):
+            if eq_vs_range(hand, scale_range(strength, p))[0] >= need + margin + rest:
+                be = p
+                break
+        if be is None:
+            adv.numbers.append("no realistic shoving range makes this a call")
+        else:
+            adv.numbers.append(f"calling is right whenever they shove at least ~{be}% of hands here")
+        adv.data.update(breakeven_pct=be)
+
+    if sol is None:
+        adv.numbers.append("an all-in over a re-raise is a narrow range: the hands they opened that play for "
+                           "stacks, not a re-shove over a wide range")
     if edge >= 0:
-        adv.why.append("you beat the price against the range they shove here")
-        if (fresh_behind or raiser is not None) and live[hero] > live[shover] * 1.3 and not _TRAP[hand]:
-            adv.action = "RE-RAISE ALL-IN (isolate)" if spot.bbs(live[hero]) <= 40 else \
-                f"RE-RAISE to {min(spot.bbs(live[hero]), 2.5 * shove_bb):.0f}bb (isolate)"
-            adv.why.append("players are still to act: raise to get heads-up against the short stack")
-        elif (fresh_behind or raiser is not None) and _TRAP[hand]:
+        adv.why.append(f"you beat the price against the {'raiser' if committed else 'all-in'} and the caller "
+                       "together" if live_callers else
+                       "you beat the price against a raiser who has committed his stack" if committed else
+                       "you beat the price against the range they shove here")
+        stack_bb = spot.bbs(live[hero])
+        wants_raise = _RAISE_OVER_CALLER[hand] >= 0.5 if live_callers else not _TRAP[hand]
+        if committed and not others_live:
+            adv.action = "ALL-IN"
+            adv.why.append("re-raise all-in rather than call: they are not folding and you deny the flop")
+        elif others_live and live[hero] > live[shover] * 1.3 and wants_raise and raise_edge >= 0:
+            _isolate(spot, adv, shover, rng, bets, level, fresh_behind, live_callers, raiser, raise_to,
+                     hero_open, raise_edge, stack_bb)
+        elif others_live and _TRAP[hand] and not live_callers:
             adv.alt.append("just calling to invite another player in is also fine with a monster")
+        elif live_callers:
+            adv.why.append("a player with chips is in the pot too: call, and re-raise only with TT+ or AK")
     else:
         adv.why.append("you do not have the equity for the price"
                        + (", and busting here costs far more than the chips are worth" if need - chip_need > 0.04 else ""))
-        if chip_need <= eq < need + margin:
-            adv.why.append("on chips alone this is a call; ICM / survival is what makes it a fold")
+        if chip_need <= eq < need + margin + rest:
+            adv.why.append("on chips alone this is a call; ICM / survival is what makes it a fold"
+                           if need - chip_need >= 0.005 and eq >= chip_need + margin + rest else
+                           "the pot odds alone are met; the players still in the hand are what makes it a fold")
     t = spot.types[shover]
     if t in ("nit", "tight") and edge < 0.04 and edge >= 0:
         adv.warnings.append(f"{spot.pos(shover)} is tagged {t}: this is thin against their real range")
     return adv
+
+
+def _isolate(spot: Spot, adv: Advice, shover: int, rng: list[float], bets: dict[int, float], level: float,
+             behind: list[int], live_callers: dict[int, list[float]], raiser: int | None, raise_to: float,
+             hero_open: float, edge: float, stack_bb: float) -> None:
+    """The call is right and other players are live: all-in, a sized re-raise, or just the call."""
+    hero, live, bb = spot.hero, spot.setup.live, spot.bb
+    short_bb = spot.bbs(live[shover])
+    heads_up = "players are still to act: raise to get heads-up against the short stack" if not live_callers \
+        else "re-raise to play the short stack heads-up: the caller folds most of his hands"
+    ev = None
+    others = "with a caller in the pot" if live_callers else "with players still to act"
+    note = _value_note(spot)
+    counted = (f"{note}, " if note else "") + "the players still in the hand counted"
+    if stack_bb <= _ISOLATE_ALLIN_BB or live[hero] <= _ISOLATE_ALLIN_X * live[shover]:
+        ev = _isolate_ev(spot, shover, rng, bets, behind, live_callers, raiser)
+        if ev > _ISOLATE_EV_ALLIN:
+            adv.action = "RE-RAISE ALL-IN (isolate)"
+            adv.why.append(heads_up)
+            adv.numbers.append(f"your all-in over it: shove EV {ev:+.2f}bb vs folding ({counted})")
+            adv.data.update(isolate_ev_bb=ev)
+        else:
+            adv.why.append(f"just call: this hand is not strong enough to move all-in for {stack_bb:.0f}bb "
+                           f"{others}")
+        return
+    # deeper: about 2.5 times the all-in, never under the smallest legal raise, in half big blinds
+    before = max(raise_to, hero_open, bb)
+    smallest = level + max(bb, level - before)
+    size_bb = max(_ISOLATE_SIZE_X * short_bb, spot.bbs(smallest))
+    size_bb = int(size_bb * 2 + 0.999) / 2.0
+    if size_bb * 3 >= stack_bb:
+        # a third of the stack goes in: the re-raise is for stacks if a player behind wakes up
+        ev = _isolate_ev(spot, shover, rng, bets, behind, live_callers, raiser)
+        strong = ev > _ISOLATE_EV_COMMIT
+    else:
+        strong = edge >= _ISOLATE_EDGE
+    if strong:
+        adv.action = f"RE-RAISE to {size_bb:g}bb (isolate)"
+        adv.why.append(heads_up)
+        if ev is not None:
+            adv.numbers.append(f"the re-raise puts a third of your stack in; playing for all of it is worth "
+                               f"{ev:+.2f}bb against folding ({counted})")
+            adv.data.update(isolate_ev_bb=ev)
+            adv.warnings.append("you are committed after this re-raise: do not fold to an all-in behind you")
+        else:
+            adv.warnings.append("if a player behind you moves all-in, fold without QQ+ or AK")
+    else:
+        adv.why.append(f"just call: this hand is not strong enough to re-raise to {size_bb:g}bb {others}")
 
 
 def multi_allin(spot: Spot, allins: list[int], raiser: int | None = None, raise_to: float = 0.0) -> Advice:
@@ -556,7 +780,26 @@ def multi_allin(spot: Spot, allins: list[int], raiser: int | None = None, raise_
 # Facing an open raise
 # --------------------------------------------------------------------------
 
+# share of its equity a hand realises out of position (tools/build_tag.py reads it for the sheet)
 _REALIZE = {"pair": 0.92, "suited_conn": 0.95, "suited": 0.86, "broadway_off": 0.80, "off": 0.64}
+
+# Big blind closing the action against one raise: how far above the pot odds a hand's equity must
+# be to call, by how badly that kind of hand plays after the flop (pairs least, then suited hands,
+# then two offsuit cards ten or higher, then the other offsuit hands).  Half of the ICM risk
+# premium comes on top.  It is one test for every hand, charted or not, so a stronger hand never
+# folds where a weaker one calls; and no hand needs more than _BB_CALL_NET above the price.
+# Every suited hand gets the same points: with fewer for the connected ones 32s would call
+# where T2s folds.
+_BB_CALL_MARGIN = {"pair": 0.02, "suited_conn": 0.06, "suited": 0.06, "broadway_off": 0.08, "off": 0.15}
+_BB_CALL_NET = 0.15
+
+
+def bb_call_points(kind: str, risk_premium: float = 0.0, callers: int = 0) -> float:
+    """Equity the big blind needs above the pot odds to call one raise with a hand of this kind."""
+    points = _BB_CALL_MARGIN[kind] + max(0.0, risk_premium) / 2
+    if callers and kind in ("off", "broadway_off"):
+        points += 0.03                    # offsuit hands lose the most with more players in the pot
+    return min(_BB_CALL_NET, points)
 
 
 def _hand_kind(hand: int) -> str:
@@ -576,13 +819,12 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
     n = setup.n
     bb = spot.bb
     if raise_to >= 0.4 * live[opener]:
-        # the opener is committed: treat the raise as an all-in
-        adv = vs_shove(spot, opener, callers=flats)
+        # the opener is committed: price the raise as an all-in.  Heads-up the answer is hero's
+        # own all-in; with a caller in the pot or players behind it is a call, a raise or a fold
+        adv = vs_shove(spot, opener, callers=flats, committed=raise_to)
+        called = f", {len(flats)} caller{'s' if len(flats) > 1 else ''}" if flats else ""
         adv.situation = _situation(spot, f"{spot.who(opener)} raised to {raise_to / bb:.1f}bb, "
-                                         f"over 40% of their stack: they are committed")
-        if adv.action == "CALL":
-            adv.action = "ALL-IN"
-            adv.why.append("re-raise all-in rather than call: they are not folding and you deny the flop")
+                                         f"over 40% of their stack: they are committed{called}")
         return adv
     eff = min(live[hero], live[opener]) / bb
     hero_bb = live[hero] / bb
@@ -607,11 +849,14 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
     icm_tight = rp >= 0.06
     kind = _hand_kind(hand)
 
-    def bb_defend_ok(extra: float = 0.0) -> bool:
-        if h_nb != 0:
-            return False
-        real = _REALIZE[kind] * (0.9 if flats and kind in ("off", "broadway_off") else 1.0)
-        return eq_open * real >= need + 0.01 + rp / 2 + extra
+    # the big blind closes the action: one price test for every hand, charted or not
+    bb_points = bb_call_points(kind, rp, len(flats))
+    bb_edge = eq_open - need - bb_points if h_nb == 0 else -1.0
+    if h_nb == 0:
+        adv.numbers.append(f"big blind closing the action: to call you need {_pct(need + bb_points)} "
+                           f"(the price plus {100 * bb_points:.0f} pts for how this hand plays after the flop"
+                           + (", ICM included" if rp >= 0.01 and bb_points < _BB_CALL_NET else "") + ")")
+        adv.data.update(bb_call_need=need + bb_points, bb_call_edge=bb_edge)
 
     if eff <= 25:
         flat_rngs = {j: [max(a, b) for a, b in zip(vs_open_chart(o_nb, spot.nb(j))["call"],
@@ -637,7 +882,7 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
             adv.why.append("re-shoving wins the pot often enough, and you have real equity when called")
             if _TRAP[hand] and eff >= 15:
                 adv.alt.append("with a monster, a small 3-bet or a flat to trap is fine if players behind are aggressive")
-        elif bb_defend_ok() and to_call <= 0.12 * live[hero]:
+        elif bb_edge >= 0 and to_call <= 0.12 * live[hero]:
             adv.action = "CALL"
             adv.confidence = "close"
             adv.why.append("not a profitable shove, but the big blind is getting the right price to see a flop")
@@ -667,38 +912,94 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
     r_bb = raise_to / bb
     size = ((3.0 if ip else 3.8) + len(flats)) * r_bb
     odds_ok = eff / max(r_bb, 0.1) >= 15
+    # A re-raise that is not all-in comes with a plan for the all-in it may meet.  With 45bb or
+    # less it is only made with a hand that then calls: one that would fold moves all-in now
+    # where that clearly earns, and is otherwise played as a call or a fold (``demoted``).
+    decided = demoted = converted = False
     if value[hand] >= 0.5:
         if size >= 0.35 * eff:
             adv.action = "ALL-IN"
             adv.why.append("a value 3-bet would commit you anyway, so move in")
+            decided = True
         else:
-            adv.action = f"3-BET to {size:.1f}bb"
-            adv.why.append("3-bet for value: you are ahead of the range that continues")
-            if _PREMIUM[hand] or eff <= 45:
-                adv.why.append("do not fold to a 4-bet at this depth")
+            plan = _call_allin_over_reraise(spot, opener, size * bb, opener)
+            calls = plan["edge"] >= 0
+            plan_line = (f"if {spot.pos(opener)} ({spot.bbs(live[opener]):.0f}bb) shoves: "
+                         f"{'CALL' if calls else 'FOLD'} (need {_pct(plan['need'])}, have {_pct(plan['eq'])} "
+                         f"vs ~{plan['pct']:.0f}% range)")
+            if calls or eff > 45:
+                adv.action = f"3-BET to {size:.1f}bb"
+                adv.why.append("3-bet for value: you are ahead of the range that continues")
+                adv.numbers.append(plan_line)
+                if calls:
+                    adv.why.append("do not fold to a 4-bet at this depth")
+                elif _PREMIUM[hand]:
+                    adv.alt.append("facing a small 4-bet: continue; an all-in for this much is a fold")
+                else:
+                    adv.alt.append("facing a 4-bet: continue with QQ+/AK, fold the rest")
+                decided = True
             else:
-                adv.alt.append("facing a 4-bet: continue with QQ+/AK, fold the rest")
-        adv.confidence = "clear" if _PREMIUM[hand] else "standard"
-    elif call[hand] >= 0.5 or (setmine[hand] >= 0.5 and odds_ok) or \
+                prizes = Prizes() if spot.desperate else spot.prizes
+                flat_rngs = {j: [max(a, b) for a, b in zip(vs_open_chart(o_nb, spot.nb(j))["call"],
+                                                            vs_open_chart(o_nb, spot.nb(j))["setmine"])]
+                             for j in flats}
+                sol = solve_reshove(setup, hero, opener, raise_to, prizes, opener_range=open_rng,
+                                    flat_callers=flat_rngs, caller_prizes=spot.field_prizes,
+                                    types=spot.types, away=spot.away)
+                ev = sol.ev_bb(hand)
+                can_call = h_nb == 0 or ip or max(call) >= 0.5
+                bar = max(_RESHOVE_CLEARLY, _RESHOVE_CLEARLY_SHARE * eff) if can_call else _RESHOVE_CLEARLY
+                if ev >= bar:
+                    adv.action = "ALL-IN" if hero_bb <= eff + 7 else \
+                        f"3-BET to {eff:.0f}bb (puts the opener all-in)"
+                    adv.why.append("a small re-raise would have to fold to an all-in with this hand: "
+                                   "move all-in now, it earns")
+                    adv.numbers.append(f"re-shove EV {ev:+.2f}bb vs folding ({_value_note(spot)}); "
+                                       f"everyone folds {_pct(sol.fold_equity[hand])}; when called you have "
+                                       f"{_pct(sol.eq_called[hand])}")
+                    adv.numbers.append(plan_line.replace("if ", "after a small re-raise, if ", 1))
+                    adv.data.update(reshove_ev_bb=ev)
+                    decided = converted = True
+                else:
+                    demoted = True
+        if converted:
+            adv.confidence = _conf(ev - bar, 1.5, 0.3)
+        elif decided:
+            adv.confidence = "clear" if _PREMIUM[hand] else "standard"
+    # a demoted hand is stronger than the calls of its seat: it calls where that seat calls at all
+    if decided:
+        pass
+    elif demoted and not (h_nb == 0 or ip or max(call) >= 0.5):
+        adv.why.append("not strong enough to re-raise and call an all-in at this depth, and from the small "
+                       "blind a call is worse than a fold")
+    elif demoted or call[hand] >= 0.5 or (setmine[hand] >= 0.5 and odds_ok) or \
             (deep[hand] >= 0.5 and eff >= 50 and (h_nb <= 2 or flats)):
-        price_bad = h_nb == 0 and not bb_defend_ok(-0.02)
-        thin_oop = icm_tight and in_blinds and kind in ("off", "broadway_off", "suited")
+        # the big blind's charted hands pass the same price test as every other hand of his;
+        # the small blind, out of position with players behind, drops the thin calls under ICM
+        price_bad = h_nb == 0 and bb_edge < 0
+        thin_oop = icm_tight and h_nb == 1 and kind in ("off", "broadway_off", "suited")
         if price_bad or thin_oop:
-            adv.why.append("in the chart to defend, but the price / ICM makes it a fold here")
+            adv.why.append("in the chart to defend, but the price / ICM makes it a fold here" if not demoted else
+                           "not a re-raise at this depth (it could not call an all-in after it), and with this "
+                           "much ICM pressure not a call out of position either")
             adv.confidence = "close"
         else:
             adv.action = "CALL"
+            if h_nb == 0 and bb_edge < 0.03:
+                adv.confidence = "close"
             if kind == "pair" and not _BIG_PAIRS[hand]:
                 adv.why.append("set-mine: you have the implied odds; fold the flop without a set or an overpair")
             else:
                 adv.why.append("playable against their range and deep enough to see a flop"
                                + (" in position" if ip else ""))
-    elif bluff[hand] >= 0.5 and not icm_tight and eff >= 35 and o_type not in ("station", "loose", "maniac"):
+            if demoted:
+                adv.why.append("not a re-raise at this depth: it could not call an all-in after it")
+    elif bluff[hand] >= 0.5 and not icm_tight and eff > 45 and o_type not in ("station", "loose", "maniac"):
         adv.action = f"3-BET to {size:.1f}bb (semi-bluff, fold to a 4-bet)"
         adv.confidence = "close"
         adv.why.append("a blocker hand that plays well as a 3-bet bluff against an opener who can fold")
         adv.alt.append("FOLD is completely fine, and better against a player who never folds")
-    elif bb_defend_ok(0.03):
+    elif bb_edge >= 0:
         adv.action = "CALL"
         adv.confidence = "close"
         adv.why.append("closing the action in the big blind at a good price")
@@ -708,7 +1009,9 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
                        + (" out of position" if in_blinds else ""))
         if setmine[hand] >= 0.5 and not odds_ok:
             adv.why.append("no implied odds to set-mine at this stack depth")
-    if icm_tight:
+    if icm_tight and h_nb == 0 and adv.action == "CALL":
+        adv.why.append(f"ICM: {_pct(rp)} risk premium against {spot.pos(rp_who)}, counted in what you need to call")
+    elif icm_tight:
         adv.why.append(f"ICM: {_pct(rp)} risk premium against {spot.pos(rp_who)}: no light 3-bets or loose calls")
     return adv
 
@@ -717,20 +1020,26 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
 # Hero opened and got re-raised (not all-in), or a raise and a re-raise in front
 # --------------------------------------------------------------------------
 
-def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float) -> Advice:
+def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
+            reraised: int | None = None) -> Advice:
+    """Hero raised and ``villain`` re-raised, not all-in.  ``reraised``: hero's raise was itself
+    a re-raise, over the raise of that player."""
     setup, hero, hand = spot.setup, spot.hero, spot.hand
     live = setup.live
     bb = spot.bb
     eff = min(live[hero], live[villain]) / bb
     if three_to >= 0.4 * min(live[hero], live[villain]):
-        adv = vs_shove(spot, villain, hero_open=hero_open)
-        adv.situation = _situation(spot, f"you opened {hero_open / bb:.1f}bb, {spot.who(villain)} 3-bet to "
+        adv = vs_shove(spot, villain, hero_open=hero_open, reraised=reraised)
+        mine, theirs = ("re-raised to", "raised again to") if reraised is not None else ("opened", "3-bet to")
+        adv.situation = _situation(spot, f"you {mine} {hero_open / bb:.1f}bb, {spot.who(villain)} {theirs} "
                                          f"{three_to / bb:.1f}bb: at these stacks this is for everything")
         if adv.action == "CALL":
             adv.action = "ALL-IN"
-            adv.why.append("the 3-bet commits both stacks: move in rather than call")
-        adv.warnings.append("a small 3-bet where a shove was available is often a strong hand: "
-                            "their range is modelled as a re-shove and may be tighter")
+            adv.why.append("the 3-bet commits both stacks: move in rather than call" if reraised is None else
+                           "this raise commits both stacks: move in rather than call")
+        if reraised is None:
+            adv.warnings.append("a small 3-bet where a shove was available is often a strong hand: "
+                                "their range is modelled as a re-shove and may be tighter")
         return adv
     v_type = spot.types[villain]
     rng = threebet_range(max(1, spot.nb(hero)), v_type)
@@ -767,14 +1076,28 @@ def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float) -> Advi
             adv.why.append("not strong enough to play for stacks against a 3-betting range")
             adv.confidence = _conf(ev - 0.5, 1.0, 0.3)
     else:
+        # QQ+ and AK never fold to one re-raise this deep.  In position they call; out of position
+        # with 60bb or less they move all-in when that all-in earns, otherwise they call too.
+        calls = eq * (0.92 if ip else 0.78) >= need + 0.03 + rp and kind in ("pair", "suited_conn", "suited") \
+            or (eq >= 0.48 and ip)
         if eq >= 0.60:
             adv.action = f"4-BET to {2.3 * three_to / bb:.0f}bb"
             adv.confidence = "clear"
             adv.why.append("4-bet for value and get the money in")
-        elif eq * (0.92 if ip else 0.78) >= need + 0.03 + rp and kind in ("pair", "suited_conn", "suited") \
-                or (eq >= 0.48 and ip):
+        elif _PREMIUM[hand] and not ip and eff <= 60 and ev > 0:
+            adv.action = "ALL-IN"
+            adv.confidence = "standard" if ev >= 0.5 else "close"
+            adv.why.append("too strong to fold to one re-raise, and a call is hard to play out of position: "
+                           "move all-in")
+            adv.alt.append("CALL is the lower-variance play: continue after the flop with top pair or better")
+        elif calls:
             adv.action = "CALL"
             adv.why.append("good enough to see a flop" + (" in position" if ip else " but play carefully out of position"))
+        elif _PREMIUM[hand]:
+            adv.action = "CALL"
+            adv.confidence = "standard" if eq >= need + 0.03 else "close"
+            adv.why.append("too strong to fold to one re-raise: call"
+                           + (" in position" if ip else " and play carefully out of position"))
         else:
             adv.why.append("dominated too often by a 3-betting range; let it go")
     if v_type in ("nit", "tight"):
@@ -842,7 +1165,8 @@ def advise(spot: Spot) -> Advice:
                 hero_raise = a.amount
         elif a.kind in ("limp", "call", "allin"):
             if raises:
-                (allin_callers if raises[-1].kind == "allin" else flats).append(a.idx)
+                # a player who calls an all-in and still has chips is a caller, not a second all-in
+                (allin_callers if raises[-1].kind == "allin" and is_allin else flats).append(a.idx)
             else:
                 limpers.append(a.idx)
 
@@ -872,25 +1196,28 @@ def advise(spot: Spot) -> Advice:
         if len(raises) == 1:
             r = raises[0]
             if r.kind == "allin":
-                return done(vs_shove(spot, r.idx))
+                return done(vs_shove(spot, r.idx, callers=flats))
             return done(vs_open(spot, r.idx, r.amount, flats))
         if len(raises) == 2:
             a, b = raises
             if b.kind == "allin":
-                return done(vs_shove(spot, b.idx, raiser=a.idx, raise_to=a.amount))
+                return done(vs_shove(spot, b.idx, raiser=a.idx, raise_to=a.amount, callers=flats))
             return done(cold_vs_3bet(spot, a.idx, a.amount, b.idx, b.amount))
         last = raises[-1]
         adv = cold_vs_3bet(spot, raises[0].idx, raises[0].amount, last.idx, last.amount)
         adv.warnings.append("several raises in front: only AA/KK are comfortable here")
         return done(adv)
 
-    later = [r for r in raises if r.idx != hero and raises.index(r) > max(
-        i for i, x in enumerate(raises) if x.idx == hero)]
+    hero_last = max(i for i, x in enumerate(raises) if x.idx == hero)
+    later = [r for r in raises if r.idx != hero and raises.index(r) > hero_last]
+    # hero's raise was a re-raise when another player had raised before it
+    before = [x.idx for x in raises[:hero_last] if x.idx != hero]
+    reraised = before[-1] if before else None
     if len(later) == 1:
         r = later[0]
         if r.kind == "allin":
-            return done(vs_shove(spot, r.idx, hero_open=hero_raise))
-        return done(vs_3bet(spot, r.idx, r.amount, hero_raise))
+            return done(vs_shove(spot, r.idx, hero_open=hero_raise, callers=flats, reraised=reraised))
+        return done(vs_3bet(spot, r.idx, r.amount, hero_raise, reraised=reraised))
     if not later:
         adv = Advice("WAIT", "standard", "you raised and nobody has re-raised yet")
         return done(adv)

@@ -42,6 +42,11 @@ def stand_in_coach(session):
             "headline": {"verb": "FOLD", "tone": "fold", "follow": {"kind": "fold"}}}
 
 
+def saved_files(folder) -> list:
+    """The session files in a folder (beside them: the .bak copies and the lock of the running program)."""
+    return sorted(name for name in os.listdir(folder) if name.endswith(".json"))
+
+
 class ServerCase(unittest.TestCase):
     """A running server and the three calls the page makes."""
 
@@ -368,7 +373,8 @@ class Refusals(ServerCase):
 
         with mock.patch.object(app.session, "apply", half_a_change), redirect_stderr(io.StringIO()) as shown:
             answer = self.post({"op": "level_up"})
-        self.assertIn("ZeroDivisionError", answer["error"]["message"])
+        self.assertEqual(answer["error"]["message"], "The program failed on that change.")     # no Python in it
+        self.assertIn("Nothing was changed", answer["error"]["fix"])
         self.assertIn("ZeroDivisionError", shown.getvalue())        # a fault is worth a traceback
         self.assertEqual((answer["view"]["rev"], answer["view"]["table"]["button"]), (view["rev"], 3))
         self.assertEqual(self.do("level_up")["rev"], view["rev"] + 1)   # and the table goes on working
@@ -550,8 +556,9 @@ class Advice(ServerCase):
             self.server.app.coach = coach
             answer = self.advice(rev)
             self.assertEqual((answer["status"], answer["rev"]), ("none", rev), text)
-            self.assertIn(text, answer["error"])
-            self.assertIn(text, answer["spot"])
+            self.assertIn(text, answer["error"])                # the detail, for whoever looks into it
+            self.assertNotIn("Error", answer["spot"])           # what the page says is plain words
+            self.assertIn("cannot answer this spot", answer["spot"])
             rev = self.do("set_config", unit="bb")["rev"]       # a new revision: the coach is asked again
         self.assertEqual(self.view()["hand"]["needs"], "action")
 
@@ -629,7 +636,7 @@ class ThePageAndTheServer(ServerCase):
     def test_a_number_too_big_gets_the_usual_refusal(self):
         view = self.do("new_session", size=6)
         answer = self.post({"op": "set_stack", "seat": 2, "text": "1e999"})
-        self.assertIn("could not be read", answer["error"]["message"])
+        self.assertIn("Cannot read '1e999' as an amount", answer["error"]["message"])
         self.assertNotIn("program failed", answer["error"]["message"])
         self.assertEqual(answer["view"]["rev"], view["rev"])
 
@@ -703,7 +710,7 @@ class Saving(ServerCase):
         view = self.do("act", seat=4, kind="raise", amount="2.2bb")
         self.assertEqual(self.advice(view["rev"])["status"], "ready")
         before = self.view()
-        self.assertEqual(sorted(os.listdir(self.folder)), ["app.json", "tournament.json"])
+        self.assertEqual(saved_files(self.folder), ["app.json", "tournament.json"])
 
         self.restart()
         self.assertEqual(self.view(), before)
@@ -721,7 +728,7 @@ class Saving(ServerCase):
         self.do("rename", seat=2, name="Spinner")
         self.do("set_mode", mode="aof")
         before = self.view()
-        self.assertEqual(sorted(os.listdir(self.folder)), ["aof.json", "app.json", "spin.json", "tournament.json"])
+        self.assertEqual(saved_files(self.folder), ["aof.json", "app.json", "spin.json", "tournament.json"])
 
         self.restart()
         self.assertEqual(self.view(), before)                                   # the mode on screen is remembered
@@ -733,7 +740,7 @@ class Saving(ServerCase):
         self.view()
         self.advice(self.view()["rev"])
         self.post({"op": "act", "kind": "fold"})        # refused
-        self.assertEqual(os.listdir(self.folder), [])
+        self.assertEqual(saved_files(self.folder), [])
 
 
 # --------------------------------------------------------------------------
@@ -863,6 +870,313 @@ class TheLog(ServerCase):
                                '"POST /api/intent HTTP/1.1" 200'), lines):
             self.assertIn(part, line)
             self.assertRegex(line, r"^\d\d:\d\d:\d\d .* \d+ ms$")
+
+
+# ==========================================================================
+# The review round: one class per finding of the reports (ROB, the package report, the addendum)
+# ==========================================================================
+
+class Rob12StaleRevision(ServerCase):
+    """ROB-12 (contract 9): an intent made on a view that is no longer the table changes nothing and answers 409."""
+
+    def send(self, intent):
+        status, _, body = self.request("POST", "/api/intent", json.dumps(intent).encode(),
+                                       {"Content-Type": "application/json"})
+        return status, json.loads(body)
+
+    def test_rob_12_the_old_tab(self):
+        self.do("new_session", size=6, start_stack=10000, level="100/200")
+        old = self.view()["rev"]                                    # a tab left open between hands
+        self.do("deal", hero_cards="AhAs")
+        now = self.do("act", seat=6, kind="raise", amount=500)      # the current tab: hero to act with aces
+        status, answer = self.send({"op": "deal", "rev": old})      # N pressed in the old tab
+        self.assertEqual(status, 409)
+        self.assertEqual(answer["error"]["code"], "stale")
+        self.assertTrue(answer["error"]["message"] and answer["error"]["fix"])
+        self.assertEqual(answer["view"], {**now, "toast": None})    # nothing changed, and the table as it is comes back
+        self.assertEqual(self.view()["hand"]["hero_cards"], ["Ah", "As"])
+        self.assertEqual(self.view()["history"], [])
+
+    def test_rob_12_the_current_revision_and_no_revision(self):
+        view = self.do("new_session", size=6)
+        status, answer = self.send({"op": "rename", "seat": 2, "name": "Al", "rev": view["rev"]})
+        self.assertEqual((status, answer["view"]["rev"]), (200, view["rev"] + 1))
+        status, answer = self.send({"op": "rename", "seat": 2, "name": "Bo", "rev": view["rev"]})     # typed on the old rev
+        name = answer["view"]["table"]["seats"][1]["name"]
+        self.assertEqual((status, answer["error"]["code"], name), (409, "stale", "Al"))
+        status, answer = self.send({"op": "rename", "seat": 2, "name": "Cy"})                         # no rev: as before
+        self.assertEqual((status, answer["view"]["table"]["seats"][1]["name"]), (200, "Cy"))
+        for rev in ("x", [1], True, -1, view["rev"] + 99):
+            status, answer = self.send({"op": "rename", "seat": 2, "name": "Di", "rev": rev})
+            self.assertEqual((status, answer["error"]["code"]), (409, "stale"), rev)
+        status, answer = self.send({"op": "set_config", "unit": "bb", "rev": self.view()["rev"]})     # rev is not a setting
+        self.assertEqual((status, answer["view"]["unit"]), (200, "bb"))
+        status, answer = self.send({"op": "new_session", "mode": "spin", "rev": self.view()["rev"]})  # a mode change inside
+        self.assertEqual((status, answer["view"]["mode"]), (200, "spin"))
+
+    def test_rob_12_a_refusal_for_another_reason_is_still_a_200(self):
+        view = self.do("new_session", size=6)
+        status, answer = self.send({"op": "act", "kind": "fold", "rev": view["rev"]})
+        self.assertEqual((status, "code" in answer["error"]), (200, False))
+
+
+class Rob3OneCopyPerFolder(ServerCase):
+    """ROB-3 and the package report (d): a second start on the same folder opens the running copy's page and ends."""
+
+    def lock(self):
+        with open(os.path.join(self.folder, server.LOCK_NAME), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_rob_3_a_running_copy_leaves_its_lock_and_answers_ping(self):
+        lock = self.lock()
+        self.assertEqual((lock["pid"], lock["port"], lock["app"]), (os.getpid(), self.port, server.APP_NAME))
+        ping = self.get_json("/api/ping")
+        self.assertEqual((ping["app"], ping["pid"], ping["port"]), (server.APP_NAME, os.getpid(), self.port))
+        self.assertEqual(ping["folder"], server.same_folder(self.folder))
+        self.assertEqual(server.running_copy(self.folder), f"http://127.0.0.1:{self.port}/")
+        self.stop()                                                 # a clean stop takes the lock away
+        self.assertNotIn(server.LOCK_NAME, os.listdir(self.folder))
+        self.assertIsNone(server.running_copy(self.folder))
+
+    def test_rob_3_a_second_start_steps_aside_and_touches_nothing(self):
+        self.do("new_session", size=6)
+        self.do("rename", seat=2, name="Bob")
+        with open(os.path.join(self.folder, "tournament.json"), "w", encoding="utf-8") as fh:
+            fh.write("{damaged")                                    # a second copy must not set this aside either
+        before = sorted(os.listdir(self.folder))
+        with self.assertRaises(server.AlreadyRunning) as caught:
+            server.start_server(0, folder=self.folder)
+        self.assertEqual(caught.exception.address, f"http://127.0.0.1:{self.port}/")
+        self.assertIn("already running", str(caught.exception))
+        self.assertEqual(sorted(os.listdir(self.folder)), before)
+        self.assertEqual(self.do("rename", seat=3, name="Cy")["table"]["seats"][1]["name"], "Bob")    # the first copy goes on
+
+    def test_package_d_main_prints_already_running_and_opens_the_page(self):
+        address = f"http://127.0.0.1:{self.port}/"
+        for open_browser in (True, False):
+            with mock.patch.object(server.webbrowser, "open") as opened, \
+                    mock.patch.object(server.TableServer, "serve_forever", side_effect=AssertionError("served twice")), \
+                    redirect_stdout(io.StringIO()) as printed:
+                code = server.main(port=self.port, open_browser=open_browser, folder=self.folder)
+            self.assertEqual(code, 0)
+            self.assertEqual(printed.getvalue().strip(), f"Poker Coach is already running at {address}")
+            self.assertEqual(opened.call_count, 1 if open_browser else 0)
+            if open_browser:
+                opened.assert_called_once_with(address)
+        with mock.patch.object(server, "main", side_effect=server.main), \
+                mock.patch.object(server.webbrowser, "open"), redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(cli.main(["app", "--folder", self.folder, "--port", "0"]), 0)        # the command line too
+        self.assertIn("already running", printed.getvalue())
+
+    def test_package_d_without_the_lock_the_port_asked_for_is_tried(self):
+        os.remove(os.path.join(self.folder, server.LOCK_NAME))      # the lock was lost, the copy runs on
+        self.assertIsNone(server.running_copy(self.folder))
+        with self.assertRaises(server.AlreadyRunning) as caught:
+            server.start_server(self.port, folder=self.folder)
+        self.assertEqual(caught.exception.address, f"http://127.0.0.1:{self.port}/")
+        other = tempfile.mkdtemp(prefix="menlo-other-")             # the same port asked for with other tables: next port
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        second = server.start_server(self.port, folder=other)
+        self.addCleanup(second.server_close)
+        self.assertNotEqual(second.server_port, self.port)
+
+    def test_rob_3_another_folder_starts_a_copy_of_its_own(self):
+        other = tempfile.mkdtemp(prefix="menlo-other-")
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        second = server.start_server(0, folder=other)
+        self.addCleanup(second.server_close)
+        self.assertNotEqual(second.server_port, self.port)
+        self.assertIsNone(server.running_copy(tempfile.gettempdir()))
+
+    def test_rob_3_a_lock_nobody_answers_for_is_taken_over(self):
+        self.do("new_session", size=6)
+        self.do("rename", seat=2, name="Bob")
+        port = self.port
+        self.server.lock_path = None                                # as if the program had been killed: the lock stays
+        self.stop()
+        self.assertEqual(self.lock()["port"], port)
+        self.assertIsNone(server.running_copy(self.folder))
+        self.start()                                                # the next start takes it over
+        self.assertEqual((self.lock()["port"], self.lock()["pid"]), (self.port, os.getpid()))
+        self.assertEqual(self.view()["table"]["seats"][1]["name"], "Bob")
+
+    def test_rob_3_a_lock_that_points_at_something_else_is_stale(self):
+        other_folder = tempfile.mkdtemp(prefix="menlo-other-")
+        self.addCleanup(shutil.rmtree, other_folder, ignore_errors=True)
+        silent = socket.socket()                                    # another program on the port in the lock
+        self.addCleanup(silent.close)
+        silent.bind(("127.0.0.1", 0))
+        silent.listen(1)
+        for port in (self.port,                                     # a copy of the program, but with other tables
+                     silent.getsockname()[1], 0, 70000, "x", None):
+            with open(os.path.join(other_folder, server.LOCK_NAME), "w", encoding="utf-8") as fh:
+                json.dump({"port": port, "pid": 1}, fh)
+            with mock.patch.object(server, "PING_SECONDS", 0.2):
+                self.assertIsNone(server.running_copy(other_folder), port)
+        with open(os.path.join(other_folder, server.LOCK_NAME), "w", encoding="utf-8") as fh:
+            fh.write("not json")
+        self.assertIsNone(server.running_copy(other_folder))
+
+
+class Rob14BodyTooBig(ServerCase):
+    def test_rob_14_the_body_is_read_before_the_413(self):
+        """A sender that writes its megabytes slowly still gets the answer, not a broken connection."""
+        size = server.MAX_BODY * 2
+        with socket.create_connection(("127.0.0.1", self.port), timeout=20) as sock:
+            sock.sendall(f"POST /api/intent HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
+                         f"Content-Type: application/json\r\nContent-Length: {size}\r\n\r\n".encode())
+            piece = b" " * 65536
+            for _ in range(size // len(piece) + 1):                 # every piece is accepted: nothing breaks off
+                sock.sendall(piece[:max(0, min(len(piece), size))])
+                size -= len(piece)
+                if size <= 0:
+                    break
+            answer = b""
+            while True:
+                got = sock.recv(65536)
+                if not got:
+                    break
+                answer += got
+        self.assertTrue(answer.startswith(b"HTTP/1.0 413") or answer.startswith(b"HTTP/1.1 413"), answer[:40])
+        self.assertIn(b"The request is too big.", answer)
+        self.assertEqual(self.view()["rev"], 0)                     # and the program goes on
+
+    def test_rob_14_a_body_beyond_what_is_read_is_still_refused(self):
+        with mock.patch.object(server, "MAX_DROPPED", 1_500_000):
+            for _ in range(3):
+                try:
+                    status, _, _ = self.request("POST", "/api/intent", b" " * (server.MAX_BODY * 3))
+                except (BrokenPipeError, ConnectionError):
+                    status = 413                                    # the sender was still writing: that is the refusal
+                self.assertEqual(status, 413)
+
+
+class SavingThroughTheServer(ServerCase):
+    """The package report (a): a change that could not be saved is made, and the page is told so; it is not a refusal."""
+
+    def test_package_a_made_not_saved_yet_is_not_a_refusal(self):
+        from poker_coach.app import model
+        view = self.do("new_session", size=6)
+        real = os.replace
+
+        def held(src, dst):
+            if str(src).endswith(".tmp"):
+                raise PermissionError(13, "Access is denied")
+            return real(src, dst)
+
+        with mock.patch.object(model, "WRITE_WAIT", 0), mock.patch.object(model.os, "replace", held):
+            answer = self.post({"op": "rename", "seat": 2, "name": "Bob"})
+        self.assertNotIn("error", answer)
+        self.assertEqual((answer["view"]["rev"], answer["view"]["table"]["seats"][1]["name"]), (view["rev"] + 1, "Bob"))
+        self.assertIn("Made, not saved yet", answer["view"]["toast"]["text"])
+        self.assertTrue(answer["view"]["unsaved"])
+        self.assertTrue(self.view()["unsaved"])
+        view = self.do("rename", seat=3, name="Cy")                 # the next change saves both
+        self.assertEqual(view["unsaved"], "")
+        self.restart()
+        self.assertEqual([seat["name"] for seat in self.view()["table"]["seats"]][1:3], ["Bob", "Cy"])
+
+    def test_rob_4_a_file_set_aside_is_told_in_the_first_view(self):
+        self.do("new_session", size=6)
+        self.stop()
+        for name in os.listdir(self.folder):
+            if name.endswith(".bak"):
+                os.remove(os.path.join(self.folder, name))
+        with open(os.path.join(self.folder, "tournament.json"), "w", encoding="utf-8") as fh:
+            fh.write("{damaged")
+        self.start()
+        view = self.view()                                          # the page's first request
+        self.assertTrue(view["first_run"])
+        self.assertIn("tournament.json could not be read and was set aside as tournament.json.unreadable-",
+                      view["toast"]["text"])
+
+    def test_rob_4_a_held_file_stops_the_start_with_a_sentence(self):
+        from poker_coach.app import model
+        self.do("new_session", size=6)
+        self.stop()
+        real = open
+
+        def held(path, *args, **kwargs):
+            if str(path).endswith("tournament.json"):
+                raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(model, "READ_WAIT", 0), mock.patch("builtins.open", held), \
+                redirect_stderr(io.StringIO()) as shown:
+            code = cli.main(["app", "--folder", self.folder, "--port", "0", "--no-browser"])
+        self.assertEqual(code, 2)
+        self.assertIn("Cannot read", shown.getvalue())
+        self.assertIn("Close the program that holds the file and start again", shown.getvalue())
+        self.assertEqual(saved_files(self.folder), ["app.json", "tournament.json"])    # nothing was renamed
+
+
+class Rob9NoPythonInARefusal(ServerCase):
+    verbose = True
+
+    def test_rob_9_the_detail_goes_to_the_verbose_log(self):
+        with redirect_stderr(io.StringIO()) as shown:
+            self.do("new_session", size=6)
+            deal = self.do("deal")
+            answer2 = self.post({"op": "close_round", "callers": 7})
+        for reply in (answer2,):
+            text = reply["error"]["message"] + reply["error"]["fix"]
+            self.assertIn("could not be read", text)
+            for word in ("Error", "object", "iterable"):
+                self.assertNotIn(word, text)
+        self.assertIn("unreadable request: close_round: TypeError", shown.getvalue())
+        self.assertEqual(answer2["view"]["rev"], deal["rev"])
+
+
+class PackageCommandLine(unittest.TestCase):
+    """The package report: the sync file is read as UTF-8, and a name the console cannot show does not stop a command."""
+
+    def setUp(self):
+        from poker_coach import state
+        self.folder = tempfile.mkdtemp(prefix="menlo-cli-")
+        self.addCleanup(shutil.rmtree, self.folder, ignore_errors=True)
+        patch = mock.patch.object(state, "STATE_PATH", os.path.join(self.folder, "current.json"))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_package_e_the_sync_file_is_read_as_utf_8(self):
+        path = os.path.join(self.folder, "snapshot.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"blinds": [300, 600, 75], "button": 1, "hero": 2,
+                       "seats": {"1": ["Jos\u00e9", 21000], "2": ["HERO", 12400]}}, fh, ensure_ascii=False)
+        seen = {}
+        real = open
+
+        def watching(file, *args, **kwargs):
+            if str(file) == path:
+                seen["encoding"] = kwargs.get("encoding")
+            return real(file, *args, **kwargs)
+
+        with mock.patch("builtins.open", watching), redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(cli.main(["new", "--name", "t"]), 0)
+            self.assertEqual(cli.main(["sync", "--file", path]), 0)
+        self.assertEqual(seen["encoding"], "utf-8")                 # not the system's code page
+        self.assertIn("Jos\u00e9", printed.getvalue())
+
+    def test_package_e_a_name_outside_the_code_page_is_printed_with_an_escape(self):
+        piped = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")   # Windows, output piped: the default would raise
+        with mock.patch.object(sys, "stdout", piped):
+            self.assertEqual(cli.main(["new", "--name", "t"]), 0)
+            code = cli.main(["sync", json.dumps({"blinds": [300, 600, 75], "button": 1, "hero": 2,
+                                                 "seats": {"1": ["\u0141ukasz", 21000], "2": ["HERO", 12400]}})])
+            piped.flush()
+            shown = piped.buffer.getvalue().decode("cp1252")
+        self.assertEqual(code, 0)
+        self.assertIn("\\u0141ukasz", shown)
+
+    def test_rob_7_the_engine_needs_nothing_newer_than_python_3_9(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(cli.__file__)), "evaluator.py")
+        with open(path, encoding="utf-8") as fh:
+            self.assertNotIn(".bit_count()", fh.read())
+        from poker_coach.cards import parse_cards
+        from poker_coach.evaluator import evaluate
+        value = lambda cards: evaluate(parse_cards(cards))
+        self.assertGreater(value("AhKhQhJhTh2c3d"), value("AhAdAsAc2h3d4c"))        # a straight flush beats quads
+        self.assertGreater(value("Ah9h7h4h2hKcKd"), value("AhKdQsJcTh2c3d"))        # a flush beats a straight
 
 
 if __name__ == "__main__":

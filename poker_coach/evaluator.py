@@ -47,7 +47,7 @@ def _straight_high(mask: int) -> int:
 STRAIGHT_HI = [_straight_high(m) for m in range(8192)]
 _FLUSH_VAL = [0] * 8192
 for _m in range(8192):
-    if _m.bit_count() >= 5:
+    if bin(_m).count("1") >= 5:             # (int.bit_count is Python 3.10; this line keeps 3.9 starting)
         _st = STRAIGHT_HI[_m]
         _FLUSH_VAL[_m] = (8 << 24) | _st if _st >= 0 else (5 << 24) | _topn(_m, 5)
 

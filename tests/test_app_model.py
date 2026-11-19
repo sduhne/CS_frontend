@@ -90,6 +90,11 @@ def against_the_rules(s, seat, kind, to=None):
     return False
 
 
+def saved_files(folder) -> list:
+    """The session files in a folder (beside them: the .bak copies and the lock of a running program)."""
+    return sorted(name for name in os.listdir(folder) if name.endswith(".json"))
+
+
 def refused(s, op, **args):
     """The error of an intent that must be refused; the session must be untouched."""
     before = json.dumps(s.data, sort_keys=True)
@@ -718,8 +723,9 @@ class Edits(unittest.TestCase):
         self.assertEqual([seats[n]["stale"] for n in (lj, 2, 3, 4)], [True] * 4)        # still in: unsure
         self.assertEqual([seats[n]["stack"] for n in range(1, 7)], [10000] * 6)
         self.assertEqual(view["table"]["button"], 3)                                    # the button moved on
-        self.assertTrue(view["history"][0]["skipped"])
-        self.assertEqual(view["history"][0]["net"], 0)
+        self.assertFalse(view["history"][0]["skipped"])                                 # hero folded: his hand is complete
+        self.assertIn("Result: you folded", view["history"][0]["text"])
+        self.assertEqual((view["history"][0]["net"], view["history"][0]["did"]), (0, "fold"))
 
     def test_a_stack_corrected_during_the_hand(self):
         s = table_a()
@@ -731,20 +737,22 @@ class Edits(unittest.TestCase):
         self.assertEqual(stack(s, LJ), 8000)
 
     def test_button_corrected_during_the_hand(self):
+        """ROB-2: before the first action the hand is posted again from the new button; after it the move is refused."""
         s = table_a()
         s.do("set_cards", hero="AKs")
-        play(s, "4 raise 500")
         view = s.do("button_step", step=-1)             # the button is really on seat 6
         self.assertEqual(view["table"]["button"], 6)
+        self.assertIn("posted again", view["toast"]["text"])
         st = state(s)
-        self.assertEqual((st.labels[HERO], st.labels[4]), ("SB", "HJ"))
-        self.assertEqual([(e["seat"], e["kind"], e["to"], e["auto"]) for e in st.log],
-                         [(3, "fold", 0, True), (4, "raise", 500, False)])      # the raise stayed with its seat
-        self.assertEqual(st.pot_total(), 800)
+        self.assertEqual((st.labels[HERO], st.labels[4], st.blind[1], st.blind[2]), ("SB", "HJ", 100, 200))
         self.assertEqual(view["hand"]["hero_class"], "AKs")
-        view = s.do("button_step", step=1)
-        view = s.do("button_step", step=1)              # on seat 2 the raiser would be the big blind
-        self.assertIn("dropped", view["toast"]["text"])
+        play(s, "4 raise 500")
+        before = line_of(s)
+        for op, args in (("button_step", {"step": 1}), ("button_step", {"step": -1}), ("set_button", {"seat": 2})):
+            err = refused(s, op, **args)
+            self.assertIn("Undo to before the first action", err.fix)
+            self.assertIn("Ctrl+Backspace", err.fix)
+        self.assertEqual((line_of(s), s.view()["table"]["button"]), (before, 6))
 
     def test_remove_event_goes_back_to_the_default(self):
         s = table_a()
@@ -1282,7 +1290,9 @@ class TableAndTournament(unittest.TestCase):
         self.assertEqual((view["strip"]["avg_stack"], view["strip"]["avg_bb"], view["strip"]["icm"]),
                          (52083, 86.8, "on"))
         view = s.do("set_tournament", field="payouts", text="1:1000 2:600 4-6:200")
-        self.assertEqual((view["strip"]["icm"], view["strip"]["payouts"][:3]), ("exact", [1000, 600, 200]))
+        self.assertEqual((view["strip"]["icm"], view["strip"]["payouts"][:3]), ("on", [1000, 600, 200]))   # 6 of 75 places
+        view = s.do("set_tournament", field="payouts", text="1:1000 2:600 4-75:200")
+        self.assertEqual((view["strip"]["icm"], len(view["strip"]["payouts"])), ("exact", 75))
         self.assertEqual(s.do("set_tournament", payouts="auto")["strip"]["icm"], "on")
         view = s.do("set_tournament", avg_stack="40bb")     # read from the lobby: it wins
         self.assertEqual(view["strip"]["avg_stack"], 24000)
@@ -1301,6 +1311,7 @@ class TableAndTournament(unittest.TestCase):
 
     def test_settings(self):
         s = Session(save=False)
+        s.do("new_session")
         view = s.do("set_config", style="maxev", plan="all-in or fold", opponents="loose", bounty=True)
         self.assertEqual((view["strip"]["style"], view["strip"]["plan"], view["strip"]["opponents"],
                           view["strip"]["bounty"]), ("maxev", "allin", "loose", True))
@@ -1486,7 +1497,7 @@ class UndoAndSaving(unittest.TestCase):
         s.do("deal", hero_cards="AhKd")
         s.do("act", seat=4, kind="raise", amount="2.2bb")
         before = s.view()
-        self.assertEqual(sorted(os.listdir(self.folder)), ["app.json", "tournament.json"])
+        self.assertEqual(saved_files(self.folder), ["app.json", "tournament.json"])
         again = Session(self.folder)
         self.assertEqual(again.view(), before)
         self.assertEqual(again.do("undo")["hand"]["line"][-1]["kind"], "cards")     # the undo history is saved too
@@ -1500,7 +1511,7 @@ class UndoAndSaving(unittest.TestCase):
         s.do("rename", seat=2, name="Spinner")
         s.do("set_mode", mode="aof")
         s.do("deal")
-        self.assertEqual(sorted(os.listdir(self.folder)), ["aof.json", "app.json", "spin.json", "tournament.json"])
+        self.assertEqual(saved_files(self.folder), ["aof.json", "app.json", "spin.json", "tournament.json"])
         again = Session(self.folder)
         self.assertEqual(again.view()["mode"], "aof")               # the mode on screen is remembered
         self.assertEqual(again.view()["hand"]["no"], 1)
@@ -1511,17 +1522,20 @@ class UndoAndSaving(unittest.TestCase):
 
     def test_modes_keep_their_sessions_in_memory_too(self):
         s = Session(save=False)
+        s.do("new_session")
         s.do("rename", seat=2, name="Tourney")
         s.do("set_mode", mode="spin")
-        s.do("rename", seat=2, name="Spinner")
+        s.do("rename", seat=2, name="Spinner")           # the first change: the table undo stops at
+        s.do("rename", seat=2, name="Spinner 2")
         view = s.do("undo")                             # each mode has its own undo history
-        self.assertEqual((view["table"]["seats"][1]["name"], view["can"]), ("", {"undo": False, "redo": True}))
+        self.assertEqual((view["table"]["seats"][1]["name"], view["can"]), ("Spinner", {"undo": False, "redo": True}))
         view = s.do("set_mode", mode="tournament")
         self.assertEqual((view["table"]["seats"][1]["name"], view["can"]["undo"]), ("Tourney", True))
         self.assertEqual(s.do("set_mode", mode="spin")["can"], {"undo": False, "redo": True})
 
     def test_the_revision_goes_up_with_every_accepted_intent(self):
         s = Session(self.folder)
+        s.do("new_session")
         rev = s.rev
         s.do("deal")
         s.do("set_config", unit="bb")
@@ -1538,7 +1552,7 @@ class UndoAndSaving(unittest.TestCase):
             fh.write("{not json")
         again = Session(self.folder)
         self.assertIsNone(again.view()["hand"])
-        self.assertIn("tournament.json.unreadable", os.listdir(self.folder))
+        self.assertEqual(len([n for n in os.listdir(self.folder) if n.startswith("tournament.json.unreadable-")]), 1)
 
 
 # --------------------------------------------------------------------------
@@ -1752,10 +1766,1374 @@ class ForThePage(unittest.TestCase):
                 self.assertEqual(model.default_folder(), folder)
                 s = Session()
                 s.do("new_session", size=6)
-                self.assertEqual(sorted(os.listdir(folder)), ["app.json", "tournament.json"])
+                self.assertEqual(saved_files(folder), ["app.json", "tournament.json"])
         with mock.patch.dict(os.environ):
             os.environ.pop("POKER_COACH_APP", None)
             self.assertTrue(model.default_folder().endswith(os.path.join("tournament", "app")))
+
+
+# ==========================================================================
+# The review round.  One class per finding of the reports (OPS, POST, ROB, VIS and the package
+# report), named after it; the reports are in docs/table-app/ once they are filed.
+# ==========================================================================
+
+def tournament(size=6, level="100/200/0", stacks=None, button=1, **fields):
+    """A tournament set up in one intent, as the page's set-up form does it; no hand dealt."""
+    s = Session(save=False)
+    s.do("new_session", mode="tournament", size=size, start_stack=10000, level=level, button=button, **fields)
+    if stacks:
+        s.do("set_stacks", values=stacks)
+    return s
+
+
+def toast_of(view) -> str:
+    return view["toast"]["text"] if view["toast"] else ""
+
+
+def line_of(s) -> list:
+    """The hand line as text; an action nobody typed carries a star."""
+    return [item["text"] + ("*" if item.get("auto") else "") for item in s.view()["hand"]["line"]]
+
+
+class Rob5NotANumber(unittest.TestCase):
+    """ROB-5: nan, inf and 1e999 are not amounts, typed or sent as numbers; nothing of them is saved."""
+
+    def test_rob_5_the_parser_refuses_what_is_not_finite(self):
+        for typed in ("nan", "inf", "-inf", "infinity", "1e999", "1e3", float("nan"), float("inf"), 10 ** 400):
+            for step in (1, 0.1, 0.01):
+                with self.assertRaises(AmountError, msg=(typed, step)):
+                    parse_amount(typed, bb=1, current=5, step=step)
+
+    def test_rob_5_no_field_takes_it(self):
+        s = aof()
+        for op, args in (("set_stack", {"seat": 1, "text": "nan"}), ("set_stacks", {"values": ["nan", "inf"]}),
+                         ("seat_player", {"seat": 2, "stack": "nan"}),
+                         ("set_config", {"tally": {"hands": float("inf")}}),
+                         ("set_config", {"tally": {"net_bb": float("nan")}}),
+                         ("set_config", {"tally": {"net_bb": "1e999"}})):
+            self.assertTrue(refused(s, op, **args).message, (op, args))
+        t = tournament()
+        for op, args in (("set_tournament", {"buyin": "inf"}), ("set_tournament", {"buyin": "nan"}),
+                         ("set_tournament", {"payouts": "nan"}), ("set_tournament", {"payouts": "1:" + "9" * 60}),
+                         ("set_tournament", {"avg_stack": float("inf")}),
+                         ("new_session", {"start_stack": "nan"}), ("new_session", {"hero_stack": "inf"})):
+            self.assertTrue(refused(t, op, **args).message, (op, args))
+        json.dumps(t.view(), allow_nan=False)
+        json.dumps(s.view(), allow_nan=False)
+
+    def test_rob_5_the_tally_still_takes_a_loss(self):
+        s = aof()
+        s.do("set_config", tally={"net_bb": -12.5, "hands": 40})
+        self.assertEqual(s.view()["strip"]["tally"]["net_bb"], -12.5)
+
+
+class Rob6DotThousands(unittest.TestCase):
+    """ROB-6: 12.500 is twelve thousand five hundred where chips are whole; 12.5 is never rounded to 13."""
+
+    def test_rob_6_a_dot_before_three_digits_is_thousands(self):
+        for typed, value in (("12.500", 12500), ("23.450", 23450), ("7.250", 7250), ("100.000", 100000),
+                             ("1.300.000", 1300000), ("12,500", 12500), ("+3.000", 13000), ("12.5k", 12500),
+                             ("12,5k", 12500), ("2.2bb", 1320), ("1300", 1300)):
+            self.assertEqual(parse_amount(typed, bb=600, current=10000), value, typed)
+
+    def test_rob_6_a_bare_fraction_is_refused_with_the_spellings_that_work(self):
+        for typed in ("12.5", "12,5", "0.5", "12.50", "0.500", "1234.567"):
+            with self.assertRaises(AmountError, msg=typed) as caught:
+                parse_amount(typed, bb=600)
+            self.assertIn("k", caught.exception.fix, typed)
+        with self.assertRaises(AmountError) as caught:
+            parse_amount("12.5", bb=600)
+        self.assertEqual(caught.exception.fix, "Type 12500, or 12.5k, or 12.5bb.")
+        with self.assertRaises(AmountError) as caught:
+            parse_amount("12,5")                                    # no blinds known here: no bb spelling offered
+        self.assertEqual(caught.exception.fix, "Type 12500, or 12,5k.")
+
+    def test_rob_6_big_blind_tables_keep_the_decimal(self):
+        self.assertEqual(parse_amount("7.5", bb=1, step=0.1), 7.5)
+        self.assertEqual(parse_amount("7.500", bb=1, step=0.1), 7.5)
+        s = aof()
+        s.do("set_stack", seat=1, text="5.5")
+        self.assertEqual(stack(s, 1), 5.5)
+
+    def test_rob_6_stacks_blinds_average_entrants_and_the_set_up_form(self):
+        s = tournament(size=6)
+        s.do("set_stacks", values=["12.500", "23.450", "8.900", "31.000", "5.250", "17.800"])
+        self.assertEqual([stack(s, n) for n in range(1, 7)], [12500, 23450, 8900, 31000, 5250, 17800])
+        view = s.do("set_level", text="1.000/2.000/250")
+        self.assertEqual([view["strip"]["level"][k] for k in ("sb", "bb", "ante")], [1000, 2000, 250])
+        self.assertEqual(s.do("set_tournament", avg_stack="45.300")["strip"]["avg_stack"], 45300)
+        self.assertEqual(s.do("set_tournament", entrants="1.500")["strip"]["entrants"], 1500)
+        self.assertIn("fraction", refused(s, "set_stack", seat=2, text="12.5").message)
+        form = Session(save=False)
+        form.do("new_session", mode="tournament", size=6, start_stack="20.000", hero_stack="12.900", entrants="1.500")
+        self.assertEqual((stack(form, 1), stack(form, 2), form.view()["strip"]["entrants"]), (12900, 20000, 1500))
+
+
+class Rob9Limits(unittest.TestCase):
+    """ROB-9: one ceiling for amounts, one for counts, and a prize list that cannot fill the memory."""
+
+    def test_rob_9_amounts_and_counts_have_a_ceiling(self):
+        s = tournament()
+        self.assertEqual(s.do("set_stack", seat=2, text="1000000000000")["table"]["seats"][1]["stack"], 10 ** 12)
+        for op, args in (("set_stack", {"seat": 2, "text": "1000000000001"}), ("set_stack", {"seat": 2, "text": 1e308}),
+                         ("set_tournament", {"entrants": "9" * 24}), ("set_tournament", {"entrants": "10000001"}),
+                         ("set_tournament", {"paid": 1e9}), ("remaining", {"value": "20000000"}),
+                         ("set_tournament", {"payouts": "1-100000000:200"}),
+                         ("set_tournament", {"payouts": "1:1000 2:600 3-30000000:20"})):
+            err = refused(s, op, **args)
+            self.assertTrue(err.message and err.fix, (op, args))
+        self.assertEqual(s.do("set_tournament", entrants="10000000")["strip"]["entrants"], 10 ** 7)
+        self.assertEqual(len(parse_payouts("1:1000 2-100000:5")), 100000)
+
+
+class Ops18Blinds(unittest.TestCase):
+    """OPS-18 and VIS-17 (17): each field refuses in its own words; an ante of one big blind is questioned."""
+
+    def test_ops_18_unreadable_blinds_get_the_blinds_sentence(self):
+        s = tournament()
+        for typed in ("300-600-75", "abc", "x/y", "300/600/75/10"):
+            err = refused(s, "set_level", text=typed)
+            self.assertIn("as blinds", err.message, typed)
+            self.assertIn("Type blinds like 300/600/75", err.fix, typed)
+            self.assertNotIn("66%", err.fix)
+        self.assertIn("300/600/75", refused(s, "set_level", sb="x", bb="600").fix)
+
+    def test_ops_18_an_ante_as_big_as_the_big_blind_is_taken_and_questioned(self):
+        s = tournament(level="300/600/75")                          # every player antes, as GGPoker has it
+        view = s.do("set_level", text="250/500/500")
+        level = view["strip"]["level"]
+        self.assertEqual((level["ante"], level["ante_kind"]), (500, "player"))      # accepted as typed
+        self.assertEqual(toast_of(view), "Ante 500 from every player. A big-blind ante? Shift+A switches it")
+        self.assertEqual(s.do("set_ante_kind")["strip"]["level"]["ante_kind"], "bb")
+        self.assertNotIn("Shift+A", toast_of(s.do("set_level", text="300/600/75")))
+
+    def test_vis_17_each_field_has_its_own_sentence(self):
+        s = tournament()
+        self.assertEqual(refused(s, "set_tournament", field="paid", text="x").fix,
+                         "Places paid is a whole number, like 75.")
+        self.assertEqual(refused(s, "set_tournament", field="remaining", text="many").fix,
+                         "Players left is a whole number, like 96.")
+        self.assertEqual(refused(s, "remaining", value="12.5").fix, "Players left is a whole number, like 96.")
+        self.assertIn("Entrants is a whole number", refused(s, "set_tournament", entrants="abc").fix)
+        self.assertIn("average stack", refused(s, "set_tournament", avg_stack="abc").fix)
+        self.assertIn("buy-in", refused(s, "set_tournament", buyin="abc").fix)
+        for bad in ("x", "bb", "%", "k"):                           # a unit and no number is not "a multiple of a bet"
+            self.assertIn("Cannot read", refused(s, "set_stack", seat=2, text=bad).message, bad)
+
+    def test_vis_19_an_ante_nobody_typed_is_announced(self):
+        s = tournament(level="300/600/75")
+        text = toast_of(s.do("set_level", text="200/400"))
+        self.assertIn("Ante 50 from the turbo levels", text)
+        self.assertIn("200/400/0", text)
+        self.assertIn("an eighth of the big blind", toast_of(s.do("set_level", text="210/420")))
+        self.assertNotIn("Ante 50", toast_of(s.do("set_level", text="200/400/50")))     # typed: nothing to announce
+        self.assertEqual(toast_of(s.do("set_level", text="200/400/0")), "No ante")
+        self.assertEqual(toast_of(s.do("set_level", text="300/600")), "")               # no ante is played: no news
+        s.do("set_ante_kind", kind="player")
+        self.assertIn("type 1250000/2500000/0 for none", toast_of(s.do("set_level", text="1250000/2500000")))
+
+
+class Rob2ButtonMidHand(unittest.TestCase):
+    """ROB-2: a button move never folds hero or rewrites a hand that has an action."""
+
+    def test_rob_2_the_reviewers_hand(self):
+        s = tournament(size=6, level="50/100/0", button=5, stacks=[10000, 9000, 8000, 7000, 6000, 5000])
+        s.do("deal", hero_cards="AhKh")                 # hero is the big blind
+        play(s, "2 raise 250, 4 call")
+        view = s.view()
+        self.assertTrue(view["hand"]["target_is_hero"])
+        before = json.dumps(view["hand"]["line"])
+        self.assertIn("discard the hand", refused(s, "set_button", seat=2).fix)
+        self.assertTrue(refused(s, "button_step", step=1).message)
+        view = s.view()
+        self.assertEqual(json.dumps(view["hand"]["line"]), before)
+        self.assertFalse(view["table"]["seats"][0]["folded"])
+        self.assertTrue(view["hand"]["target_is_hero"])
+
+    def test_rob_2_after_undo_or_discard_the_button_moves(self):
+        s = tournament(size=6, button=5)
+        s.do("deal")
+        play(s, "2 raise 500")
+        s.do("undo")
+        self.assertEqual(s.do("set_button", seat=2)["table"]["button"], 2)
+        play(s, "5 raise 500")
+        s.do("discard_hand")
+        self.assertEqual(s.do("button_step", step=1)["table"]["button"], 3)
+
+
+class Rob9Requests(unittest.TestCase):
+    """ROB-9: a step is taken round the table, names and notes have a length, a refusal has no Python in it."""
+
+    def test_rob_9_a_huge_button_step_is_a_few_steps(self):
+        s = tournament(size=6)
+        self.assertEqual(s.do("button_step", step=6 * 10 ** 6 + 2)["table"]["button"], 3)
+        self.assertEqual(s.do("button_step", step=-(6 * 10 ** 6 + 2))["table"]["button"], 1)
+        for step in (1e12, float("inf"), "x", [1]):
+            self.assertIn("could not be read", refused(s, "button_step", step=step).message)
+
+    def test_rob_9_names_and_notes_are_cut(self):
+        s = tournament(size=6)
+        view = s.do("rename", seat=2, name="N" * 900000)
+        self.assertEqual(len(view["table"]["seats"][1]["name"]), 40)
+        view = s.do("note", seat=2, text="x" * 900000)
+        self.assertEqual(len(view["table"]["seats"][1]["note"]), 500)
+        view = s.do("seat_player", seat=3, name="  Long   name\nwith a line break " + "y" * 100)
+        self.assertEqual(view["table"]["seats"][2]["name"][:28], "Long name with a line break ")
+        self.assertEqual(len(view["table"]["seats"][2]["name"]), 40)
+        self.assertLessEqual(len(s.do("set_tournament", name="T" * 500)["strip"]["name"]), 80)
+
+    def test_rob_9_a_refusal_holds_no_python_text(self):
+        s = tournament(size=6)
+        s.do("deal")
+        for op, args in (("button_step", {"step": "x"}), ("set_size", {"size": "x"}), ("set_size", {"delta": [1]}),
+                         ("close_round", {"callers": 7}), ("award", {"ranking": 5}), ("set_stacks", {"values": {"x": 1}}),
+                         ("act", {"seat": [2], "kind": "call"}), ("set_cards", {"shown": {"x": "AhKd"}})):
+            err = refused(s, op, **args)
+            for word in ("Error", "int()", "object", "literal", "Traceback"):
+                self.assertNotIn(word, err.message + err.fix, (op, args))
+        self.assertIn("Error", s.last_fault)                        # the detail is kept for the --verbose log
+
+
+class Rob13NegativeIndex(unittest.TestCase):
+    def test_rob_13_a_negative_index_is_refused_like_one_past_the_end(self):
+        s = table_a()
+        play(s, "4 raise 500, 5 call, 1 raise 1500")
+        for op in ("edit_event", "remove_event"):
+            for index in (-1, -3, 99, "x", None, 1e999):
+                err = refused(s, op, index=index, kind="fold")
+                self.assertIn("not on the hand line", err.message, (op, index))
+            self.assertIn("not on the hand line", refused(s, op, event=-1, kind="fold").message)
+
+
+class FilesCase(unittest.TestCase):
+    """A folder of its own, a saved tournament in it, and no waiting between the retries."""
+
+    def setUp(self):
+        from unittest import mock
+        from poker_coach.app import model
+        self.model, self.mock = model, mock
+        self.folder = tempfile.mkdtemp(prefix="menlo-files-")
+        self.addCleanup(shutil.rmtree, self.folder, ignore_errors=True)
+        for name in ("READ_WAIT", "WRITE_WAIT"):
+            patch = mock.patch.object(model, name, 0)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def path(self, name="tournament.json"):
+        return os.path.join(self.folder, name)
+
+    def saved_table(self):
+        """Bob sits in seat 2 with 23,000; the file before the last change (.bak) has him on 10,000."""
+        s = Session(self.folder)
+        s.do("new_session", mode="tournament", size=6, start_stack=10000, level="100/200/25", remaining=120, paid=45)
+        s.do("rename", seat=2, name="Bob")
+        s.do("set_stack", seat=2, text="23k")
+        return s
+
+    def bob(self, session):
+        seat = session.view()["table"]["seats"][1]
+        return seat["name"], seat["stack"]
+
+    def aside(self, name="tournament.json"):
+        return sorted(n for n in os.listdir(self.folder) if n.startswith(name + ".unreadable-"))
+
+    def held(self, *names, times=None):
+        """``open`` as Windows answers while another program holds these files (``times``: only so often)."""
+        real, left = open, {"n": times}
+
+        def fake(path, *args, **kwargs):
+            if os.path.basename(str(path)) in names and "r" in (args[0] if args else kwargs.get("mode", "r")):
+                if left["n"] is None or left["n"] > 0:
+                    left["n"] = None if left["n"] is None else left["n"] - 1
+                    raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+            return real(path, *args, **kwargs)
+        return self.mock.patch("builtins.open", fake)
+
+
+class PackageSavingA(FilesCase):
+    """package.md (a): a save that fails is tried again; if it still fails the change is made, not refused."""
+
+    def refusing_replace(self, times):
+        real, calls = os.replace, {"n": 0}
+
+        def fake(src, dst):
+            if str(src).endswith(".tmp"):
+                calls["n"] += 1
+                if times is None or calls["n"] <= times:
+                    raise PermissionError(13, "Access is denied")
+            return real(src, dst)
+        return self.mock.patch.object(self.model.os, "replace", fake), calls
+
+    def test_package_a_a_held_file_is_tried_again(self):
+        s = self.saved_table()
+        patch, calls = self.refusing_replace(times=4)               # the antivirus lets go after a moment
+        with patch:
+            view = s.do("rename", seat=3, name="Cy")
+        self.assertEqual((view["unsaved"], calls["n"]), ("", 6))     # four refusals, then both files
+        self.assertEqual(Session(self.folder).view()["table"]["seats"][2]["name"], "Cy")
+
+    def test_package_a_made_not_saved_yet_and_saved_with_the_next_change(self):
+        s = self.saved_table()
+        rev = s.rev
+        patch, calls = self.refusing_replace(times=None)
+        with patch:
+            view = s.do("rename", seat=3, name="Cy")                # accepted: the change is made
+            self.assertEqual((view["rev"], view["table"]["seats"][2]["name"]), (rev + 1, "Cy"))
+            self.assertIn("Made, not saved yet", toast_of(view))
+            self.assertTrue(view["unsaved"])
+            self.assertEqual(calls["n"], 2 * self.model.WRITE_TRIES)           # both files, ten tries each
+            self.assertTrue(s.view()["unsaved"])                    # a plain view says so too
+        self.assertEqual(Session(self.folder).view()["table"]["seats"][2]["name"], "")     # not on disk yet
+        self.assertFalse([n for n in os.listdir(self.folder) if n.endswith(".tmp")])
+        view = s.do("rename", seat=4, name="Di")                    # the next change saves both
+        self.assertEqual((view["unsaved"], toast_of(view)), ("", ""))
+        names = [seat["name"] for seat in Session(self.folder).view()["table"]["seats"]]
+        self.assertEqual(names[2:4], ["Cy", "Di"])
+        self.assertEqual(Session(self.folder).rev, s.rev)
+
+    def test_package_a_a_folder_that_cannot_be_written_keeps_the_change_in_memory(self):
+        s = Session(self.path("a file") + os.sep + "below")         # a folder that cannot be made
+        with open(self.path("a file"), "w") as fh:
+            fh.write("x")
+        view = s.do("new_session")
+        self.assertIn("not saved yet", toast_of(view))
+        self.assertFalse(view["first_run"])
+
+    def test_rob_3_the_temporary_file_has_a_name_of_its_own(self):
+        s = self.saved_table()
+        seen = []
+        real = os.replace
+        with self.mock.patch.object(self.model.os, "replace", lambda a, b: (seen.append(os.path.basename(a)), real(a, b))[1]):
+            s.do("rename", seat=3, name="Cy")
+        self.assertIn(f"tournament.json.{os.getpid()}.tmp", seen)
+        with open(self.path("tournament.json.999.tmp"), "w") as fh:  # left by a program that was killed long ago
+            fh.write("{half")
+        os.utime(self.path("tournament.json.999.tmp"), (1, 1))
+        Session(self.folder)
+        self.assertFalse([n for n in os.listdir(self.folder) if n.endswith(".tmp")])
+
+
+class PackageSavingB(FilesCase):
+    """package.md (b) and ROB-4: a file that is only held is never treated as a damaged one."""
+
+    def test_package_b_a_held_file_is_tried_again(self):
+        self.saved_table()
+        with self.held("tournament.json", times=3):
+            again = Session(self.folder)
+        self.assertEqual(self.bob(again), ("Bob", 23000))
+        self.assertIsNone(again.view()["toast"])
+
+    def test_package_b_a_file_held_for_good_stops_the_start_and_nothing_is_renamed(self):
+        self.saved_table()
+        before = sorted(os.listdir(self.folder))
+        with self.held("tournament.json"):
+            with self.assertRaises(OSError) as caught:
+                Session(self.folder)
+        self.assertIn("Close the program that holds the file", str(caught.exception))
+        self.assertIn("tournament.json", str(caught.exception))
+        self.assertEqual(sorted(os.listdir(self.folder)), before)
+        self.assertEqual(self.bob(Session(self.folder)), ("Bob", 23000))    # the table is there when the file is free
+
+    def test_rob_4_the_reviewers_case_with_real_permissions(self):
+        if os.name == "nt" or os.geteuid() == 0:
+            self.skipTest("needs a user the file system can refuse")
+        self.saved_table()
+        os.chmod(self.path(), 0)
+        self.addCleanup(os.chmod, self.path(), 0o644)
+        with self.assertRaises(OSError):
+            Session(self.folder)
+        self.assertEqual(self.aside(), [])
+
+
+class PackageSavingC(FilesCase):
+    """package.md (c): a mode whose file cannot be read is not switched to, and nothing is half switched."""
+
+    def test_package_c_set_mode_changes_nothing_when_the_other_file_is_held(self):
+        s = self.saved_table()
+        s.do("set_mode", mode="spin")
+        s.do("new_session", mode="spin")
+        s.do("deal", hero_cards="AsKs")
+        again = Session(self.folder)                                # spin is on screen; the tournament is on disk
+        with self.held("tournament.json"):
+            err = refused(again, "set_mode", mode="tournament")
+            self.assertIn("cannot be read right now", err.message)
+            self.assertIn("then try again", err.fix)
+            self.assertNotIn("Error", err.message + err.fix)
+            self.assertEqual((again.view()["mode"], again.data["mode"], again.app["mode"]), ("spin", "spin", "spin"))
+            again.do("act", kind="fold")                            # the next change is saved as a Spin table
+        with open(self.path("spin.json"), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["mode"], "spin")
+        with open(self.path(), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["table"]["seats"]["2"]["name"], "Bob")
+        Session(self.folder).do("set_mode", mode="tournament")     # once the file is free, the mode is there again
+        self.assertEqual(self.bob(Session(self.folder)), ("Bob", 23000))
+        self.assertEqual(self.aside("tournament.json") + self.aside("spin.json"), [])
+
+
+class Rob4DamagedFiles(FilesCase):
+    """ROB-4: a damaged file is kept under a dated name, the user is told, and the last good save comes back."""
+
+    def damage(self, raw: bytes, name="tournament.json", bak=True):
+        with open(self.path(name), "wb") as fh:
+            fh.write(raw)
+        if not bak and os.path.exists(self.path(name + ".bak")):
+            os.remove(self.path(name + ".bak"))
+
+    def test_rob_4_the_copy_of_one_change_earlier_comes_back(self):
+        self.saved_table()
+        with open(self.path(), "rb") as fh:
+            good = fh.read()
+        for raw in (good[:len(good) // 2], good[:-1], b"", b"\x00" * 1000, b"\xff\xfe\x00\x01garbage", b"null"):
+            self.damage(raw)
+            again = Session(self.folder)
+            view = again.view()
+            self.assertEqual(self.bob(again), ("Bob", 10000), raw[:20])          # the stack of one change earlier
+            self.assertIn("tournament.json could not be read and was set aside as tournament.json.unreadable-",
+                          toast_of(view))
+            self.assertIn("one change earlier", toast_of(view))
+            self.assertEqual(toast_of(again.view()), toast_of(view))            # told until the first change
+            after = again.do("set_stack", seat=2, text="23k")
+            self.assertIn("set aside", toast_of(after))                         # once more, with the first change
+            self.assertIsNone(again.view()["toast"])
+            self.assertEqual(self.bob(Session(self.folder)), ("Bob", 23000))    # and the main file is written again
+        self.assertEqual(toast_of(again.do("rename", seat=3, name="Cy")), "")   # the news is not told a third time
+        self.assertEqual(len(self.aside()), 6)                                  # never over an older one
+        with open(self.path(self.aside()[0]), "rb") as fh:
+            self.assertEqual(fh.read(), good[:len(good) // 2])
+
+    def test_rob_4_without_a_copy_it_is_a_new_table_and_the_user_is_told(self):
+        self.saved_table()
+        self.damage(b"{not json", bak=False)
+        again = Session(self.folder)
+        view = again.view()
+        self.assertTrue(view["first_run"])
+        self.assertIn("set aside as tournament.json.unreadable-", toast_of(view))
+        self.assertIn("This is a new table", toast_of(view))
+        self.damage(b"{not json", bak=False)
+        Session(self.folder)                                        # a second bad start: the first file stays
+        self.assertEqual(len(self.aside()), 2)
+
+    def test_rob_4_a_byte_order_mark_is_not_damage(self):
+        self.saved_table()
+        with open(self.path(), "rb") as fh:
+            good = fh.read()
+        self.damage(b"\xef\xbb\xbf" + good)
+        again = Session(self.folder)
+        self.assertEqual((self.bob(again), again.view()["toast"], self.aside()), (("Bob", 23000), None, []))
+
+    def test_rob_4_a_missing_main_file_uses_the_copy(self):
+        self.saved_table()
+        os.remove(self.path())
+        again = Session(self.folder)
+        self.assertEqual(self.bob(again), ("Bob", 10000))
+        self.assertIn("tournament.json was missing", toast_of(again.view()))
+
+    def test_rob_4_the_saved_copy_is_the_file_before_the_last_change(self):
+        s = self.saved_table()
+        with open(self.path("tournament.json.bak"), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["table"]["seats"]["2"]["stack"], 10000)
+        s.do("rename", seat=2, name="Rob")
+        with open(self.path("tournament.json.bak"), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["table"]["seats"]["2"]["name"], "Bob")
+
+
+class Rob8WrongShape(FilesCase):
+    """ROB-8: a file that is JSON but not a session is set aside like a damaged one; small gaps are filled."""
+
+    def saved(self, name="tournament.json"):
+        with open(self.path(name), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def write(self, content, name="tournament.json"):
+        with open(self.path(name), "w", encoding="utf-8") as fh:
+            json.dump(content, fh)
+        if os.path.exists(self.path(name + ".bak")):
+            os.remove(self.path(name + ".bak"))
+
+    def test_rob_8_not_a_session_at_all(self):
+        self.saved_table()
+        for content in ([1, 2, 3], 5, "hello", {}, {"mode": "spin"}, {"mode": "tournament", "table": 7},
+                        {"mode": "tournament", "hands": {}}):
+            self.write(content)
+            again = Session(self.folder)
+            view = again.view()
+            self.assertTrue(view["first_run"], content)
+            self.assertIn("set aside", toast_of(view), content)
+            again.do("new_session")
+        self.assertEqual(len(self.aside()), 7)
+
+    def test_rob_8_app_json_of_the_wrong_shape(self):
+        self.saved_table()
+        for content in ([1, 2], "x", 7):
+            self.write(content, "app.json")
+            again = Session(self.folder)
+            self.assertEqual(self.bob(again), ("Bob", 23000), content)
+            self.assertIn("app.json could not be read", toast_of(again.view()))
+            again.do("rename", seat=2, name="Bob")
+        self.write({"mode": "cash", "unit": 5, "deck": None, "rev": "x", "notice_seen": "yes", "more": 1}, "app.json")
+        again = Session(self.folder)                                # wrong values: the defaults, without a word
+        self.assertEqual((again.app["mode"], again.app["unit"], again.rev, again.view()["toast"]),
+                         ("tournament", "chips", 0, None))
+
+    def test_rob_8_what_a_later_version_adds_is_filled_in(self):
+        s = self.saved_table()
+        s.do("deal", hero_cards="AhKh")
+        s.do("act", seat=4, kind="raise", amount=500)
+        data = self.saved()
+        for seat in data["table"]["seats"].values():
+            for key in ("stale", "note", "type"):
+                del seat[key]
+        for key in ("shown", "settled", "leaving", "advice", "skipped"):
+            del data["hand"][key]
+        del data["config"]["style"], data["rules"]["short_post"], data["tally"]
+        del data["table"]["seats"]["1"]
+        self.write(data)
+        again = Session(self.folder)
+        view = again.view()
+        self.assertEqual((self.bob(again), view["toast"], self.aside()), (("Bob", 22875), None, []))   # he posted 125
+        self.assertEqual((view["hand"]["line"][-1]["text"], view["strip"]["style"]), ("LJ raise 2.5bb", "survive"))
+        again.do("act", kind="call")
+
+    def test_rob_8_a_session_that_cannot_be_drawn_is_set_aside(self):
+        s = self.saved_table()
+        s.do("deal", hero_cards="AhKh")
+        good = self.saved()
+
+        def broken(change):
+            data = copy.deepcopy(good)
+            change(data)
+            return data
+
+        cases = {
+            "table.size as text": lambda d: d["table"].update(size="8"),
+            "level index past the ladder": lambda d: d["structure"].update(index=999),
+            "players left as a word": lambda d: d["tournament"].update(remaining="many"),
+            "a stack of null": lambda d: d["table"]["seats"]["2"].update(stack=None),
+            "a hand with a big blind of zero": lambda d: d["hand"]["level"].update(bb=0),
+            "a hand without its players": lambda d: d["hand"].pop("order"),
+            "a stack that is not a number": lambda d: d["table"]["seats"]["3"].update(stack=float("nan")),
+        }
+        for label, change in cases.items():
+            self.write(broken(change))
+            again = Session(self.folder)                            # it starts ...
+            view = again.view()                                     # ... and every view works
+            self.assertTrue(view["first_run"], label)
+            self.assertIn("could not be read and was set aside", toast_of(view), label)
+            json.dumps(view, allow_nan=False)
+        self.assertEqual(len(self.aside()), len(cases))
+
+    def test_rob_8_a_broken_undo_history_costs_the_history_only(self):
+        self.saved_table()
+        data = self.saved()
+        data["journal"] = {"undo": [5, None], "redo": "x"}
+        self.write(data)
+        again = Session(self.folder)
+        self.assertEqual((self.bob(again), again.view()["can"]), (("Bob", 23000), {"undo": False, "redo": False}))
+
+
+class Rob5NothingUnshowableIsSaved(FilesCase):
+    """ROB-5: the view is built before the save; a change that breaks it is refused and leaves no trace."""
+
+    def test_rob_5_a_change_that_breaks_the_view_is_put_back(self):
+        s = self.saved_table()
+        with open(self.path(), "rb") as fh:
+            on_disk = fh.read()
+
+        def slip(a):                                                # a fault of the program: a stack that is no number
+            s.data["table"]["seats"]["2"]["stack"] = float("nan")
+
+        with self.mock.patch.object(s, "_op_rename", slip):
+            err = refused(s, "rename", seat=2, name="x")
+        self.assertIn("was not made", err.message)
+        self.assertNotIn("nan", err.message + err.fix)
+        with open(self.path(), "rb") as fh:
+            self.assertEqual(fh.read(), on_disk)
+        json.dumps(s.view(), allow_nan=False)
+        self.assertEqual(self.bob(Session(self.folder)), ("Bob", 23000))
+
+    def test_rob_5_two_huge_stacks_all_in(self):
+        s = tournament(size=3)
+        self.assertTrue(refused(s, "set_stacks", values=[1e308, 1e308, 1000]).message)
+        s.do("set_stacks", values=[10 ** 12, 10 ** 12, 1000])
+        s.do("deal")
+        play(s, "1 allin, 2 call")
+        s.do("close_round")
+        json.dumps(s.view(), allow_nan=False)
+
+
+class Ops5UndoStopsAtTheFirstTable(unittest.TestCase):
+    """OPS-5 (contract 3): undo never goes back to the set-up form; a tournament over an old one still can be undone."""
+
+    def test_ops_5_undo_stops_at_the_first_table(self):
+        s = Session(save=False)
+        self.assertTrue(s.view()["first_run"])
+        view = s.do("new_session", mode="tournament", size=8, level="300/600/75", hero_stack=12900, remaining=96, paid=75)
+        self.assertEqual((view["first_run"], view["can"]), (False, {"undo": False, "redo": False}))
+        self.assertIn("first", refused(s, "undo").fix + refused(s, "undo").message + " first")
+        s.do("deal", hero_cards="72o")
+        s.do("act", kind="fold")
+        s.do("close_round")
+        presses = 0
+        while s.view()["can"]["undo"]:
+            view = s.do("undo")
+            presses += 1
+        self.assertEqual(presses, 3)
+        self.assertEqual((view["first_run"], view["strip"]["remaining"], stack(s, 1)), (False, 96, 12900))
+        self.assertEqual(refused(s, "undo").message, "There is nothing to undo.")
+        self.assertTrue(s.view()["can"]["redo"])                    # and everything can be redone from there
+        for _ in range(3):
+            view = s.do("redo")
+        self.assertEqual(len(view["history"]), 1)
+
+    def test_ops_5_a_new_tournament_over_an_old_one_is_undone_as_before(self):
+        s = table_a()
+        s.do("close_round")
+        s.do("new_session", size=4)
+        view = s.do("undo")
+        self.assertEqual((view["table"]["size"], len(view["history"]), view["first_run"]), (6, 1, False))
+
+    def test_ops_5_each_mode_stops_at_its_own_first_table(self):
+        s = Session(save=False)
+        s.do("new_session", mode="tournament")
+        s.do("rename", seat=2, name="Al")
+        view = s.do("new_session", mode="spin")
+        self.assertEqual((view["mode"], view["can"]["undo"]), ("spin", False))
+        self.assertTrue(s.do("set_mode", mode="tournament")["can"]["undo"])
+
+    def test_ops_5_a_file_saved_by_the_version_before_loses_the_step_to_the_form(self):
+        folder = tempfile.mkdtemp(prefix="menlo-undo-")
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        s = Session(folder)
+        s.do("new_session")
+        s.do("rename", seat=2, name="Al")
+        path = os.path.join(folder, "tournament.json")
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        first = json.loads(data["journal"]["undo"][0])
+        first["started"] = False                                    # what the version before kept: the form itself
+        data["journal"]["undo"].insert(0, json.dumps(first, separators=(",", ":")))
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        again = Session(folder)
+        again.do("undo")
+        self.assertEqual(again.view()["can"]["undo"], False)
+        self.assertFalse(again.view()["first_run"])
+
+    def test_vis_17_the_button_beside_undone_is_redo(self):
+        s = table_a()
+        view = s.do("undo")
+        self.assertEqual((view["toast"]["text"], view["toast"]["redo"], view["toast"]["undo"]), ("Undone", True, False))
+        view = s.do("redo")
+        self.assertEqual((view["toast"]["text"], view["toast"]["redo"], view["toast"]["undo"]), ("Redone", False, True))
+
+
+class Ops13SmallerTable(unittest.TestCase):
+    """OPS-13 (contract 4): a smaller table in one step; the players above the new size moved away."""
+
+    def test_ops_13_empty_seats_above_the_new_size_just_go(self):
+        s = tournament(size=8, remaining=96)
+        s.do("clear_seat", seat=8)
+        s.do("clear_seat", seat=7)
+        view = s.do("set_size", size=6)
+        self.assertEqual((view["table"]["size"], len(view["table"]["seats"]), toast_of(view)), (6, 6, ""))
+
+    def test_ops_13_taken_seats_are_refused_with_a_code_and_cleared_on_request(self):
+        s = tournament(size=8, remaining=96, button=8)
+        err = refused(s, "set_size", delta=-1)
+        self.assertEqual((err.code, err.message), ("seats_taken", "Seat 8 is taken."))
+        err = refused(s, "set_size", size=6)
+        self.assertEqual(err.message, "Seat 7 and seat 8 are taken.")
+        view = s.do("set_size", size=6, clear=True)
+        self.assertEqual((view["table"]["size"], [x["seat"] for x in view["table"]["seats"]]), (6, [1, 2, 3, 4, 5, 6]))
+        self.assertEqual(view["strip"]["remaining"], 96)            # they moved away: nobody busted
+        self.assertIn("2 players moved away", toast_of(view))
+        self.assertLessEqual(view["table"]["button"], 6)
+        s.do("undo")
+        self.assertEqual(s.view()["table"]["size"], 8)
+
+    def test_ops_13_a_hand_nobody_acted_in_is_dealt_again_and_one_under_way_is_protected(self):
+        s = tournament(size=8)
+        s.do("deal")
+        view = s.do("set_size", size=6, clear=True)
+        self.assertEqual((view["hand"]["no"], len(state(s).order)), (1, 6))
+        s.do("set_size", size=8)
+        s.do("seat_player", seat=8, stack=5000)
+        s.do("discard_hand")
+        s.do("deal")
+        play(s, "8 raise 500")
+        err = refused(s, "set_size", size=6, clear=True)
+        self.assertIn("in the hand being played", err.message)
+        self.assertIn("Finish or discard", err.fix)
+
+    def test_ops_13_new_table_takes_size_and_button(self):
+        s = tournament(size=8, remaining=96)
+        view = s.do("new_table", size=6, button=4)
+        self.assertEqual((view["table"]["size"], view["table"]["button"], len(view["table"]["seats"])), (6, 4, 6))
+        self.assertEqual(view["strip"]["remaining"], 96)
+
+
+class Post6ClassHand(unittest.TestCase):
+    """POST-6 (contract 2): with AKs on record, cards meant for the flop never become hero's hand."""
+
+    def to_the_flop(self):
+        s = tournament(size=6, level="100/200/25")
+        s.do("deal", hero_cards="AKs")
+        s.do("act", kind="raise", amount=500)
+        s.do("act", seat=3, kind="call")                           # the big blind calls: the flop
+        return s
+
+    def test_post_6_the_reviewers_keys(self):
+        s = self.to_the_flop()
+        view = s.view()
+        self.assertEqual((view["hand"]["phase"], view["hand"]["needs"], view["hand"]["hero_class"]), ("flop", "cards", "AKs"))
+        self.assertEqual(view["hand"]["want_suits"],
+                         {"hand": "AKs", "options": [["As", "Ks"], ["Ah", "Kh"], ["Ad", "Kd"], ["Ac", "Kc"]]})
+        err = refused(s, "set_cards", slot="hero", text="Ks7d")     # the first two flop cards, typed into the prompt
+        self.assertEqual(err.code, "class_mismatch")
+        self.assertIn("not AKs", err.message)
+        self.assertIn("suits", err.fix)
+        self.assertEqual(refused(s, "set_cards", hero="Ks7d").code, "class_mismatch")
+        self.assertEqual(refused(s, "set_cards", hero="AhKd").code, "class_mismatch")   # ace-king, but not suited
+        self.assertEqual(refused(s, "set_cards", hero="AQs").code, "class_mismatch")
+        view = s.do("set_cards", text="Ks7d2c")                     # no slot: three cards are the flop
+        self.assertEqual((view["hand"]["board"], view["hand"]["hero_class"], view["hand"]["hero_cards"]),
+                         (["Ks", "7d", "2c"], "AKs", []))
+        self.assertEqual(view["hand"]["needs"], "cards")            # the suits are still wanted
+        self.assertEqual(view["hand"]["want_suits"]["options"], [["Ah", "Kh"], ["Ad", "Kd"], ["Ac", "Kc"]])
+        self.assertIn("used twice", refused(s, "set_cards", hero="AsKs").message)
+        view = s.do("set_cards", slot="hero", text="AhKh")
+        self.assertEqual((view["hand"]["hero_cards"], view["hand"]["needs"], view["hand"]["want_suits"]),
+                         (["Ah", "Kh"], "action", None))
+
+    def test_post_6_cards_without_a_slot_go_to_the_board_unless_they_are_the_hand(self):
+        s = self.to_the_flop()
+        view = s.do("set_cards", text="AdKd")                       # the very hand: hero's suits
+        self.assertEqual((view["hand"]["hero_cards"], view["hand"]["needs"]), (["Ad", "Kd"], "board"))
+        s = self.to_the_flop()
+        self.assertIn("does not fit the board", refused(s, "set_cards", text="Ks7d").message)   # two cards are no flop
+        self.assertEqual(s.view()["hand"]["hero_class"], "AKs")
+
+    def test_post_6_replace_changes_the_hand_itself(self):
+        s = tournament(size=6)
+        s.do("deal", hero_cards="AKs")
+        self.assertIsNone(s.view()["hand"]["want_suits"])           # before the flop the class is enough
+        self.assertEqual(refused(s, "set_cards", hero="AQs").code, "class_mismatch")
+        self.assertEqual(s.do("set_cards", hero="AQs", replace=True)["hand"]["hero_class"], "AQs")
+        self.assertEqual(s.do("set_cards", hero="AsQs")["hand"]["hero_cards"], ["As", "Qs"])    # its own suits: fine
+        self.assertEqual(s.do("set_cards", hero="7h7d")["hand"]["hero_class"], "77")       # exact cards: replaced freely
+        self.assertEqual(s.do("set_cards", hero="")["hand"]["hero_class"], "")
+
+    def test_post_6_pairs_and_offsuit_hands(self):
+        for cards, count in (("77", 6), ("AKo", 12)):
+            s = tournament(size=6)
+            s.do("deal", hero_cards=cards)
+            s.do("act", kind="raise", amount=500)
+            s.do("act", seat=3, kind="call")
+            view = s.do("set_cards", text="7s2d2c")
+            options = view["hand"]["want_suits"]["options"]
+            blocked = 3 if cards == "77" else 0
+            self.assertEqual(len(options), count - blocked, cards)
+            self.assertTrue(all("7s" not in pair for pair in options))
+            s.do("set_cards", hero="".join(options[0]))
+            self.assertEqual(s.view()["hand"]["needs"], "action")
+
+
+def lose_everything(s, losers, winner):
+    """Deal a hand in which ``losers`` go all-in and lose to ``winner`` (who covers them); everybody else folds."""
+    s.do("deal")
+    for seat in state(s).order:
+        s.do("act", seat=seat, kind="allin" if seat in losers or seat == winner else "fold")
+    return s.do("award", ranking=[[winner]])
+
+
+def positions(view) -> dict:
+    """{position: seat} of the table between hands."""
+    return {x["pos"]: x["seat"] for x in view["table"]["seats"] if x["pos"]}
+
+
+class Ops12ButtonAfterABust(unittest.TestCase):
+    """OPS-12 and ROB-11 (contract 1): the big blind moves on by one player whoever went out.
+
+    The button may rest on an empty seat (a dead button).
+    """
+
+    def six(self, **fields):
+        """Button on hero (seat 1), small blind seat 2, big blind seat 3; seat 5 covers everybody."""
+        return tournament(size=6, stacks=[10000, 10000, 10000, 10000, 50000, 10000], remaining=60, **fields)
+
+    def test_ops_12_the_usual_move(self):
+        s = self.six()
+        s.do("deal")
+        view = s.do("close_round")                                  # a walk: nobody out
+        self.assertEqual((view["table"]["button"], positions(view)["SB"], positions(view)["BB"]), (2, 3, 4))
+        self.assertNotIn("utton", toast_of(view))
+        self.assertEqual(view["settings"]["button_rule"], "dead")   # the default
+        self.assertEqual(view["strip"]["button_rule"], "dead")
+
+    def test_ops_12_the_small_blind_goes_out(self):
+        s = self.six()
+        view = lose_everything(s, [2], 5)
+        where = positions(view)
+        self.assertEqual((view["table"]["button"], where["SB"], where["BB"], where["BTN"]), (2, 3, 4, 1))
+        seat_2 = view["table"]["seats"][1]
+        self.assertEqual((seat_2["empty"], seat_2["is_button"]), (True, True))         # a dead button
+        self.assertIn("Dead button on seat 2", toast_of(view))
+        self.assertIn("[ and ] move it", toast_of(view))
+        s.do("deal")
+        self.assertEqual((state(s).blind[3], state(s).blind[4]), (100, 200))
+        self.assertEqual(state(s).order[-3], 1)                     # hero acts last before the blinds
+        view = s.do("close_round")
+        self.assertEqual((view["table"]["button"], positions(view)["SB"], positions(view)["BB"]), (3, 4, 5))
+
+    def test_ops_12_the_reviewers_side_pot_hand(self):
+        s = tournament(size=8, stacks=[5000, 10000, 20000] + [20000] * 5, level="300/600/75")
+        s.do("deal")
+        play(s, "1 allin, 2 allin, 3 call")
+        view = s.do("award", ranking=[[1], [3]])                    # hero wins the main pot, seat 3 the side pot
+        where = positions(view)
+        self.assertEqual((view["table"]["button"], where["SB"], where["BB"], where["BTN"]), (2, 3, 4, 1))
+
+    def test_ops_12_the_big_blind_goes_out(self):
+        s = self.six()
+        view = lose_everything(s, [3], 5)
+        where = positions(view)
+        self.assertEqual((view["table"]["button"], where["SB"], where["BB"]), (1, 2, 4))    # the big blind is seat 4's
+        self.assertIn("Button on seat 1: check it against your table", toast_of(view))
+        self.assertIn("[ and ] move it", toast_of(view))
+        s.do("deal")
+        self.assertEqual(state(s).blind[4], 200)
+
+    def test_ops_12_both_blinds_go_out(self):
+        s = self.six()
+        view = lose_everything(s, [2, 3], 5)
+        where = positions(view)
+        self.assertEqual((where["BB"], where["SB"], where["BTN"], view["table"]["button"]), (4, 1, 6, 6))
+        self.assertIn("check it against your table", toast_of(view))
+
+    def test_ops_12_a_bust_elsewhere(self):
+        for loser, big in ((6, 4), (1, 4),                          # a player elsewhere, the button himself
+                           (4, 5)):                                 # the player the big blind was coming to
+            s = self.six()
+            view = lose_everything(s, [loser], 5)
+            where = positions(view)
+            self.assertEqual((view["table"]["button"], where["SB"], where["BB"]), (2, 3, big), loser)
+            self.assertNotIn("utton", toast_of(view), loser)
+
+    def test_ops_12_three_players_to_two_in_each_of_the_three_ways(self):
+        for out, button, small, big in ((1, 3, 3, 2),               # the button goes out
+                                        (2, 3, 3, 1),               # the small blind goes out
+                                        (3, 2, 2, 1)):              # the big blind goes out
+            winner = 1 if out != 1 else 2
+            stacks = [10000] * 3
+            stacks[winner - 1] = 50000
+            s = tournament(size=3, stacks=stacks)                   # button 1, small blind 2, big blind 3
+            s.do("deal")
+            self.assertEqual(state(s).order[-1], 3)
+            s.do("discard_hand")
+            view = lose_everything(s, [out], winner)
+            where = positions(view)
+            self.assertEqual((view["table"]["button"], where["BTN/SB"], where["BB"]), (button, small, big), out)
+            self.assertNotEqual(where["BB"], 3, "the same player would post the big blind twice in a row")
+            s.do("deal")
+            st = state(s)
+            self.assertEqual((st.blind[small], st.blind[big], st.order), (100, 200, [small, big]), out)
+
+    def test_ops_12_spin_the_button_goes_out_and_hero_does_not_post_the_big_blind_twice(self):
+        s = spin(stacks={1: 400, 2: 100, 3: 400}, button=2)         # hero is the big blind
+        self.assertEqual(state(s).labels[1], "BB")
+        play(s, "2 allin, 3 fold, 1 call")
+        view = s.do("award", winner=1)
+        where = positions(view)
+        self.assertEqual((where["BTN/SB"], where["BB"]), (1, 3))
+
+    def test_ops_12_the_forward_setting(self):
+        s = self.six()
+        view = s.do("set_config", button_rule="forward")
+        self.assertEqual((view["settings"]["button_rule"], view["can"]["undo"]), ("forward", True))
+        view = lose_everything(s, [2], 5)
+        where = positions(view)
+        self.assertEqual((view["table"]["button"], where["SB"], where["BB"]), (3, 4, 5))    # as before this round
+        self.assertIn("Button on seat 3: check it against your table", toast_of(view))
+        s = self.six(button=1)
+        s.do("set_config", button_rule="forward")
+        view = lose_everything(s, [3], 5)
+        self.assertEqual((view["table"]["button"], positions(view)["SB"], positions(view)["BB"]), (2, 4, 5))
+        self.assertIn("button", refused(s, "set_config", button_rule="sideways").message)
+        self.assertEqual(s.do("set_config", button_rule="")["settings"]["button_rule"], "dead")    # no value: the other one
+
+    def test_ops_12_a_bust_typed_after_the_hand_moves_the_button_the_same_way(self):
+        s = self.six()
+        s.do("deal")
+        view = s.do("skip_hand")                                    # the result was not recorded
+        self.assertEqual(view["table"]["button"], 2)
+        view = s.do("bust", seat=2)                                 # the small blind of that hand went out in it
+        where = positions(view)
+        self.assertEqual((view["table"]["button"], where["SB"], where["BB"], where["BTN"]), (2, 3, 4, 1))
+        self.assertIn("Dead button on seat 2", toast_of(view))
+        self.assertEqual(view["strip"]["remaining"], 59)
+        s = self.six()
+        s.do("deal")
+        s.do("deal")                                                # N on the open hand, then the bust is noticed
+        view = s.do("bust", seat=3)                                 # the big blind of the hand before
+        st = state(s)
+        self.assertEqual((view["hand"]["no"], st.button, st.order[-2], st.order[-1]), (2, 1, 2, 4))
+        self.assertIn("check it against your table", toast_of(view))
+        view = s.do("button_step", step=1)                          # the user's table has it one seat on
+        self.assertEqual(view["table"]["button"], 2)
+        view = s.do("clear_seat", seat=6)                           # set by hand: it stays where it was put
+        self.assertEqual(view["table"]["button"], 2)
+
+    def test_ops_12_the_button_can_be_put_on_an_empty_seat(self):
+        s = self.six()
+        s.do("clear_seat", seat=2)
+        view = s.do("set_button", seat=2)
+        where = positions(view)
+        self.assertEqual((view["table"]["button"], where["BTN"], where["SB"], where["BB"]), (2, 1, 3, 4))
+        self.assertTrue(view["table"]["seats"][1]["is_button"] and view["table"]["seats"][1]["empty"])
+        self.assertEqual(s.do("button_step", step=1)["table"]["button"], 3)             # ] goes on to the next player
+        self.assertEqual(s.do("button_step", step=-1)["table"]["button"], 1)            # [ back to the one before
+
+    def test_ops_12_the_big_blind_always_moves_on_by_one_player(self):
+        """Random tables and random busts, in the hand or typed after it: the next big blind is the next player."""
+        rng = random.Random(12)
+        for trial in range(60):
+            size = rng.randint(3, 9)
+            s = tournament(size=size, stacks=[10000] * size, button=rng.randint(1, size))
+            for hand_no in range(12):
+                seats = [x["seat"] for x in s.view()["table"]["seats"] if not x["empty"] and x["stack"] > 0]
+                if len(seats) < 2:
+                    break
+                s.do("deal")
+                st = state(s)
+                big = st.order[-1]
+                out = [seat for seat in seats if rng.random() < 0.25][:len(seats) - 2]
+                if out and rng.random() < 0.5:                      # they go out in the hand
+                    winner = rng.choice([seat for seat in seats if seat not in out])
+                    s.do("set_stack", seat=winner, text=str(10000 * size))
+                    for seat in state(s).order:
+                        s.do("act", seat=seat, kind="allin" if seat in out or seat == winner else "fold")
+                    s.do("award", ranking=[[winner], out])          # (a loser with more chips keeps the rest)
+                else:                                               # or the user types the busts afterwards
+                    s.do("skip_hand")
+                    for seat in out:                                # (hero's stack typed as 0 is the same thing)
+                        s.do("bust", seat=seat) if seat != 1 or rng.random() < 0.5 else s.do("set_stack", seat=1, text="0")
+                left = sorted(x["seat"] for x in s.view()["table"]["seats"] if not x["empty"] and x["stack"] > 0)
+                if len(left) < 2:
+                    break
+                where = positions(s.view())
+                expected = next((seat for seat in left if seat > big), left[0])
+                self.assertEqual(where["BB"], expected, (trial, hand_no, out, left))
+                if len(left) == 2:
+                    self.assertIn("BTN/SB", where)
+
+
+class Ops16HeroOut(unittest.TestCase):
+    """OPS-16 (contract 6): view.hero_out while hero has no chips; a stack typed on his seat then is a re-entry."""
+
+    def busted(self, **fields):
+        s = tournament(size=6, stacks=[5000, 10000, 10000, 10000, 20000, 10000], remaining=96, paid=75, entrants=500,
+                       **fields)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "5 raise 500, 1 allin, 5 call")
+        self.assertFalse(s.view()["hero_out"])                      # all-in, and his hand is running
+        return s, s.do("award", winner=5)
+
+    def test_ops_16_hero_out_is_in_the_view_while_he_has_no_chips(self):
+        s, view = self.busted()
+        self.assertTrue(view["hero_out"])
+        self.assertEqual(view["strip"]["remaining"], 95)
+        self.assertIn("You are out. Type a new stack on your seat to re-enter, or start a new tournament.", toast_of(view))
+        view = s.do("deal")                                         # N deals a hand without him
+        self.assertEqual((view["hero_out"], 1 in state(s).order), (True, False))
+        self.assertFalse(tournament().view()["hero_out"])
+
+    def test_ops_16_a_stack_typed_on_his_seat_is_a_re_entry(self):
+        s, view = self.busted()
+        view = s.do("set_stack", seat=1, text="20000")
+        self.assertEqual((view["hero_out"], view["strip"]["remaining"], view["strip"]["entrants"]), (False, 96, 501))
+        self.assertEqual(toast_of(view), "Re-entry: players left 96 and entrants 501")
+        self.assertEqual(stack(s, 1), 20000)
+        view = s.do("set_stack", seat=1, text="19000")              # a correction is not another re-entry
+        self.assertEqual((view["strip"]["remaining"], view["strip"]["entrants"], toast_of(view)), (96, 501, ""))
+        s.do("undo")
+        view = s.do("undo")                                         # one undo step takes the whole re-entry back
+        self.assertEqual((view["hero_out"], view["strip"]["remaining"], view["strip"]["entrants"]), (True, 95, 500))
+
+    def test_ops_16_the_other_ways_to_type_it(self):
+        s, _ = self.busted()
+        view = s.do("seat_player", seat=1, stack="15k")
+        self.assertEqual((view["strip"]["remaining"], view["strip"]["entrants"], view["hero_out"]), (96, 501, False))
+        s, _ = self.busted()
+        view = s.do("set_stacks", values=["15k", "", "", "", "", ""])
+        self.assertEqual((view["strip"]["remaining"], view["strip"]["entrants"]), (96, 501))
+        s = tournament(size=6, remaining=96, entrants=500)
+        s.do("bust", seat=1)                                        # busted by hand
+        self.assertTrue(s.view()["hero_out"])
+        view = s.do("set_stack", seat=1, text="10000")
+        self.assertEqual((view["strip"]["remaining"], view["strip"]["entrants"]), (96, 501))
+
+    def test_ops_16_a_hand_dealt_without_him_is_dealt_again_when_nobody_has_acted(self):
+        s, _ = self.busted()
+        s.do("deal")
+        view = s.do("set_stack", seat=1, text="20000")
+        self.assertIn(1, state(s).order)
+        self.assertEqual(view["hand"]["no"], 2)
+        s, _ = self.busted()
+        s.do("deal")
+        s.do("act", seat=5, kind="raise", amount=500)
+        view = s.do("set_stack", seat=1, text="20000")              # a hand under way: he is in from the next one
+        self.assertEqual((1 in state(s).order, view["hero_out"], view["strip"]["entrants"]), (False, False, 501))
+
+    def test_ops_16_without_the_numbers_and_with_a_stack_of_zero_typed(self):
+        s = tournament(size=6, stacks=[5000, 10000, 10000, 10000, 20000, 10000])
+        s.do("deal")
+        play(s, "5 raise 500, 1 allin, 5 call")
+        s.do("award", winner=5)
+        self.assertEqual(toast_of(s.do("set_stack", seat=1, text="8000")), "Re-entry: you are dealt in again")
+        s = tournament(size=6, remaining=96, entrants=500)
+        s.do("set_stack", seat=1, text="0")                         # typed, not busted: nobody was counted out
+        self.assertTrue(s.view()["hero_out"])
+        view = s.do("set_stack", seat=1, text="9000")
+        self.assertEqual((view["strip"]["remaining"], view["strip"]["entrants"]), (96, 500))
+
+    def test_vis_17_spin_says_how_the_game_ended(self):
+        s = spin(stacks={1: 100, 2: 400, 3: 400})
+        play(s, "1 allin, 2 call, 3 fold")
+        view = s.do("award", winner=2)
+        self.assertEqual(toast_of(view), "You lost this game. Press N for a new one.")
+        self.assertTrue(view["hero_out"])
+        s = spin(stacks={1: 800, 2: 50, 3: 50})
+        play(s, "1 allin, 2 call, 3 call")
+        self.assertIn("You won this game. Press N for a new one.", toast_of(s.do("award", winner=1)))
+
+    def test_vis_17_words(self):
+        s = Session(save=False)
+        view = s.do("new_session", mode="tournament")
+        self.assertEqual(toast_of(view), "New tournament started")
+        self.assertEqual(view["strip"]["stage"], {"code": "unknown", "label": "ADD LEFT AND PAID"})
+        self.assertEqual(s.do("set_tournament", remaining=96)["strip"]["stage"]["label"], "ADD PAID")
+        self.assertEqual(s.do("set_tournament", remaining="", paid=75)["strip"]["stage"]["label"], "ADD LEFT")
+        self.assertEqual(s.do("set_tournament", remaining=96)["strip"]["stage"]["code"], "approach")
+        self.assertIn("Spin & Gold", toast_of(s.do("new_session", mode="spin")))
+
+
+class Vis1TheFinishedHandKeepsItsNames(unittest.TestCase):
+    """VIS-1 and OPS-15 (contract 10): view.hand.positions and view.hand.button are the hand's own, also after it."""
+
+    def test_vis_1_positions_and_button_of_the_hand_on_screen(self):
+        s = tournament(size=6, button=1)
+        view = s.do("deal")
+        names = {"1": "BTN", "2": "SB", "3": "BB", "4": "LJ", "5": "HJ", "6": "CO"}
+        self.assertEqual((view["hand"]["positions"], view["hand"]["button"]), (names, 1))
+        play(s, "4 raise 500, 1 call, 3 call")
+        for street in ("flop", "turn", "river"):                    # checked down
+            s.do("close_round")
+        view = s.do("award", winner=4)
+        self.assertEqual(view["hand"]["needs"], "next")
+        self.assertEqual((view["hand"]["positions"], view["hand"]["button"]), (names, 1))      # the hand's own
+        self.assertEqual((view["table"]["button"], view["table"]["seats"][0]["pos"]), (2, "CO"))  # the next hand's
+        self.assertEqual(view["hand"]["result"]["winners"][0]["pos"], names["4"])
+        view = s.do("deal")
+        self.assertEqual((view["hand"]["button"], view["hand"]["positions"]["1"]), (2, "CO"))
+        json.dumps(view)
+
+    def test_vis_1_a_player_who_went_out_keeps_his_name_in_the_finished_hand(self):
+        s = tournament(size=6, stacks=[10000, 2000, 10000, 10000, 10000, 10000])
+        s.do("deal")
+        play(s, "1 raise 500, 2 allin, 1 call")
+        view = s.do("award", winner=1)
+        self.assertEqual((view["hand"]["positions"]["2"], view["hand"]["button"]), ("SB", 1))
+        self.assertTrue(view["table"]["seats"][1]["empty"])
+        self.assertEqual(view["table"]["button"], 2)                # dead button: seat 2 is empty now
+
+
+def marked(s) -> list:
+    """The hand line as text: * an action nobody typed, ~ one that follows from a later action ("he must have called")."""
+    return [item["text"] + ("*" if item.get("auto") else "") + ("~" if item.get("inferred") else "")
+            for item in s.view()["hand"]["line"]]
+
+
+def chips(s):
+    view = s.view()
+    return sum(x["stack"] for x in view["table"]["seats"] if not x["empty"]) + view["hand"]["pot"]
+
+
+class Rob1ForgottenCaller(unittest.TestCase):
+    """ROB-1 and OPS-3: an action typed for a player whose fold was only implied on an earlier street.
+
+    He must have called there: the fold becomes a call on its own street and the typed action
+    is recorded on the street being played.  Never is it read as an action of the earlier street.
+    """
+
+    def the_reviewers_hand(self):
+        """6 seats, 100/200 ante 25, button on hero.  CO raises to 500, hero calls, flop Ks 7d 2c."""
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        s.do("set_cards", board="Ks7d2c")                           # the blinds get the implied fold
+        self.assertEqual(marked(s)[-3:], ["SB fold*", "BB fold*", "Ks 7d 2c"])
+        return s
+
+    def test_rob_1_the_reviewers_hand_a_bet(self):
+        s = self.the_reviewers_hand()
+        total = chips(s)
+        view = s.do("act", seat=3, kind="bet", amount=600)          # the big blind, who had called, leads
+        self.assertEqual(toast_of(view), "BB was folded before the flop on the record: now he called there, "
+                                         "and bets 600 here. Backspace takes it back.")
+        hand = view["hand"]
+        self.assertEqual((hand["phase"], hand["to_call"], hand["target_is_hero"], hand["board"]),
+                         ("flop", 600, True, ["Ks", "7d", "2c"]))
+        self.assertEqual(marked(s), ["AhKh", "LJ fold*", "HJ fold*", "CO raise 2.5bb", "You call", "SB fold*",
+                                     "BB call~", "Ks 7d 2c", "BB bet 3bb"])
+        self.assertEqual((hand["pot"], chips(s)), (1450 + 300 + 600, total))
+        self.assertEqual([e["street"] for e in state(s).log if e["seat"] == 3], ["preflop", "flop"])
+        view = s.do("undo")                                         # one step takes both back
+        self.assertEqual((marked(s)[-3:], view["hand"]["pot"]), (["SB fold*", "BB fold*", "Ks 7d 2c"], 1450))
+
+    def test_rob_1_a_check(self):
+        s = self.the_reviewers_hand()
+        view = s.do("act", seat=3, kind="check")
+        self.assertIn("now he called there, and checks here", toast_of(view))
+        self.assertEqual((marked(s)[-3:], view["hand"]["phase"], view["hand"]["pot"]),
+                         (["BB call~", "Ks 7d 2c", "BB check"], "flop", 1750))
+
+    def test_rob_1_an_all_in(self):
+        s = self.the_reviewers_hand()
+        view = s.do("act", seat=3, kind="allin")
+        self.assertIn("now he called there, and moves all-in here", toast_of(view))
+        self.assertEqual((view["hand"]["phase"], view["hand"]["to_call"]), ("flop", 19475))
+        self.assertEqual(marked(s)[-1], "BB all-in 97.4bb")
+
+    def test_rob_1_a_call_behind_hero_waits_for_hero(self):
+        s = self.the_reviewers_hand()
+        s.do("act", seat=6, kind="bet", amount=700)                 # hero to act
+        err = refused(s, "act", seat=3, kind="call")                # it would be recorded as hero's fold
+        self.assertEqual(err.message, "BB folded before the flop on the record.")
+        self.assertEqual(err.fix, "Undo to that point, or select that fold on the hand line and change it to a call first.")
+        s.do("act", kind="call")                                    # hero calls: the flop is over
+        view = s.do("act", seat=3, kind="call")                     # now the forgotten caller fits behind him
+        self.assertEqual(marked(s)[-6:], ["BB call~", "Ks 7d 2c", "BB check*", "CO bet 3.5bb", "You call", "BB call"])
+        self.assertEqual((view["hand"]["phase"], view["hand"]["needs"]), ("turn", "board"))
+
+    def test_rob_1_the_cases_that_are_refused(self):
+        # a fold that was typed: the hand line is the place to change it
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "5 fold, 6 raise 500, 1 call")
+        s.do("set_cards", board="Ks7d2c")
+        err = refused(s, "act", seat=5, kind="bet", amount=600)
+        self.assertEqual((err.message, err.fix), ("HJ folded before the flop.",
+                                                  "Select that fold on the hand line to change it."))
+        # the call he must have made would put him all-in: he cannot bet the flop
+        s = tournament(size=6, level="100/200/25", stacks=[20000, 20000, 400, 20000, 20000, 20000])
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        s.do("set_cards", board="Ks7d2c")
+        err = refused(s, "act", seat=3, kind="bet", amount=600)
+        self.assertEqual(err.message, "BB folded before the flop on the record.")
+        self.assertIn("change it to a call first", err.fix)
+        # the typed action itself is not possible on the corrected record: the usual sentence
+        s = self.the_reviewers_hand()
+        s.do("act", seat=6, kind="bet", amount=700)
+        s.do("act", kind="call")                                    # the flop is over; the turn card is wanted
+        self.assertIn("cannot check: 700 to call", refused(s, "act", seat=3, kind="check").message)
+        # a player who is sitting out
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("set_status", seat=3, status="away")
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        s.do("set_cards", board="Ks7d2c")
+        self.assertIn("sitting out", refused(s, "act", seat=3, kind="bet", amount=600).message)
+
+    def test_rob_1_folded_twice_on_the_way_he_called_both_times(self):
+        s = self.the_reviewers_hand()
+        s.do("act", seat=6, kind="bet", amount=700)
+        s.do("act", kind="call")
+        s.do("set_cards", board="Ks7d2c5h")                         # the turn
+        total = chips(s)
+        view = s.do("act", seat=3, kind="check")
+        self.assertEqual(marked(s)[-7:], ["Ks 7d 2c", "BB check*", "CO bet 3.5bb", "You call", "BB call~", "5h", "BB check"])
+        self.assertEqual([e["street"] for e in state(s).log if e["seat"] == 3], ["preflop", "flop", "flop", "turn"])
+        self.assertEqual((view["hand"]["phase"], chips(s)), ("turn", total))
+        self.assertEqual([(e["kind"], e["to"]) for e in state(s).log if e["seat"] == 1], [("call", 500), ("call", 700)])
+
+    def test_ops_3_the_slip_5_a_on_the_flop(self):
+        """Hero raises on the button, the big blind calls, flop: then an all-in is typed for a player passed by."""
+        s = tournament(size=8, level="300/600/75", stacks=[20000] * 8)
+        s.do("deal", hero_cards="AhKd")
+        s.do("act", kind="raise", amount=1200)
+        s.do("act", seat=3, kind="call")
+        s.do("set_cards", board="Ks7d2c")
+        self.assertEqual(s.view()["hand"]["pot"], 3300)
+        view = s.do("act", seat=5, kind="allin")
+        self.assertIn("UTG+1 was folded before the flop on the record", toast_of(view))
+        self.assertNotIn("dropped", toast_of(view))
+        hero = [(e["street"], e["kind"], e["to"], e["auto"]) for e in state(s).log if e["seat"] == 1]
+        self.assertEqual(hero, [("preflop", "raise", 1200, False)])                 # his raise is as he made it
+        self.assertEqual((view["hand"]["phase"], view["hand"]["target_is_hero"], view["hand"]["needs"]),
+                         ("flop", True, "action"))                                  # and the decision is still his
+        self.assertFalse(view["table"]["seats"][0]["folded"])
+        self.assertEqual(marked(s)[-4:], ["UTG+1 call~", "Ks 7d 2c", "BB check*", "UTG+1 all-in 31.2bb"])
+        view = s.do("undo")
+        self.assertEqual((view["hand"]["pot"], view["hand"]["target_is_hero"]), (3300, True))
+
+    def test_ops_3_a_typed_action_is_never_read_on_another_street(self):
+        """Whatever is typed on the flop for a seat that was passed by before it, no pre-flop raise comes of it."""
+        for kind, amount in (("bet", 600), ("raise", 1800), ("allin", None), ("check", None), ("call", None), ("fold", None)):
+            for seat in (2, 3, 4, 5):
+                s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+                s.do("deal", hero_cards="AhKh")
+                play(s, "6 raise 500, 1 call")
+                s.do("set_cards", board="Ks7d2c")
+                try:
+                    s.do("act", seat=seat, kind=kind, amount=amount)
+                except ModelError:
+                    pass
+                st = state(s)
+                self.assertEqual(st.phase, "flop", (kind, seat))
+                self.assertEqual([(e["kind"], e["to"]) for e in st.log if e["street"] == "preflop" and not e["auto"]
+                                  and e["seat"] in (6, 1)], [("raise", 500), ("call", 500)], (kind, seat))
+                self.assertFalse([e for e in st.log if e["street"] == "preflop" and e["kind"] in ("raise", "bet")
+                                  and e["seat"] == seat], (kind, seat))
+                self.assertNotIn(1, st.folded)
+
+    def test_ops_3_hero_is_never_dropped_changed_or_folded_by_a_replacement(self):
+        s = table_a()                                               # hero on the button
+        s.do("set_cards", hero="AKs")
+        play(s, "1 raise 500")                                      # 4, 5 and 6 are passed by
+        err = refused(s, "act", seat=5, kind="raise", amount=1500)  # a raise in front would undo hero's own
+        self.assertIn("your own action", err.message)
+        self.assertIn("hand line", err.fix)
+        view = s.do("act", seat=5, kind="call")                     # the forgotten limper is fine
+        self.assertEqual(marked(s), ["AKs", "LJ fold*", "HJ call", "CO fold*", "You raise 2.5bb"])
+        self.assertIsNone(view["toast"])
+        s = table_a()
+        play(s, "4 raise 500, 1 call")                              # hero called 500
+        err = refused(s, "act", seat=5, kind="raise", amount=1500)  # his call would become a call of 1,500
+        self.assertIn("your own action", err.message)
+
+
+class Ops14LateCaller(unittest.TestCase):
+    """OPS-14 (contract 5): while the hand waits for cards or a result, a player passed by in the round just closed acts."""
+
+    def test_ops_14_the_late_caller_at_the_showdown(self):
+        s = tournament(size=8, level="300/600/75", stacks=[20000] * 8)
+        s.do("deal", hero_cards="AhKd")
+        play(s, "6 raise 1200, 7 call, 1 raise 4000, 6 call, 7 call")
+        s.do("set_cards", board="Ks7d2c")
+        play(s, "1 allin, 7 allin")                                 # seat 6 is passed by: an implied fold
+        view = s.view()
+        self.assertEqual((view["hand"]["needs"], view["hand"]["phase"]), ("result", "showdown"))
+        self.assertEqual(len(view["hand"]["pots"][0]["eligible"]), 2)
+        view = s.do("act", seat=6, kind="call")
+        self.assertEqual(toast_of(view), "Added to the betting on the flop: LJ calls all-in")
+        self.assertEqual((view["hand"]["needs"], sorted(view["hand"]["pots"][0]["eligible"])), ("result", [1, 6, 7]))
+        self.assertEqual(marked(s)[-3:], ["You all-in 26.5bb", "LJ call all-in", "HJ call all-in"])
+        self.assertIn("all-in already", refused(s, "act", seat=6, kind="call").message)
+        self.assertIn("The betting is over", refused(s, "act", kind="call").message)
+
+    def test_ops_14_the_late_caller_while_the_flop_is_wanted(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        view = s.do("close_round")
+        self.assertEqual((view["hand"]["phase"], view["hand"]["needs"]), ("flop", "board"))
+        view = s.do("act", seat=3, kind="call")                     # the big blind had called
+        self.assertEqual(toast_of(view), "Added to the betting before the flop: BB calls")
+        self.assertEqual((view["hand"]["phase"], view["hand"]["needs"], view["hand"]["pot"]), ("flop", "board", 1750))
+        view = s.do("act", seat=2, kind="raise", amount=2000)       # and the small blind had raised: the round is open again
+        self.assertEqual((view["hand"]["phase"], view["hand"]["to_call"], view["hand"]["target_is_hero"]),
+                         ("preflop", 1500, True))
+        self.assertIn("SB raises to 2,000", toast_of(view))
+
+    def test_ops_14_an_implied_check_can_become_a_bet(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call, 3 call")
+        s.do("set_cards", board="Ks7d2c")
+        s.do("close_round")                                         # checked through, says Enter
+        self.assertEqual((s.view()["hand"]["phase"], s.view()["hand"]["needs"]), ("turn", "board"))
+        view = s.do("act", seat=6, kind="bet", amount=700)          # no: the cutoff had bet the flop
+        self.assertIn("Added to the betting on the flop: CO bets 700", toast_of(view))
+        self.assertEqual((view["hand"]["phase"], view["hand"]["to_call"], view["hand"]["target_is_hero"]),
+                         ("flop", 700, True))
+
+    def test_ops_14_no_seat_named_is_the_next_street_as_before(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "4 call")
+        s.do("close_round")                                         # hero and the blinds take the default
+        self.assertEqual((s.view()["hand"]["phase"], s.view()["hand"]["needs"]), ("flop", "board"))
+        view = s.do("act", kind="check")                            # the board is skipped: the action is on the flop
+        self.assertEqual((view["hand"]["phase"], state(s).log[-1]["street"], toast_of(view)), ("flop", "flop", ""))
+
+    def test_ops_14_what_was_typed_stays_and_a_typed_fold_names_its_street(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "4 fold, 6 raise 500, 1 call")
+        s.do("close_round")
+        err = refused(s, "act", seat=4, kind="call")
+        self.assertEqual(err.message, "LJ folded.")                 # in the round just closed: no street to name
+        s.do("set_cards", board="Ks7d2c")
+        self.assertEqual(refused(s, "act", seat=4, kind="call").message, "LJ folded before the flop.")
+        view = s.do("act", seat=6, kind="check")                    # a player who is in simply acts
+        self.assertEqual((view["hand"]["phase"], view["hand"]["target_is_hero"]), ("flop", True))
+
+    def test_ops_14_all_in_or_fold_a_shove_in_front_of_hero_noticed_late(self):
+        s = aof(stacks={4: 5})                                      # CO seat 4 (5bb), hero on the button
+        s.do("act", kind="allin")                                   # hero shoves; the cutoff is passed by
+        view = s.do("act", seat=4, kind="allin")                    # no: the cutoff had shoved first
+        self.assertEqual([(e["seat"], e["allin"], e["auto"]) for e in state(s).log], [(4, True, False), (1, True, False)])
+        self.assertIsNone(view["toast"])
+        s.do("close_round")                                         # the blinds fold
+        view = s.do("act", seat=3, kind="allin")                    # ... and the big blind had called after all
+        self.assertIn("Added to the betting before the flop: BB calls all-in", toast_of(view))
+        self.assertEqual(sorted(view["hand"]["pots"][0]["eligible"]), [1, 3, 4])
+
+    def test_ops_14_a_player_sitting_out_keeps_his_defaults(self):
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("set_status", seat=3, status="away")
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call")
+        s.do("close_round")
+        err = refused(s, "act", seat=3, kind="call")
+        self.assertIn("sitting out", err.message)
+        self.assertIn("back", err.fix)
+
+
+class SeenInPassing(unittest.TestCase):
+    """Small things the reviewers met on the way (the addendum's last list)."""
+
+    def test_icm_is_exact_only_with_a_prize_for_every_paid_place(self):
+        s = tournament(size=6, entrants=500, remaining=96, paid=75)
+        self.assertEqual((s.view()["strip"]["icm"], s.view()["strip"]["prizes_typed"]), ("on", 0))
+        strip = s.do("set_tournament", payouts="1:1000 2:600 3:400")["strip"]      # three prizes for 75 places
+        self.assertEqual((strip["icm"], strip["prizes_typed"], strip["paid"]), ("on", 3, 75))
+        strip = s.do("set_tournament", payouts="1:1000 2:600 3:400 4-75:20")["strip"]
+        self.assertEqual((strip["icm"], strip["prizes_typed"]), ("exact", 75))
+        strip = s.do("set_tournament", paid="")["strip"]            # no number of paid places: the list is the ladder
+        self.assertEqual(strip["icm"], "exact")
+        self.assertEqual(s.do("set_tournament", payouts="auto")["strip"]["prizes_typed"], 0)
+
+    def test_the_whole_text_is_named_when_an_amount_cannot_be_read(self):
+        s = tournament(size=6)
+        s.do("deal")
+        self.assertIn("'banana'", refused(s, "act", seat=4, kind="raise", amount="banana").message)
+        self.assertIn("'banana'", refused(s, "set_stack", seat=2, text="banana").message)
+
+    def test_a_hand_left_after_heros_fold_is_you_folded(self):
+        s = tournament(size=6, level="100/200/25")
+        s.do("deal", hero_cards="72o")
+        s.do("act", kind="fold")                                    # hero folds on the button
+        view = s.do("deal")                                         # N: the next hand
+        entry = view["history"][0]
+        self.assertEqual((entry["no"], entry["skipped"], entry["did"], entry["net"]), (1, False, "fold", -25))
+        self.assertIn("Result: you folded (-25); who won the pot was not recorded", entry["text"])
+        self.assertNotIn("Result: not recorded", entry["text"])
+        s.do("set_cards", hero="AKs")
+        s.do("act", seat=5, kind="raise", amount=500)
+        view = s.do("skip_hand", hero_in=True)                      # hero was still in: that one is not recorded
+        self.assertEqual((view["history"][0]["skipped"], view["history"][0]["net"]), (True, None))
 
 
 if __name__ == "__main__":

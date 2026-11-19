@@ -148,7 +148,11 @@ button.value:hover{background:var(--line)}
 .slab.passive{border:2px solid var(--white);padding:11px 15px}
 .slab.fold{border:1px solid var(--line-strong)}
 .slab.wait{background:var(--ink);border:1px dashed var(--grey);color:var(--grey)}
-.slab .head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.slab .head{display:flex;justify-content:space-between;align-items:center;gap:12px;min-width:0}
+/* Style and moves (and re-entry, bounty): under 1024 between the eyebrow and the pips, from 1024 on a line of their own. */
+.slab .mode{flex:1 1 0;min-width:0;height:20px;margin:-2px 0;padding:0 2px;border-radius:6px;text-align:right;font:600 12px/20px var(--body);color:inherit;opacity:.85;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slab .mode:hover{opacity:1;text-decoration:underline;text-underline-offset:3px}
 .sure{display:flex;align-items:center;gap:6px}
 .pips{display:flex;gap:3px}
 .pips i{width:6px;height:12px;border-radius:2px;border:1.5px solid currentColor}
@@ -321,7 +325,21 @@ button.pod:hover{border-color:var(--grey)}
 .preset:active{background:var(--line)}
 
 /* ---------- 10. Action bar ---------- */
-.actions{display:flex;gap:6px;align-items:stretch;min-width:0}
+/* Two rows: whose action the keys record, then the buttons. While a hand is played the buttons sit in
+   six fixed slots (the coach's button, four moves, the rest), so no button turns up where another was. */
+.actions{display:flex;flex-direction:column;gap:4px;min-width:0}
+.actions .whose{display:flex;align-items:baseline;gap:8px;height:16px;min-width:0;padding:0 2px;white-space:nowrap;overflow:hidden}
+.actions .whose b{font:800 15px/16px var(--display);text-transform:uppercase;letter-spacing:.02em;color:var(--white);flex:none}
+.actions .whose .note{font:500 12px/16px var(--body);color:var(--soft);min-width:0;overflow:hidden;text-overflow:ellipsis}
+.actions .row{display:flex;gap:6px;align-items:stretch;min-width:0}
+.actions .slots{display:grid;grid-template-columns:minmax(0,1.8fr) repeat(4,minmax(0,1fr)) minmax(0,1.3fr);gap:6px;align-items:stretch;min-width:0}
+.actions .slots .btn{min-width:0;grid-row:1;padding:0 2px}
+.actions .slots .btn .label{gap:4px;font-size:15px}
+.actions .slots [data-fk=rest] kbd,.actions .slots [data-fk^=skip-] kbd{display:none}     /* under 1024 the last slot has no room for the word Enter */
+.btn.tick .box{width:14px;height:14px;border:2px solid var(--grey);border-radius:4px;flex:none}
+.btn.tick[aria-checked=true]{border-color:var(--white)}
+.btn.tick[aria-checked=true] .box{background:var(--white);border-color:var(--white)}
+.field .unit{flex:none;font:700 11px/1 var(--body);color:var(--grey)}
 .btn{min-height:48px;min-width:44px;padding:0 8px;border-radius:var(--r-btn);border:1px solid var(--line-strong);background:var(--ink);color:var(--white);
   font:800 16px/1 var(--display);text-transform:uppercase;letter-spacing:.02em;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
   gap:3px;white-space:nowrap;flex:1 1 0;transition:border-color .12s,background-color .12s}
@@ -338,8 +356,6 @@ button.pod:hover{border-color:var(--grey)}
 .btn:disabled,.btn.primary:disabled{background:var(--line);border-color:var(--line);color:var(--grey)}
 .btn:disabled kbd,.btn:disabled .sub{border-color:var(--line-strong);color:var(--grey)}
 .btn.compact{min-height:44px;flex:none;padding:0 14px;font-size:15px;flex-direction:row;gap:6px}
-.actions .about{flex:1.8 1 0;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 4px}
-.actions .about .who{font:800 16px/1.1 var(--display);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ---------- 11. Menus and sheets ---------- */
 /* A menu lies over the middle of the table, a little above it, so hero's cards stay in sight below. */
@@ -375,6 +391,12 @@ button.pod:hover{border-color:var(--grey)}
 .pick:disabled{color:var(--grey);border-color:var(--line);background:none}
 .pick .suit{width:20px;height:20px}
 .pick.word{font:600 13px/1 var(--body)}
+/* The exact holdings of a hand typed as a class: one button each, drawn as its two cards. */
+.holdings{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.holdings.n6{grid-template-columns:repeat(3,minmax(0,1fr))}
+.pick.holding{display:flex;align-items:center;justify-content:center;gap:3px;height:48px}
+.pick.holding .card{--card-w:26px;--card-h:36px}
+.pick.holding:disabled .card{opacity:.35}
 
 .scrim{position:fixed;inset:0;width:100%;height:100%;background:rgba(10,10,11,.74);z-index:20;cursor:default}
 .sheet{position:fixed;z-index:21;top:12px;left:50%;transform:translateX(-50%);width:min(608px,calc(100vw - 32px));max-height:calc(100vh - 24px);
@@ -398,7 +420,10 @@ button.pod:hover{border-color:var(--grey)}
 .keys .combo{display:inline-flex;gap:3px}
 .keys dd{margin:0;font-size:13px;color:var(--soft)}
 .history{display:flex;flex-direction:column}
-.history .hrow{display:grid;grid-template-columns:44px 64px 56px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:40px;border-bottom:1px solid var(--line);font-size:13px;color:var(--soft)}
+.history .hrow{display:grid;grid-template-columns:44px 64px 56px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:44px;width:100%;border-bottom:1px solid var(--line);font-size:13px;color:var(--soft);text-align:left}
+.history .hrow:hover,.history .hrow[aria-expanded=true]{background:var(--ink)}
+.history .htext{display:flex;flex-direction:column;gap:8px;padding:10px 0 12px;border-bottom:1px solid var(--line)}
+.history .htext pre{margin:0;font:500 12px/1.5 var(--body);color:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
 .history .hrow .num{font-size:16px;color:var(--white)}
 .history .hrow b{color:var(--white);font-weight:600}
 .history .pill{height:18px;padding:0 7px;font-size:10px;margin-left:6px}
@@ -422,6 +447,19 @@ button.pod:hover{border-color:var(--grey)}
 textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--body);resize:vertical;width:100%}
 .check{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--soft);cursor:pointer}
 .check input{width:20px;height:20px;accent-color:var(--white);flex:none;cursor:pointer}
+/* A value the server refused: the field is marked with a dashed white edge and the reason stands under it. */
+.field.bad,.in[aria-invalid=true]{border:2px dashed var(--white)}
+.field.bad{padding:0 9px}
+.field-error{margin:0;padding:8px 10px;background:var(--ink);border:1px solid var(--white);border-radius:var(--r-in);
+  font:500 13px/1.35 var(--body);color:var(--white);min-width:0}
+.field-error small{display:block;font-size:12px;color:var(--soft)}
+/* In the strip and on the action bar there is no room in the row: the reason floats under (over) the field. */
+.editing{position:relative;display:inline-flex}
+.editing .field-error{position:absolute;left:0;top:calc(100% + 6px);z-index:9;width:max-content;max-width:min(340px,70vw);box-shadow:0 0 0 4px var(--ink)}
+.actions .amount{position:relative}
+.actions .amount .field-error{position:absolute;left:0;bottom:calc(100% + 8px);z-index:9;width:max-content;max-width:min(380px,80vw);box-shadow:0 0 0 4px var(--ink)}
+.line .amount .field-error{flex:1;padding:4px 10px;line-height:1.25;max-height:44px;overflow:hidden}
+.line .amount .field-error small{display:inline;margin-left:6px}
 
 /* ---------- 13. Toast ---------- */
 /* The toast lies over the "Why and range" line under the slab (first run: its own row under the form). */
@@ -442,6 +480,7 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
 .setup .lead{font-size:14px;color:var(--soft)}
 .stacked{display:flex;flex-direction:column;gap:10px}
 .btn.start{flex:none;align-self:stretch;font-size:18px;flex-direction:row;gap:8px}
+.setup .hint{font-size:12px;color:var(--grey)}
 
 /* ---------- 15. Narrower and wider screens ---------- */
 /* Under 560 the table box is 512 wide: pods and board cards give up a few pixels so five cards still fit between the bets. */
@@ -469,8 +508,10 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .line{grid-row:3}
   .actions{grid-row:4;align-self:start}
   .first-run{grid-column:1/-1}
-  /* From 1024 the toast lies at the foot of the advice column. */
-  .toasts{grid-column:2;grid-row:2/5}
+  /* From 1024 the toast lies in the table column, over the hand line: straight above the action bar,
+     where the eyes are. What to do instead follows on the same line, so the toast keeps to that row. */
+  .toasts{grid-column:1;grid-row:3;align-self:end}
+  .toast .text small{display:inline;margin-left:8px}
   .app.first .toasts{grid-column:1/-1;grid-row:3}
   .whyline{display:none}
   .advice-tabs{display:flex}
@@ -478,6 +519,8 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .advice[data-panel=range] > .chart{display:flex}
   .slab{padding:16px 20px}
   .slab.passive{padding:15px 19px}
+  .slab .head{flex-wrap:wrap;row-gap:2px}
+  .slab .mode{order:3;flex:1 0 100%;text-align:left;padding:0}
   .act{flex-direction:column;align-items:flex-start;row-gap:4px}
   .slab .pill{align-self:flex-start;margin-top:2px}
   .stack .other{display:block}
@@ -491,7 +534,10 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .value .row small{font-size:12px;line-height:1.2}
   .btn{font-size:18px;padding:0 12px}
   .btn .label{gap:8px}
-  .actions{gap:8px}
+  .actions .row,.actions .slots{gap:8px}
+  .actions .slots .btn{padding:0 8px}
+  .actions .slots .btn .label{gap:8px;font-size:18px}
+  .actions .slots [data-fk=rest] kbd,.actions .slots [data-fk^=skip-] kbd{display:inline-grid}
   .amount .field{width:176px}
   .amount .btn kbd{display:inline-grid}
   .sheet.side{left:auto;right:16px;transform:none;width:440px;bottom:12px}

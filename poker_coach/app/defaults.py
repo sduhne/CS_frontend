@@ -93,6 +93,13 @@ ANTE_SHARE_OF_BB = 0.125                # a typed big blind alone gets this ante
 # "ante_first" is what the push/fold solver assumes; "blind_first" is the other house rule.
 SHORT_POST = "ante_first"
 
+# Where the dealer button goes after a hand in which a player went out.
+# "dead": the big blind always moves on by one player, and the button may rest on the empty seat
+# of a player who is out (the rule of live rooms and of most tournament sites).
+# "forward": the button always goes to the next player, and the two players after it post.
+BUTTON_RULES = ("dead", "forward")
+BUTTON_RULE = "dead"
+
 # --------------------------------------------------------------------------
 # Bet and raise sizes offered as buttons
 # --------------------------------------------------------------------------
@@ -207,6 +214,9 @@ KEYS = {"table": KEYS_TABLE, "seat": KEYS_SEAT, "type": KEYS_TYPE}
 # Housekeeping
 # --------------------------------------------------------------------------
 
+NAME_LENGTH = 40                        # a player's name is cut to this many characters
+NOTE_LENGTH = 500                       # ... and a note to this many (every undo step carries a copy)
+TOURNAMENT_NAME_LENGTH = 80
 UNDO_LIMIT = 200                        # snapshots kept, one per accepted change
 HISTORY_IN_VIEW = 200                   # finished hands sent to the browser, newest first
 HANDS_KEPT = 500                        # finished hands kept in the session file

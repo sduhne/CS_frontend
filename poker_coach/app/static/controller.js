@@ -46,6 +46,9 @@
   let toastShown = "";                    // the toast on screen, to start its clock once
   let toastTimer = null;
   let setupFocused = "";                  // the mode whose first-run form already got the focus
+  let fieldWaits = 0;                     // values sent from a field and not answered yet: keys wait, the answer says where they go
+  let menuDrawn = null;                   // the seat whose menu is drawn, and whether the screen has shown it yet
+  let menuSeen = false;
 
   /* ---------- 2. The server ---------- */
 
@@ -53,20 +56,57 @@
 
   const NO_ANSWER = {error: {message: "The program is not answering.",
                              fix: "Is it still running? Start it again (python -m poker_coach app) and reload this page."}};
+  const DROPPED = {dropped: true};        // an intent that was not sent: the table had changed under the keys before it
+  let epoch = 0;                          // goes up each time the table turns out to have changed elsewhere
 
-  function fetchView() {
-    return fetch("/api/view", {cache: "no-store"}).then(readJson).then(
-      (view) => { takeView(view); draw(); askAdvice(); },
-      () => { state.ui.toast = {text: NO_ANSWER.error.message, fix: NO_ANSWER.error.fix, error: true}; draw(); });
+  // Read the table from the program. `ifNew`: only take it when it is another revision than the one on
+  // screen (the tab got the focus back: another window may have changed the table meanwhile).
+  function fetchView(ifNew) {
+    return fetch("/api/view", {cache: "no-store"}).then((response) => response.json().then((data) => ({ok: response.ok, data: data}))).then(
+      (answer) => {
+        const view = answer.data;
+        if (!answer.ok || !view || view.error || view.rev == null) {
+          // The program answered, but with no table: say what it said. The first-run form is for a
+          // session that does not exist yet, never for one that cannot be shown.
+          const error = (view && view.error) || {};
+          showViewError({message: error.message || "The program could not show the table.",
+                         fix: error.fix || "Undo takes back the last change. If that does not help, start a new tournament: the old file stays in its folder."});
+          return;
+        }
+        if (ifNew && state.view && state.view.rev === view.rev && !!state.view.first_run === !!view.first_run && !state.ui.viewError) return;
+        state.ui.viewError = null;
+        takeView(view);
+        draw();
+        askAdvice();
+      },
+      () => {
+        if (ifNew && state.view) return;                    // the table on screen stays; the next key says if the program is gone
+        showViewError(Object.assign({down: true}, NO_ANSWER.error));
+      });
+  }
+  function showViewError(error) {
+    state.view = null;
+    state.advice = null;
+    state.ui = {viewError: error, sheet: state.ui.sheet === "new" ? "new" : null};
+    draw();
   }
 
   // Send one intent. `plan` says where the keyboard focus belongs afterwards (see draw);
-  // `then(ok)` runs when the answer is in, before the page is drawn.
+  // `then(ok, error)` runs when the answer is in, before the page is drawn.
+  // Every intent carries the revision of the view on screen ("rev"); one that was typed ahead is sent
+  // once the answer before it is in, so it carries the revision of that answer. When the program says
+  // the table had changed meanwhile (code "stale"), nothing was done: the page shows the table as it
+  // is now, and what was typed ahead for the old one is dropped.
   function sendIntent(intent, plan, then) {
     busy += 1;
-    const post = () => fetch("/api/intent", {
-      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(intent),
-    }).then(readJson);
+    const made = epoch;
+    const post = () => {
+      if (made !== epoch) return DROPPED;
+      const rev = state.view && state.view.rev != null ? {rev: state.view.rev} : {};
+      return fetch("/api/intent", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(Object.assign({}, intent, rev)),
+      }).then(readJson);
+    };
     lastIntent = lastIntent.then(post).then(
       (answer) => intentAnswered(intent, answer, plan, then),
       () => intentAnswered(intent, NO_ANSWER, plan, then));
@@ -74,20 +114,133 @@
 
   function intentAnswered(intent, answer, plan, then) {
     busy -= 1;
+    if (answer === DROPPED) {             // typed for a table that had changed: not sent
+      if (then) then(false, {message: "", dropped: true});
+      draw(plan);
+      return;
+    }
     const error = answer.error;
-    if (answer.view) takeView(answer.view);
+    const before = state.view;
+    if (answer.view && answer.view.rev != null) {
+      state.ui.viewError = null;
+      takeView(answer.view);
+    }
+    if (error && error.code === "stale") {
+      // Another window (or an old tab) changed the table: nothing was done. Show it as it is.
+      epoch += 1;
+      waitingKeys.length = 0;
+      state.advice = null;
+      state.ui = Object.assign({}, state.ui, UI.only({}), {target: null, turn: null, awardTiers: null,
+        toast: {text: "The table had changed: look again and repeat.", fix: "It was changed in another window. Nothing was done here.", error: true}});
+      if (then) then(false, error);
+      draw({});
+      if (!answer.view) fetchView(); else askAdvice();
+      return;
+    }
     if (error) {
       state.ui.toast = {text: error.message, fix: error.fix, error: true};
       // A pot still needs a winner: keep the winners named so far, the bar asks for the next best hand.
-      if (intent.op === "award" && error.code === "side_pot") state.ui.awardTiers = intent.ranking;
+      if (intent.op === "award" && error.code === "side_pot") { state.ui.awardTiers = intent.ranking; state.ui.split = null; }
+      // A smaller table with a player on the last seat: the toast offers to clear the seat and remove it.
+      const offer = error && intent.op === "set_size" ? clearAndShrink(intent) : null;
+      if (offer) state.ui.toast.action = offer;
     } else {
       delete state.ui.toast;              // the toast that came with the new view shows
+      state.ui.fieldError = null;
+      sayWhatChanged(intent, before, state.view);
     }
-    if (then) then(!error);
+    const after = then ? then(!error, error) : null;       // (a field's answer may ask for the cursor: see fieldAnswered)
     draw(plan);
+    if (after && after.field) focusField(after.field, true);
     if (answer.view) askAdvice();
     if (!error && intent.op === "new_session") noticeWasShown();
     if (!busy) readWaitingKeys();
+  }
+
+  /* A change the model made without a word of its own gets one here, with Undo: a stack, a player
+     sitting out, a setting changed by one key. Nothing changes silently. */
+  function sayWhatChanged(intent, before, view) {
+    if (!before || !view || !view.table || !before.table || before.mode !== view.mode) return;
+    const words = [];
+    const fmt = UI.format;
+    const stackText = (seat) => view.unit === "bb" && view.mode !== "aof" ? fmt.bb(seat.stack_bb, true) + "bb"
+      : view.mode === "aof" ? fmt.bb(seat.stack, true) + "bb" : fmt.chips(seat.stack);
+    const who = (seat) => seat.is_hero ? "Your stack" : "Seat " + seat.seat;
+    if (intent.op === "set_stack" || intent.op === "set_stacks") {
+      const changed = [];
+      view.table.seats.forEach((seat) => {
+        const old = UI.seatOf(before, seat.seat);
+        if (!old || seat.empty || old.empty) return;
+        if (old.stack !== seat.stack) changed.push(who(seat) + ": " + stackText(old) + " to " + stackText(seat));
+        else if (old.stale && !seat.stale) changed.push(who(seat) + ": " + stackText(seat) + ", confirmed");
+      });
+      if (changed.length > 3) words.push(changed.length + " stacks changed");
+      else if (changed.length) words.push(changed.join(" \u00b7 "));
+    }
+    if (intent.op === "set_status") {
+      const seat = UI.seatOf(view, intent.seat), old = UI.seatOf(before, intent.seat);
+      if (seat && old && seat.status !== old.status && (seat.status === "away" || old.status === "away")) {
+        const name = seat.is_hero ? "You" : "Seat " + seat.seat + (seat.name ? " (" + seat.name + ")" : "");
+        if (seat.status === "away") words.push(seat.is_hero ? "You are sitting out: O sits you back in" : name + " sits out");
+        else words.push(seat.is_hero ? "You are back in" : name + " is back in");
+      }
+    }
+    if (intent.op === "set_config" || intent.op === "set_ante_kind" || intent.op === "set_tournament") {
+      const label = (list, value) => ((list || []).find((choice) => choice.value === value) || {label: String(value)}).label;
+      const C = UI.CHOICES, a = before.strip || {}, b = view.strip || {};
+      if (a.style !== b.style) words.push("Style: " + label(C.style, b.style));
+      if (a.plan !== b.plan) words.push("Moves: " + (UI.MOVES_WORDS[b.plan] || label(C.plan, b.plan)));
+      if (a.opponents !== b.opponents) words.push("Opponents: " + label(C.opponents[view.mode], b.opponents));
+      if (before.unit !== view.unit) words.push("Numbers in " + (view.unit === "bb" ? "big blinds" : "chips"));
+      if ((before.deck || "") !== (view.deck || "")) words.push("Deck: " + label(C.deck, view.deck));
+      const kind = (strip) => (strip.level || {}).ante_kind;
+      if (kind(a) !== kind(b)) words.push("Ante: " + label(C.ante_kind, kind(b)).toLowerCase());
+      if (!!a.reentry_open !== !!b.reentry_open) words.push(b.reentry_open ? "Re-entry is open" : "Re-entry is closed");
+      if (!!a.bounty !== !!b.bounty) words.push(b.bounty ? "Bounty tournament" : "No bounty");
+    }
+    // The blinds and the players left change every answer, and one key changes them.
+    if (["level_up", "level_down", "set_level", "set_ladder"].indexOf(intent.op) >= 0) {
+      // (new blinds typed during a hand wait for the next one: that level is the one to name)
+      const level = (strip) => { const now = (strip || {}).level || {}; return now.pending || now; };
+      const a = level(before.strip), b = level(view.strip);
+      if (a.sb !== b.sb || a.bb !== b.bb || (a.ante || 0) !== (b.ante || 0)) {
+        const waits = view.strip.level && view.strip.level.pending ? " from the next hand" : "";
+        words.push("Blinds: " + fmt.short(b.sb) + " / " + fmt.short(b.bb) + (b.ante ? ", ante " + fmt.short(b.ante) : ", no ante") + waits);
+      }
+    }
+    if (intent.op === "remaining" && before.strip && view.strip && before.strip.remaining !== view.strip.remaining && view.strip.remaining != null) {
+      words.push("Players left: " + fmt.chips(view.strip.remaining));
+    }
+    if (!words.length) return;
+    const own = words.join(" \u00b7 ");
+    const said = view.toast && view.toast.text ? String(view.toast.text) : "";
+    // The model's own sentence stays; ours is put in front unless it says the same.
+    const text = said && said.indexOf(own) < 0 ? own + " \u00b7 " + said : said || own;
+    state.ui.toast = {text: text, undo: !!(view.can && view.can.undo)};
+  }
+
+  // "- Seat" was refused because the seats above the new size are taken: what the toast offers instead.
+  function clearAndShrink(intent) {
+    const view = state.view;
+    if (!view || !view.table) return null;
+    const size = view.table.size;
+    const want = intent.size != null ? Number(intent.size) : size + Number(intent.delta || 0);
+    if (!(want < size) || intent.clear) return null;
+    const taken = view.table.seats.filter((seat) => seat.seat > want && !seat.empty).map((seat) => seat.seat);
+    if (!taken.length) return null;
+    const label = taken.length === 1 ? "Clear seat " + taken[0] + " and remove it" : "Clear seats " + taken.join(", ") + " and remove them";
+    return {label: label, send: {op: "set_size", size: want, clear: true}};
+  }
+
+  function fieldOf(fk) { return document.querySelector('[data-fk="' + fk + '"]'); }
+
+  // Put the cursor into a field; `select`: with its text selected, so typing replaces it.
+  function focusField(fk, select) {
+    const field = fieldOf(fk);
+    if (!field) return false;
+    if (document.activeElement !== field) field.focus();
+    if (select && field.select) field.select();
+    return true;
   }
 
   function takeView(view) {
@@ -146,23 +299,72 @@
   function apply(detail, plan, then) {
     if (detail.op === "act" && skipsHero(detail.seat)) {
       state.ui = Object.assign({}, state.ui, {seatMenu: null, target: null, amount: null});
-      toast("Your own action comes first.", "A player behind you cannot act before you do: F, C, X, R, A, or Space for the coach's play.");
+      toast("Your own action comes first.", "A player behind you cannot act before you do: " + ownKeys() + ", or Space for the coach's play.");
       return;
     }
-    if (detail.ui) {
-      state.ui = Object.assign({}, state.ui, detail.ui);
-      // The user closed the card picker and now opens something else: once that is closed, the cards are asked again.
-      const opens = ["seatMenu", "menu", "sheet", "selected", "edit", "amount"].some((name) => detail.ui[name] != null);
-      if (opens && !("pickerOff" in detail.ui)) state.ui.pickerOff = false;
+    // An action recorded for an opponent without aiming at his seat (a plain key, or a button of the bar
+    // while it names him): the user is recording the players in turn. The plain keys then keep going in
+    // turn, also once a raise makes hero owe a decision, until the turn reaches hero (see UI.actingSeat).
+    if (detail.op === "act" && "plain" in detail) {
+      const player = UI.seatOf(state.view, detail.seat);
+      if (detail.plain && player && !player.is_hero) state.ui.turn = UI.roundKey(state.view);
+      detail = Object.assign({}, detail);
+      delete detail.plain;
     }
+    // A value typed into a field (detail.from): what it closes is closed once the server has taken
+    // the value. A refused one stays in its open field, with the reason under it (see fieldAnswered).
+    const from = detail.op ? detail.from : null;
+    if (detail.ui && !from) patchUi(detail.ui);
     if (detail.cmd === "copy") copyText(detail.text);
+    if (detail.cmd === "reload") fetchView();
     if (detail.op) {
       const intent = Object.assign({}, detail);
       delete intent.ui;
       delete intent.cmd;
-      sendIntent(intent, plan, then);
+      delete intent.from;
+      delete intent.after;
+      // detail.after: what opens once the server has done it (New table, then the sheet for the stacks).
+      if (detail.after) {
+        const inner = then;
+        then = (ok, error) => { if (ok) patchUi(detail.after); return inner ? inner(ok, error) : null; };
+      }
+      if (from) {
+        fieldWaits += 1;
+        sendIntent(intent, plan, (ok, error) => {
+          fieldWaits -= 1;
+          const after = fieldAnswered(detail, ok, error);
+          if (then) then(ok, error);
+          return after;
+        });
+      } else {
+        sendIntent(intent, plan, then);
+      }
     }
     draw(plan);
+  }
+
+  function patchUi(patch) {
+    state.ui = Object.assign({}, state.ui, patch);
+    // The user closed the card picker and now opens something else: once that is closed, the cards are asked again.
+    const opens = ["seatMenu", "menu", "sheet", "selected", "edit", "amount"].some((name) => patch[name] != null);
+    if (opens && !("pickerOff" in patch)) state.ui.pickerOff = false;
+  }
+
+  // The server has answered a value that came from a field.
+  function fieldAnswered(detail, ok, error) {
+    const from = detail.from;
+    if (ok) {
+      if (detail.ui) patchUi(detail.ui);
+      // A seat's menu that was opened by its digit closes when a value is accepted (4 S 12.5k Enter).
+      if (state.ui.menuByKey && String(from.fk).indexOf("seat-") === 0) patchUi({seatMenu: null, target: null});
+      return null;
+    }
+    // Refused. While the field is still open it keeps what was typed, selected, and says why under it;
+    // the next keys go into it. (A field that was left meanwhile, or a whole form: the toast says why.)
+    if (!from.fk || !fieldOf(from.fk)) return null;
+    state.ui.fieldError = {fk: from.fk, text: error.message, fix: error.fix || "", value: from.value};
+    if (!state.ui.sheet) state.ui.toast = null;       // a sheet says it at its foot as well
+    return {field: from.fk};
   }
 
   // Hero's own action is always typed. The server gives every player who was passed over the passive
@@ -175,6 +377,9 @@
     if (!player || player.empty || player.folded || !player.in_hand) return false;     // the server says why these cannot act
     return (now.before_target || []).indexOf(seat) < 0;
   }
+
+  // The keys of hero's own action, for a sentence: All-In or Fold has two.
+  function ownKeys() { return state.view && state.view.mode === "aof" ? "A or F" : "F, C, X, R, A"; }
 
   function onPageEvent(event) {
     const detail = event.detail;
@@ -193,6 +398,31 @@
     if (plan) settleFocus(plan);
     focusFirstRun();
     watchToast();
+    watchSeatMenu();
+  }
+
+  // A seat's menu counts as open once the screen has shown it: a frame was painted with it.
+  function watchSeatMenu() {
+    const seat = state.ui.seatMenu != null && document.querySelector("#region-table .pop") ? state.ui.seatMenu : null;
+    if (seat === menuDrawn) return;
+    menuDrawn = seat;
+    menuSeen = false;
+  }
+  // Run `job` once the seat menu that is drawn now has been on the screen. Keys typed meanwhile wait.
+  function onceMenuSeen(job) {
+    if (menuSeen || menuDrawn == null) { job(); return; }
+    const seat = menuDrawn;
+    let ran = false;
+    busy += 1;
+    const run = () => {
+      if (ran) return;
+      ran = true;
+      busy -= 1;
+      if (menuDrawn === seat) { menuSeen = true; job(); }
+      if (!busy) readWaitingKeys();
+    };
+    requestAnimationFrame(() => requestAnimationFrame(run));
+    setTimeout(run, 150);                 // a window that is not being painted (it is hidden) must not hold the key for ever
   }
 
   // Which cards the table is waiting for: hero's, or a street's.
@@ -211,11 +441,17 @@
     if (!view || view.first_run || !view.table) return;
     const hand = view.hand;
     if (!hand || hand.needs !== "action") { ui.amount = null; ui.target = null; }
-    if (!hand || hand.needs !== "result") ui.awardTiers = null;
+    if (!hand || hand.needs !== "result") { ui.awardTiers = null; ui.split = null; }
     if (!hand || (ui.selected != null && !(hand.line || []).some((event) => event.i === ui.selected))) ui.selected = null;
+    if (ui.editing != null && ui.editing !== ui.selected) ui.editing = null;
+    if (ui.sheet !== "history") ui.handOpen = null;
+    // Recording in turn lasts for one betting round, and ends when the turn reaches hero.
+    if (ui.turn && (!hand || hand.needs !== "action" || ui.turn !== UI.roundKey(view) ||
+                    (hand.target_is_hero && !(hand.before_target || []).length))) ui.turn = null;
     if (!hand) ui.picker = null;
     if (ui.seatMenu != null && ui.seatMenu > view.table.size) ui.seatMenu = null;
     if (ui.seatMenu == null) ui.menuByKey = false;
+    if (ui.fieldError && !fieldIsOpen(ui, ui.fieldError.fk)) ui.fieldError = null;
 
     // CARDS: while the table waits for cards the picker is open, so the card keys are on.
     // It stays shut once the user closed it (ui.pickerOff), until other cards are wanted.
@@ -226,8 +462,17 @@
       ui.pickerOff = false;
       ui.picker = null;
     }
-    const nothingOpen = ui.seatMenu == null && !ui.menu && !ui.sheet && ui.selected == null && !ui.edit && !ui.amount;
+    const nothingOpen = ui.seatMenu == null && !ui.menu && !ui.sheet && ui.selected == null && !ui.edit && !ui.amount && !ui.split;
     if (slot && !ui.picker && !ui.pickerOff && nothingOpen) ui.picker = UI.freshPicker(slot);
+  }
+
+  // Is the field with this data-fk on screen, going by what is open?
+  function fieldIsOpen(ui, fk) {
+    if (fk.indexOf("seat-") === 0 || fk.indexOf("add-") === 0) return ui.seatMenu != null;
+    if (fk.indexOf("edit-") === 0) return ui.edit === fk.slice(5);
+    if (fk === "amount") return !!ui.amount;
+    if (fk === "event-amount") return ui.editing != null;
+    return !!ui.sheet;
   }
 
   // After a key: the focus goes into the field the key opened, else it rests on nothing, so the
@@ -350,23 +595,35 @@
 
   /* ---------- 5. Commands of the table (TABLE and ACTION) ---------- */
 
-  // Record an action. Without a seat it is for the player the action is on (hero whenever he still owes a decision).
+  // Record an action. Without a seat it is for the player the bar names: hero whenever he still owes a
+  // decision, else the next player; and the next player in turn while the user records in turn.
   function recordAct(kind, seat) {
     const now = hand();
+    const aimed = seat != null;
+    // A player named by his seat can also be given an action once the betting is over (the hand waits
+    // for a street's cards or for the result): a caller who was forgotten. The model reopens the round,
+    // or says in a sentence why it cannot.
+    const late = aimed && now && (now.needs === "board" || now.needs === "result" || (now.needs === "cards" && now.want_suits));
+    if (late) {
+      apply({op: "act", seat: seat, kind: kind, ui: UI.AFTER_ACT}, {});
+      return;
+    }
     if (!now || now.needs !== "action") {
       // Cards are wanted first: say so, and bring the card picker back if it was closed.
       if (now && (now.needs === "cards" || now.needs === "board")) state.ui.pickerOff = false;
       if (now && now.needs === "cards") toast("Your cards first.", "Type them: A K S, or A H K D.");
       else if (now && now.needs === "board") toast("The cards of this street first.", "Type them: K S 7 D 2 C. Enter skips the board.");
+      else if (now && now.needs === "result") toast("The betting is over.", "W or L says who won. A forgotten caller: his seat number, then C.");
       return;
     }
-    if (seat == null) seat = now.target;
-    if (kind === "bet" || kind === "raise") { askAmount(seat); return; }
-    apply({op: "act", seat: seat, kind: kind, ui: UI.AFTER_ACT}, {});
+    const plain = !aimed && state.ui.target == null;
+    if (!aimed) seat = UI.actingSeat(state.view, state.ui);
+    if (kind === "bet" || kind === "raise") { askAmount(seat, plain); return; }
+    apply({op: "act", seat: seat, kind: kind, plain: plain, ui: UI.AFTER_ACT}, {});
   }
 
   // A bet or a raise needs an amount.
-  function askAmount(seat) {
+  function askAmount(seat, plain) {
     const view = state.view, now = view.hand;
     if (view.mode === "aof") { toast("All-In or Fold has two moves.", "A is all-in, F is fold."); return; }
     const player = UI.seatOf(view, seat);
@@ -376,18 +633,14 @@
       const kind = legal.bet ? "bet" : legal.raise ? "raise" : null;
       if (!kind) { toast("No raise is possible here.", "Call, fold or move all-in."); return; }
       const follow = UI.isCurrent(view, state.advice) ? state.advice.headline.follow : null;
-      const coachSize = follow && (follow.kind === "bet" || follow.kind === "raise") && follow.to != null ? String(follow.to) : null;
-      apply({ui: {amount: {kind: kind, seat: seat, text: coachSize}, seatMenu: null, selected: null}}, {field: "amount"});
+      const coachSize = follow && (follow.kind === "bet" || follow.kind === "raise") && follow.to != null ? follow.to : null;
+      apply({ui: {amount: {kind: kind, seat: seat, to: coachSize}, seatMenu: null, selected: null}}, {field: "amount"});
       return;
     }
-    // An opponent's bet is recorded at once at the likeliest size, so the coach can already answer;
-    // the amount is selected and open: type the real one and Enter, or just go on.
-    apply({op: "act", seat: seat, kind: "raise", ui: UI.AFTER_ACT}, {field: "event-amount"}, (ok) => {
-      const acts = ok && hand() ? hand().line.filter((event) => event.kind === "act" && event.seat === seat) : [];
-      const last = acts[acts.length - 1];
-      // (a raise that was not possible is recorded as a call, and an all-in has no amount to type)
-      if (last && (last.verb === "raise" || last.verb === "bet")) state.ui.selected = last.i;
-    });
+    // An opponent's bet is recorded at once at the likeliest size, so the coach can already answer, and
+    // the next keys are keys of the table again (7 R 8 C records the raise and the call).
+    // E, or a click on the chip, opens the amount.
+    apply({op: "act", seat: seat, kind: "raise", plain: !!plain, ui: UI.AFTER_ACT}, {});
   }
 
   // Who won. A side pot the winner is not in asks again (see intentAnswered).
@@ -402,9 +655,14 @@
     const now = hand();
     if (!now || (now.needs !== "action" && now.needs !== "board")) return;
     if (now.target_is_hero) {
+      // While the players in front of hero are recorded in turn: the rest of them fold, and the keys are hero's.
+      if (now.needs === "action" && state.ui.target == null && UI.actingSeat(state.view, state.ui) !== now.target) {
+        apply({ui: {turn: null}}, {});
+        return;
+      }
       // It would be hero's fold (or check) too: his own action is always typed.
       if (now.needs === "board") toast("The action is on you on this street.", "Type its cards first: K S 7 D 2 C.");
-      else toast("The action is on you.", "Space does what the coach says; or F, C, X, R, A.");
+      else toast("The action is on you.", "Space does what the coach says; or " + ownKeys() + ".");
       return;
     }
     apply({op: "close_round", ui: UI.AFTER_ACT}, {});
@@ -420,8 +678,8 @@
     if (at >= line.length) { apply({ui: {selected: null, picker: null}}, {}); return; }      // past the end: nothing is selected
     const item = line[at];
     const patch = UI.only({selected: item.i});
-    // Cards are changed by typing them again: the picker opens on that slot.
-    if (item.kind !== "act" && now.needs !== "next") patch.picker = UI.freshPicker(item.kind === "board" ? item.street : "hero");
+    // Cards are changed by typing them again: the picker opens on that slot (hero's cards: to be replaced, on purpose).
+    if (item.kind !== "act" && now.needs !== "next") patch.picker = UI.freshPicker(item.kind === "board" ? item.street : "hero", true);
     apply({ui: patch}, {});
   }
 
@@ -429,6 +687,11 @@
     deal() {
       // Spin & Gold: once a game is over the same key starts the next one (300 chips: the x2 and x3 games).
       if (UI.spinOver(state.view)) apply({op: "new_game", start_stack: 300, ui: UI.only({})}, {});
+      else if (UI.heroOutOfChips(state.view)) {
+        // No chips: a hand dealt now would be dealt without hero.
+        toast("You have no chips.", "S: type a new stack to re-enter. Or start a new " +
+              (state.view.mode === "tournament" ? "tournament" : "game") + " from the menu.");
+      }
       else apply({op: "deal", ui: UI.only({})}, {});
     },
     new_game_500() {
@@ -437,12 +700,17 @@
     follow() {
       const view = state.view, now = view.hand;
       if (!now || now.needs !== "action" || !now.target_is_hero) return;       // no decision of hero's to follow
+      const acting = UI.seatOf(view, UI.actingSeat(view, state.ui));
+      if (acting && !acting.is_hero) {
+        toast((acting.pos || "Seat " + acting.seat) + " acts before you.", "Record that player first; or Enter: the players before you fold.");
+        return;
+      }
       if (!UI.isCurrent(view, state.advice)) {
-        toast("The coach has not answered this spot yet.", "Wait for the answer; or act with F, C, X, R, A.");
+        toast("The coach has not answered this spot yet.", "Wait for the answer; or act with " + ownKeys() + ".");
         return;
       }
       const follow = state.advice.headline.follow;
-      if (!follow) { toast("The coach names no action here.", "Act with F, C, X, R, A."); return; }
+      if (!follow) { toast("The coach names no action here.", "Act with " + ownKeys() + "."); return; }
       apply({op: "act", seat: now.target, via: "follow", kind: follow.kind, to: follow.to, ui: UI.AFTER_ACT}, {});
     },
     fold() { recordAct("fold"); },
@@ -451,7 +719,16 @@
     bet() { recordAct("bet"); },
     raise() { recordAct("raise"); },
     allin() { recordAct("allin"); },
-    accept: restDefault,
+    accept() {
+      // While a split is ticked together, Enter is its button.
+      const ticked = state.ui.split;
+      if (ticked) {
+        if (ticked.length >= 2) apply({op: "award", ranking: (state.ui.awardTiers || []).concat([ticked]), ui: {split: null, seatMenu: null}}, {});
+        else toast("Tick two or more players.", "Press their seat numbers; Esc cancels the split.");
+        return;
+      }
+      restDefault();
+    },
     won() {
       if (liveSeats().some((seat) => seat.is_hero)) award([HERO]);
     },
@@ -463,7 +740,12 @@
       else toast("More than one opponent is in the pot.", "Press the winner's seat number, then W.");
     },
     split() {
-      award(liveSeats().map((seat) => seat.seat));
+      const now = hand();
+      if (!now || now.needs !== "result") return;
+      const live = liveSeats();
+      // Two players: they split. More: who shares the pot is ticked (seat numbers, or clicks), then Enter.
+      if (live.length > 2) apply({ui: UI.only({split: []})}, {});
+      else award(live.map((seat) => seat.seat));
     },
     undo() { apply({op: "undo", ui: {toast: null}}, {}); },
     redo() { apply({op: "redo", ui: {toast: null}}, {}); },
@@ -478,13 +760,13 @@
       const selected = lineItem(state.ui.selected);
       const item = bets.indexOf(selected) >= 0 ? selected : bets.filter((event) => event.verb !== "call").pop();
       if (!item) { toast("There is no bet to change in this hand."); return; }
-      apply({ui: UI.only({selected: item.i})}, {field: "event-amount"});
+      apply({ui: UI.only({selected: item.i, editing: item.i})}, {field: "event-amount"});
     },
     delete() {
       const item = lineItem(state.ui.selected);
       if (!item) { toast("Select an action first.", "Left and Right walk the hand line."); return; }
       if (item.kind !== "act") { toast("Cards are not deleted.", "Type the right ones over them."); return; }
-      apply({op: "remove_event", index: item.i, ui: {selected: null}}, {});
+      apply({op: "remove_event", index: item.i, ui: {selected: null, editing: null}}, {});
     },
     button_back() { apply({op: "button_step", step: -1}, {}); },
     button_on() { apply({op: "button_step", step: 1}, {}); },
@@ -540,6 +822,13 @@
     const player = UI.seatOf(view, seat);
     if (!player) { toast("There is no seat " + seat + " at this table.", "Seats run from 1 to " + view.table.size + "."); return; }
 
+    // A split is being ticked together: the digit ticks that player, or unticks him.
+    if (state.ui.split) {
+      if (!liveSeats().some((live) => live.seat === seat)) { toast("Seat " + seat + " is not in this pot.", "Tick players who reached the showdown."); return; }
+      const ticked = state.ui.split;
+      apply({ui: {split: ticked.indexOf(seat) >= 0 ? ticked.filter((n) => n !== seat) : ticked.concat([seat])}}, {});
+      return;
+    }
     // "The action was on the wrong seat": with an action selected on the hand line, the digit moves it.
     const selected = lineItem(state.ui.selected);
     if (selected && selected.kind === "act") {
@@ -568,10 +857,13 @@
     name() { settleFocus({field: "seat-name"}); },
     type() { settleFocus({field: "seat-type"}); },      // then one of the type keys (see fieldKey)
     note() { settleFocus({field: "seat-note"}); },
-    sit_out(seat) { apply({op: "set_status", seat: seat}, {}); },
+    // Sit out, bust and clear change who is at the table. They act through the seat's menu, once it is
+    // on the screen, and the toast names the seat and offers Undo: keys that were meant as cards
+    // (Q 4 O without N first) cannot remove a player without a word.
+    sit_out(seat) { onceMenuSeen(() => apply({op: "set_status", seat: seat, ui: {seatMenu: null, target: null}}, {})); },
     button(seat) { apply({op: "set_button", seat: seat, ui: {seatMenu: null, target: null}}, {}); },
-    bust(seat) { apply({op: "bust", seat: seat, ui: {seatMenu: null, target: null}}, {}); },
-    clear(seat) { apply({op: "clear_seat", seat: seat, ui: {seatMenu: null, target: null}}, {}); },
+    bust(seat) { onceMenuSeen(() => apply({op: "bust", seat: seat, ui: {seatMenu: null, target: null}}, {})); },
+    clear(seat) { onceMenuSeen(() => apply({op: "clear_seat", seat: seat, ui: {seatMenu: null, target: null}}, {})); },
   };
 
   function seatKey(key) {
@@ -605,6 +897,9 @@
     if (detail) apply(detail, {});
     else if (step.back) return false;                   // nothing typed yet: Backspace is undo, as at the table
     else if (step.suit && picker.rank) toast("The " + picker.rank + step.suit + " is already on the table.", "Each card exists once.");
+    else if (step.suit && UI.wantSuits(view, picker)) {
+      toast("No " + view.hand.want_suits.hand + " like that is left.", "Pick one of the holdings shown: the other cards are on the table.");
+    }
     return true;
   }
 
@@ -623,8 +918,14 @@
   // Returns true when the key was used here; false lets the browser type it into the field.
   function fieldKey(key, field, live) {
     const fk = field.dataset.fk || "";
-    if (key.name === "Escape") { closeTop(); return true; }
+    // Esc cancels: the field's first value comes back and nothing is sent, whatever closes with it.
+    if (key.name === "Escape") { UI.cancelField(field); closeTop(); return true; }
 
+    // An empty seat's menu (the cursor is in the stack of the player to add): D puts the dealer button there.
+    if (fk === "add-stack" && keyTable.seat[key.name] === "button" && state.ui.seatMenu != null) {
+      apply({op: "set_button", seat: state.ui.seatMenu, ui: {seatMenu: null, target: null}}, {});
+      return true;
+    }
     // The type keys, after a seat digit and T: N nit, T tight, G tag ...
     if (fk === "seat-type" && keyTable.type[key.name]) {
       apply({op: "set_type", seat: state.ui.seatMenu, type: keyTable.type[key.name], ui: {seatMenu: null, target: null}}, {});
@@ -633,10 +934,10 @@
     // An opponent's bet that was recorded at the likeliest size (see askAmount): while its amount is untouched,
     // Enter accepts it, and a key that is no part of an amount accepts it and is then a key of the table.
     if (fk === "event-amount" && !field.dataset.dirty) {
-      if (key.name === "Enter") { apply({ui: {selected: null}}, {}); return true; }
+      if (key.name === "Enter") { apply({ui: {selected: null, editing: null}}, {}); return true; }
       const typed = key.name.length === 1 ? key.name : "";
       if (key.name === "Space" || (typed && !AMOUNT_KEYS.test(typed) && keyTable.table[key.name])) {
-        apply({ui: {selected: null}}, {});
+        apply({ui: {selected: null, editing: null}}, {});
         return tableKey(key);
       }
     }
@@ -654,10 +955,6 @@
       if (next) { next.focus(); next.select(); return true; }
     }
     if (!live) { typeInto(field, key); return true; }
-    // A seat's menu that was opened by its digit closes when a value is accepted (4 S 12.5k Enter).
-    if (key.name === "Enter" && state.ui.menuByKey && fk.indexOf("seat-") === 0) {
-      setTimeout(() => apply({ui: {seatMenu: null, target: null}}, {}), 0);
-    }
     return false;
   }
 
@@ -665,11 +962,16 @@
     const now = hand();
     const sizes = ((now && now.presets) || []).map((preset) => preset.to);
     if (!sizes.length) return;
-    const typed = Number(String(field.value).replace(/,/g, ""));
+    // (The field is in big blinds while the numbers are shown so: its text is compared as chips.)
+    const inBb = field.dataset.unit === "bb";
+    const bb = inBb ? state.view.strip.level.bb : 1;
+    let typed = Number(String(field.value).replace(/,/g, "")) * bb;
+    if (inBb && field.dataset.exact != null && field.value === field.dataset.exactText) typed = Number(field.dataset.exact);
     const at = isNaN(typed) ? (step > 0 ? -Infinity : Infinity) : typed;
-    const next = step > 0 ? sizes.find((size) => size > at) : sizes.slice().reverse().find((size) => size < at);
+    const next = step > 0 ? sizes.find((size) => size > at + 1e-9) : sizes.slice().reverse().find((size) => size < at - 1e-9);
     if (next == null) return;
-    field.value = String(next);
+    field.value = UI.plainAmount(state.view, next);
+    if (inBb) { field.dataset.exact = String(next); field.dataset.exactText = field.value; }
     field.dataset.dirty = "1";
     field.select();
   }
@@ -700,6 +1002,11 @@
   function tableKey(key) {
     const digit = /^[1-9]$/.test(key.name);
     walking = false;
+    if (state.ui.menu === "newtable" && key.name === "Enter") {         // the New table menu: Enter sits down
+      const go = fieldOf("nt-start");
+      if (go) go.click();
+      return true;
+    }
     if (state.ui.picker && cardKey(key)) return true;                   // CARDS: digits are ranks
     if (state.ui.seatMenu != null) {                                    // after a seat digit
       if (seatKey(key)) return true;
@@ -724,15 +1031,29 @@
   // One key, live from the keyboard or one that waited for the server. Returns true when it was used.
   function handleKey(key, live) {
     const view = state.view, ui = state.ui;
-    if (!view) return false;
+    if (!view) {                                            // no table to show (see showViewError): Esc closes a sheet
+      if (key.name === "Escape" && ui.sheet) { apply({ui: {sheet: null}}); return true; }
+      return false;
+    }
     const active = document.activeElement;
 
     // The keys that change the game (Alt+1, Alt+2, Alt+3) work everywhere, also while a field has the cursor.
     const command = keyTable.table[key.name] || "";
-    if (command.indexOf("mode_") === 0) { COMMANDS[command](); return true; }
+    if (command.indexOf("mode_") === 0) {
+      if (isField(active)) UI.cancelField(active);          // a half-typed value is not saved on the way out
+      COMMANDS[command]();
+      return true;
+    }
     // The first-run form and the sheets are forms: the browser's own keys, plus Esc and "?".
     if (view.first_run || ui.sheet) {
-      if (key.name === "Escape") return closeTop();
+      if (key.name === "Escape") {
+        if (isField(active)) UI.cancelField(active);        // Esc cancels what is being typed
+        return closeTop() || isField(active);
+      }
+      // Undo and redo with Ctrl work on the first-run form as well (an undone start can be made again),
+      // unless a field holds text of its own to undo.
+      if (view.first_run && (command === "undo" || command === "redo") && key.name.indexOf("Ctrl+") === 0 &&
+          !(isField(active) && active.dataset.dirty)) { COMMANDS[command](); return true; }
       if (isField(active)) return fieldKey(key, active, live);
       if (command === "keys") { COMMANDS.keys(); return true; }
       return false;
@@ -764,7 +1085,8 @@
     }
     // An intent is on its way: what this key means may depend on the answer, so it waits.
     // (Typing into a field goes on meanwhile.)
-    if (busy && isTableKey(key.name) && !(isField(active) && !waitingKeys.length)) {
+    // (... unless the field's own value is on its way: the answer says whether the field stays open.)
+    if (busy && isTableKey(key.name) && !(isField(active) && !waitingKeys.length && !fieldWaits)) {
       waitingKeys.push(key);
       event.preventDefault();
       return;
@@ -790,6 +1112,10 @@
     document.addEventListener("keyup", onKeyUp);
     document.addEventListener("mousedown", () => { walking = false; });
     document.addEventListener("focusout", onFocusOut);
+    // The tab was away: another window may have changed the table. Look again when it is back.
+    const lookAgain = () => { if (!busy && !document.hidden) fetchView(true); };
+    window.addEventListener("focus", lookAgain);
+    document.addEventListener("visibilitychange", lookAgain);
     return fetchView().then(() => {
       // A session made before this page first opened: say once what the program is for.
       const view = state.view;
@@ -807,7 +1133,8 @@
     // Nothing is on its way: no intent, and the coach has answered for the view on screen.
     settled: function () {
       const view = state.view;
-      if (!view || busy || waitingKeys.length) return false;
+      if (busy || waitingKeys.length) return false;
+      if (!view) return !!state.ui.viewError;             // (the screen that says the table cannot be shown)
       return !!view.first_run || !!(state.advice && state.advice.rev === view.rev);
     },
   };

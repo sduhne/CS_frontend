@@ -62,7 +62,7 @@ SAFETY_PER_BB = 0.02         # in the money a first-in all-in must earn this muc
 TWO_ALLINS = (5, 3)          # two all-ins in front are solved for these seats (players behind), hero on the button
 TWO_LABEL = "Two all-ins, or a raise and an all-in"
 DEEP_FIRST_IN = "AA, KK"     # deeper than TOP, nobody raised
-DEEP_OVER_RAISE = "AA, KK"   # deeper than TOP, over a raise or an all-in
+DEEP_OVER_RAISE = "AA, KK"   # deeper than TOP, moving all-in over a raise (calls of an all-in keep the deepest row)
 
 
 # --------------------------------------------------------------------------
@@ -189,9 +189,12 @@ def call(shover: str, allin_bb: float, bubble: bool = False, big_blind: bool = F
     ``allin_bb`` is what hero has to put in: the all-in, or hero's stack if
     smaller.  In the big blind the price is better, which is worth one stack
     band (the small-blind row already assumes hero is the big blind).
+
+    An all-in of more than ``TOP`` big blinds is read from the deepest row
+    (25 to 40bb): "aces and kings only" is the rule for moving all-in first
+    with a stack that deep, and a call must not get tighter by one big blind
+    of stack (at 41bb queens and ace-king would fold where A9o calls at 40).
     """
-    if allin_bb > TOP:
-        return DEEP_OVER_RAISE
     i = band(allin_bb)
     if big_blind and shover != "small":
         i = max(0, i - 1)
@@ -321,5 +324,6 @@ def sheet_text(players: int = PLAYERS) -> str:
             out.append(f"    {b:<11} {rng}")
         out.append("")
     out.append("In the big blind, read the all-in tables one stack band to the left (the small-blind row already does).")
-    out.append(f"Over {TOP}bb: {DEEP_FIRST_IN} first in, {DEEP_OVER_RAISE} over a raise or an all-in.")
+    out.append(f"Over {TOP}bb: {DEEP_FIRST_IN} move all-in, first in or over a raise. "
+               f"Calls of a bigger all-in are read from the {BANDS[-1][0]} column.")
     return "\n".join(out)

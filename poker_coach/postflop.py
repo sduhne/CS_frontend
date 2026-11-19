@@ -24,10 +24,18 @@ from .ranges import (PLAYER_TYPES, norm_type, parse, play_order, threebet_range,
 
 STREETS = {3: "flop", 4: "turn", 5: "river"}
 
-# Facing a bet: the safety points added to the pot odds are scaled by the call as a share of the
-# pot before the bet.  Nothing is added up to _SMALL_CALL, all of it from _FULL_MARGIN_CALL.
+# Facing a bet, the points added to the pot odds shrink with the price.  The price is the call
+# as a share of the pot hero can win.  Up to _SMALL_CALL nothing is added, so a hand with the
+# equity for the plain pot odds is never folded there; the safety points are back in full from
+# _FULL_SAFETY_CALL (a half-pot bet) and the ICM points from _FULL_ICM_CALL.
 _SMALL_CALL = 0.10
-_FULL_MARGIN_CALL = 0.50
+_FULL_SAFETY_CALL = 0.50
+_FULL_ICM_CALL = 0.30
+
+
+def _price_scale(share: float, full: float) -> float:
+    """0 for a call of a tenth of the pot or less, rising to 1 at ``full``."""
+    return min(1.0, max(0.0, (share - _SMALL_CALL) / (full - _SMALL_CALL)))
 
 
 @dataclass
@@ -340,24 +348,23 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
         need = to_call / (pot + to_call)
         commit = to_call / max(spot.hero_stack, 1e-9)
         icm_add = rp * min(1.0, commit * 1.5) if commit >= 0.25 else 0.0
-        margin = 0.02 if street != "river" and not spot.in_position else 0.0
+        safety: list[tuple[float, str]] = []      # (points, the reason for them)
+        if street != "river" and not spot.in_position:
+            safety.append((0.02, "you are out of position"))
         if street == "river":
             # big river bets and raises are under-bluffed, most of all by passive players
             if facing in ("raise", "shove"):
-                margin += 0.08 if passive else 0.04
+                safety.append((0.08 if passive else 0.04, "a river raise is rarely a bluff"))
             elif bet_frac and bet_frac >= 0.6 and strength <= 5:
-                margin += 0.06 if passive else 0.02
+                safety.append((0.06 if passive else 0.02, "a big river bet is rarely a bluff"))
         elif facing in ("raise", "shove") and strength <= 5:
-            margin += 0.04
+            safety.append((0.04, "a raise is rarely a bluff"))
         if multiway:
-            margin += 0.03
-        # the safety points shrink with the price: all of them from a call of about half the
-        # pot, none (and no ICM points) for a call of a tenth of the pot or less, so that such
-        # a call is never folded with the equity for the plain pot odds
+            safety.append((0.03, "several players are in the pot"))
+        # the added points shrink with the price (see _SMALL_CALL): a cheap call risks little
         share = bet_frac if bet_frac is not None else 1.0
-        margin *= min(1.0, max(0.0, (share - _SMALL_CALL) / (_FULL_MARGIN_CALL - _SMALL_CALL)))
-        if share <= _SMALL_CALL:
-            icm_add = 0.0
+        margin = sum(points for points, _ in safety) * _price_scale(share, _FULL_SAFETY_CALL)
+        icm_add *= _price_scale(share, _FULL_ICM_CALL)
         implied = 0.0
         if street != "river" and (any_draw or strength >= 6) and eff_behind > to_call:
             implied = min(eff_behind - to_call, 0.5 * (pot + to_call))
@@ -370,6 +377,7 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
             + (f", +{100 * margin:.0f} pts safety" if margin >= 0.005 else "")
             + (f", +{100 * icm_add:.0f} pts ICM" if icm_add >= 0.005 else "")
             + f" -> need {_pct(target)}, have {_pct(eq)}")
+        adv.data.update(pot_odds=need, need_total=target, safety_pts=margin, icm_pts=icm_add, call_share=share)
         can_raise = eff_behind > to_call * 1.05 and facing != "shove"
         monster = strength >= 7
         if monster and eq >= 0.68 and can_raise:
@@ -414,10 +422,14 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
                 adv.warnings.append("stack-to-pot ratio is tiny: folding a strong hand here is only right "
                                     "against a player who never bluffs")
             if eq >= need:
+                # the plain pot odds are met: say which added points turn it into a fold,
+                # and never blame ICM when none were added
                 if icm_add >= 0.005 and eq >= target - icm_add:
                     adv.why.append("on chips alone this is a call; ICM / survival is what makes it a fold")
                 elif margin >= 0.005:
-                    adv.why.append("the pot odds alone are met; the safety margin is what makes it a fold")
+                    adv.why.append("you beat the plain pot odds, but not by enough: "
+                                   + " and ".join(text for _, text in safety)
+                                   + (" (ICM adds to it)" if icm_add >= 0.005 else ""))
         if strength >= 5 and spr <= 1.5 and adv.action == "FOLD" and not icm_tight and eq >= need - 0.05:
             adv.action = "CALL"
             adv.confidence = "close"

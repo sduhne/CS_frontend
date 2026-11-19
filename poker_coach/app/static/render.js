@@ -24,7 +24,7 @@
      detail is plain data with up to three parts, and one click may carry more than one:
        op    an intent for POST /api/intent, with its arguments beside it: {op: "act", seat: 4, kind: "call"}
        ui    a patch for the ui object: ui = Object.assign({}, ui, detail.ui), then render again
-       cmd   a job for the browser: "copy" (with text)
+       cmd   a job for the browser: "copy" (with text), "reload" (read the table from the program again)
      A typed value always travels as text and is parsed in Python ("12.5k", "300/600/75").
      Keys handled here: Enter in a field (sends it) and the arrow keys inside the mode tabs, the table
      and the hand line (they move the focus; the event is then defaultPrevented). Every other key is yours.
@@ -53,7 +53,8 @@
      set_status      seat, status: active | away                      seat menu
      bust, clear_seat  seat                                           seat menu
      deal                                                             New hand, Next hand
-     set_cards       slot: hero | flop | turn | river, text           the card picker ("AhKd", "AKs", "Ks7d2c", "Th")
+     set_cards       slot: hero | flop | turn | river, text,          the card picker ("AhKd", "AKs", "Ks7d2c", "Th")
+                     replace: true when hero's cards are changed on purpose
      act             seat, kind: fold | check | call | bet | raise | allin,
                      to (a number from a preset or from Follow, text from the amount field),
                      via: "follow" when the Follow button sent it     the action bar
@@ -72,16 +73,25 @@
      sheet        null | "settings" | "why" | "keys" | "history" | "new" | "stacks"
      seatMenu     null | seat number      the seat whose menu is open
      menu         null | "table"          the table tools menu
-     picker       null | {slot, cards: [], rank: null, rank2: null}    the card picker and how far it is
+     picker       null | {slot, cards: [], rank: null, rank2: null, replace}    the card picker and how far it is;
+                  replace: the user chose to change hero's cards (a click on them), so another hand may
+                  take the place of the class on record (set_cards then carries replace: true)
      pickerOff    true once the user closed the picker himself: the controller then does not reopen it
                   by itself until the table asks for other cards
-     amount       null | {kind: "bet" | "raise", seat, text}           the amount row is open
+     amount       null | {kind: "bet" | "raise", seat, to, plain}      the amount row is open (to: the chips it starts with)
      selected     null | index of the selected event on the hand line
      edit         null | "level" | "remaining" | "paid" | "avg_stack"  the strip value being typed
      target       null | seat             record the next action for this seat, not view.hand.target
+     turn         null | "hand:street"    the user records the players in turn with the plain keys: until the
+                                          turn reaches hero the bar is for the next player to act, not for hero
+     editing      null | index            the selected event whose amount field is open
+     split        null | [seat, ...]      a split pot is being ticked together (three or more at a showdown)
      awardTiers   [[seat], ...]           winners already chosen when a side pot needs another
      setupMode    "tournament" | "spin" | "aof"    the form shown on first run
-     toast        {text, fix, undo} | null         shown instead of view.toast; null hides both
+     toast        {text, fix, undo, action: {label, send}} | null     shown instead of view.toast; null hides both
+     fieldError   {fk, text, fix, value} | null    a value the server refused: drawn under the open field
+                                                   with that data-fk, and the field is marked
+     menuByKey    true when the seat menu was opened by its digit (the controller keeps it)
 
    EXTRAS THE PAGE UNDERSTANDS (none is required; they are not in the SPEC's view)
      view.first_run                  true: draw the first-run form, not the table
@@ -143,6 +153,7 @@
     ],
     unit: [{value: "chips", label: "Chips"}, {value: "bb", label: "Big blinds"}],
     deck: [{value: "one-ink", label: "One ink"}, {value: "four-colour", label: "Four colours"}],
+    button_rule: [{value: "dead", label: "Dead button"}, {value: "forward", label: "Forward-moving button"}],
     type: ["unknown", "nit", "tight", "tag", "lag", "loose", "station", "maniac"],
   };
 
@@ -160,7 +171,8 @@
   ];
   const SEAT_DIGIT_KEYS = [
     [["1", "9"], "A seat, counted clockwise from you (you are 1): its menu opens, and the next key is for that player. " +
-                 "In All-In or Fold, during a hand, the digit alone is that player's all-in (again takes it back)"],
+                 "In All-In or Fold, during a hand, the digit alone is that player's all-in (again takes it back). " +
+                 "While a split pot is ticked together (Shift+W with three or more players), the digit ticks that player"],
   ];
   // How a key of the map is written on a keycap.
   const KEY_WORDS = {ArrowLeft: "Left", ArrowRight: "Right", Escape: "Esc", Delete: "Del"};
@@ -173,10 +185,11 @@
   const MINUS = "\u2212";      // the real minus sign: both fonts have it
 
   // Opening one menu closes the others.
-  const ALL_CLOSED = {seatMenu: null, menu: null, picker: null, amount: null, selected: null, edit: null};
+  const ALL_CLOSED = {seatMenu: null, menu: null, picker: null, amount: null, selected: null, editing: null, edit: null,
+                      split: null, fieldError: null};
   function only(patch) { return Object.assign({}, ALL_CLOSED, patch); }
   // After an action is recorded the bar goes back to the server's next player.
-  const AFTER_ACT = {amount: null, target: null, seatMenu: null, selected: null};
+  const AFTER_ACT = {amount: null, target: null, seatMenu: null, selected: null, editing: null};
 
   /* ---------- 2. Small helpers ---------- */
 
@@ -194,6 +207,15 @@
   function icon(name) { return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-${name}"/></svg>`; }
 
   function keycap(text) { return `<kbd>${esc(text)}</kbd>`; }
+
+  // A value the server refused is said under the field it was typed into, and that field is marked.
+  function isBad(ui, fk) { return !!(ui && ui.fieldError && ui.fieldError.fk === fk); }
+  function badAttr(ui, fk) { return isBad(ui, fk) ? ' aria-invalid="true"' : ""; }
+  function fieldErrorHtml(ui, fks) {
+    const error = ui && ui.fieldError;
+    if (!error || fks.indexOf(error.fk) < 0) return "";
+    return `<p class="field-error" role="alert">${esc(error.text)}${error.fix ? `<small>${esc(error.fix)}</small>` : ""}</p>`;
+  }
 
   /* Numbers. */
 
@@ -254,10 +276,28 @@
     if (view.unit === "bb" && bb) return fmtBb(chips / bb) + "bb";
     return short ? fmtShort(chips) : fmtStack(chips);
   }
-  // What goes into an amount field: digits only, so it can be edited.
+  // What goes into an amount field: digits only, so it can be edited. While the numbers are shown in
+  // big blinds the fields are in big blinds too ("33.2"), and a bare number typed there is big blinds.
+  function typesBb(view) { return !isAof(view) && view.unit === "bb" && !!bigBlind(view); }
   function plainAmount(view, chips) {
     if (chips == null) return "";
-    return isAof(view) ? fmtBb(chips) : String(chips);
+    if (isAof(view)) return fmtBb(chips);
+    if (typesBb(view)) return dropZeros((chips / bigBlind(view)).toFixed(1));
+    return String(chips);
+  }
+  // The attributes of an amount field. In big blinds the field also carries the exact chips it was
+  // filled with: a value nobody touched is sent as it was, not rounded to a tenth of a big blind.
+  function amountAttrs(view, chips) {
+    if (!typesBb(view)) return "";
+    const exact = chips != null ? ` data-exact="${esc(chips)}" data-exact-text="${esc(plainAmount(view, chips))}"` : "";
+    return ` data-unit="bb"${exact}`;
+  }
+  function unitMark(view) { return typesBb(view) ? '<span class="unit">bb</span>' : ""; }
+  // An <input> for an amount, filled with `chips` in the unit on screen.
+  function amountInput(view, opts) {
+    return `<input name="${opts.name}" value="${esc(plainAmount(view, opts.chips))}" inputmode="decimal" autocomplete="off" spellcheck="false"
+      data-fk="${esc(opts.fk)}"${opts.focus ? " data-autofocus" : ""}${opts.bad ? ' aria-invalid="true"' : ""}${opts.label ? ` aria-label="${esc(opts.label)}"` : ""}` +
+      `${opts.placeholder ? ` placeholder="${esc(opts.placeholder)}"` : ""}${amountAttrs(view, opts.chips)}>${unitMark(view)}`;
   }
 
   /* Cards. */
@@ -303,10 +343,21 @@
   }
   function seatTitle(seat) { return [seat.pos, seatName(seat)].filter(Boolean).join(" \u00b7 "); }
 
-  // The seat the action bar records for: the one the user aimed at, else the server's next player.
+  // The betting round on screen, as a word: "12:flop".
+  function roundKey(view) { return view.hand ? view.hand.no + ":" + view.hand.phase : ""; }
+
+  /* The seat the action bar and the plain keys record for:
+       the one the user aimed at (a click on a seat, a seat digit); else,
+       while the user records the players in turn (ui.turn), the next player to act; else
+       the server's target: hero whenever he still owes a decision (the players in front of him then
+       take the passive default), otherwise the next player. */
   function actingSeat(view, ui) {
-    if (!view.hand || view.hand.needs !== "action") return null;
-    return ui.target != null ? ui.target : view.hand.target;
+    const hand = view.hand;
+    if (!hand || hand.needs !== "action") return null;
+    if (ui.target != null) return ui.target;
+    const before = hand.before_target || [];
+    if (ui.turn && ui.turn === roundKey(view) && before.length) return before[0];
+    return hand.target;
   }
   function heroToAct(view) {
     return !!(view.hand && view.hand.needs === "action" && view.hand.target_is_hero);
@@ -317,7 +368,7 @@
   const MARK = '<svg class="mark" viewBox="0 0 40 40" role="img" aria-label="Menlo Bet"><rect width="40" height="40" rx="9" fill="#FFD60A"/>' +
                '<path d="M8 30V11l12 11 12-11v19h-5V22l-7 6.5L13 22v8z" fill="#0A0A0B"/></svg>';
 
-  function headerHtml(view, ui, mode) {
+  function headerHtml(view, ui, mode, can) {
     const tabs = list(MODES, (m) => {
       const on = m.id === mode;
       return `<button class="tab" role="tab" aria-selected="${on}" tabindex="${on ? 0 : -1}" data-arrow` +
@@ -328,15 +379,18 @@
         <div class="tabs" role="tablist" aria-label="Game" data-arrows>${tabs}</div>
       </div>
       ${view ? stripHtml(view, ui) : ""}
-      ${toolsHtml(view)}`;
+      ${toolsHtml(view, can)}`;
   }
 
-  function toolsHtml(view) {
-    const can = (view && view.can) || {};
-    const undo = `<button class="tool" aria-label="Undo" title="Undo"${can.undo ? "" : " disabled"}${emit({op: "undo"})}>${icon("undo")}</button>`;
-    const redo = can.redo ? `<button class="tool" aria-label="Redo" title="Redo"${emit({op: "redo"})}>${icon("redo")}</button>` : "";
-    const menu = `<button class="tool" aria-label="Menu and settings" title="Menu"${emit({ui: only({sheet: "settings"})})}>${icon("menu")}</button>`;
-    return `<div class="tools">${view ? undo + redo : ""}${menu}</div>`;
+  // Undo, Redo, Menu: always in that order and each in its own place, so a second click on Undo is a
+  // second undo. One that has nothing to do is drawn disabled. On the first-run form the two are drawn
+  // whenever the program says a step can be taken back or made again.
+  function toolsHtml(view, can) {
+    can = can || {};
+    const undo = `<button class="tool" aria-label="Undo" title="Undo" data-fk="undo"${can.undo ? "" : " disabled"}${emit({op: "undo"})}>${icon("undo")}</button>`;
+    const redo = `<button class="tool" aria-label="Redo" title="Redo" data-fk="redo"${can.redo ? "" : " disabled"}${emit({op: "redo"})}>${icon("redo")}</button>`;
+    const menu = `<button class="tool" aria-label="Menu and settings" title="Menu" data-fk="menu"${emit({ui: only({sheet: "settings"})})}>${icon("menu")}</button>`;
+    return `<div class="tools">${view || can.undo || can.redo ? undo + redo : ""}${menu}</div>`;
   }
 
   function stripHtml(view, ui) {
@@ -354,8 +408,9 @@
   // A value in the strip: a button that shows it, or the field that replaces it while it is typed.
   function stripValue(ui, name, opts) {
     if (ui.edit === name) {
-      return `<input class="in${opts.short ? " short" : ""}" value="${esc(opts.typed)}" autocomplete="off" spellcheck="false"
-        aria-label="${esc(opts.fieldLabel)}" data-fk="edit-${name}" data-autofocus data-name="text"${emit(opts.send)}>`;
+      return `<span class="editing"><input class="in${opts.short ? " short" : ""}" value="${esc(opts.typed)}" autocomplete="off" spellcheck="false"
+        aria-label="${esc(opts.fieldLabel)}" data-fk="edit-${name}" data-autofocus data-name="text"${badAttr(ui, "edit-" + name)}${emit(opts.send)}>` +
+        `${fieldErrorHtml(ui, ["edit-" + name])}</span>`;
     }
     return `<button class="value" aria-label="${esc(opts.label)}. Change" data-fk="value-${name}"${emit({ui: only({edit: name})})}>
         <span class="eyebrow">${esc(opts.eyebrow)}</span>${opts.shown}</button>`;
@@ -440,6 +495,11 @@
     }) + `</div>`;
   }
 
+  // The rule that moves the dealer button after a hand ("dead" unless the view says otherwise).
+  function buttonRule(view) {
+    return (view.settings && view.settings.button_rule) || (view.strip && view.strip.button_rule) || "dead";
+  }
+
   function labelOf(choices, value) {
     const found = choices.find((choice) => choice.value === value);
     return found ? found.label : String(value || "");
@@ -515,6 +575,12 @@
     if (spinOver(view) && (!hand || hand.needs === "next")) {
       return {verb: view.strip.game.over === "won" ? "Game won" : "Game over", text: result + "Press N for a new game."};
     }
+    // No chips on hero's seat: what he can do stays on the slab (a hand dealt now would be dealt without him).
+    if (heroOutOfChips(view)) {
+      const again = view.mode === "tournament" ? "tournament" : "game";
+      return {verb: "You are out", own: true,
+              text: `${result}Type a new stack on your seat to re-enter (S), or start a new ${again} from the menu.`};
+    }
     if (!hand) return {verb: "New hand", text: "Press N, then type your two cards: A K S."};
     if (hand.needs === "cards") return {verb: "Your cards", text: "Type your two cards: A K S, or A H K D."};
     if (hand.needs === "board") {
@@ -530,10 +596,13 @@
   }
 
   // One object for the slab, whatever the state.
-  function slabContent(view, advice) {
+  function slabContent(view, advice, ui) {
     if (isCurrent(view, advice)) {
       const h = advice.headline;
-      return {tone: h.tone || "wait", eyebrow: heroToAct(view) ? "Your turn" : "Coach", verb: h.verb, size: h.size_text,
+      // While the players in front of hero are still being recorded in turn, the answer is for the
+      // spot as it will be if they all fold: the slab says so.
+      const eyebrow = !heroToAct(view) ? "Coach" : actingSeat(view, ui) === view.hand.target ? "Your turn" : "If they fold";
+      return {tone: h.tone || "wait", eyebrow: eyebrow, verb: h.verb, size: h.size_text,
               qualifier: h.qualifier, spot: advice.spot, sure: h.sure, live: true};
     }
     const fresh = advice && advice.rev === view.rev && advice.status === "none";
@@ -544,9 +613,15 @@
               size: old ? old.size_text : "", spot: old ? advice.spot : "The coach is working on this spot.", live: false};
     }
     const waiting = waitingFor(view);
+    // Hero is sitting out: the slab says so, and which key ends it.
+    const hero = heroSeat(view);
+    if (hero && hero.status === "away") {
+      const then = waiting.verb === "Wait" ? "" : " " + waiting.text;
+      return {tone: "wait", eyebrow: "Coach", verb: "Sitting out", spot: "You are sitting out: press O to sit back in." + then, live: false};
+    }
     // Once the hand is settled the slab says who won what; otherwise the coach's own line on what it waits for.
     const settled = !!(view.hand && view.hand.needs === "next");
-    const spot = settled ? waiting.text : (fresh && advice.spot) || waiting.text;
+    const spot = settled || waiting.own ? waiting.text : (fresh && advice.spot) || waiting.text;
     return {tone: "wait", eyebrow: "Coach", verb: waiting.verb, spot: spot, live: false};
   }
 
@@ -565,9 +640,23 @@
     return `<span class="sure eyebrow"><span class="pips" aria-hidden="true">${bars}</span>${esc(sure)}</span>`;
   }
 
-  function slabHtml(content) {
+  // What the answers depend on besides the table: the style and the moves, and re-entry and bounty while
+  // they are on. In sight at every width, at the head of the slab; a click opens the settings.
+  const MOVES_WORDS = {full: "All moves", allin: "All-in or fold only"};
+  function coachMode(view) {
+    if (view.mode !== "tournament") return "";
+    const strip = view.strip || {};
+    const words = [labelOf(CHOICES.style, strip.style), MOVES_WORDS[strip.plan] || labelOf(CHOICES.plan, strip.plan)];
+    if (strip.reentry_open) words.push("Re-entry open");
+    if (strip.bounty) words.push("Bounty");
+    return words.filter(Boolean).join(" \u00b7 ");
+  }
+
+  function slabHtml(content, mode) {
+    const how = mode ? `<button class="mode" data-fk="coach-mode" title="${esc("Style and moves: " + mode + ". Change them in the settings")}"` +
+                       ` aria-label="${esc("Style and moves: " + mode + ". Open the settings")}"${emit({ui: only({sheet: "settings"})})}>${esc(mode)}</button>` : "";
     return `<div class="slab ${esc(content.tone)}">
-      <div class="head"><span class="eyebrow">${esc(content.eyebrow)}</span>${content.live ? sureHtml(content.sure) : ""}</div>
+      <div class="head"><span class="eyebrow">${esc(content.eyebrow)}</span>${how}${content.live ? sureHtml(content.sure) : ""}</div>
       <div class="act"><span class="verb${verbClass(content.verb)}">${esc(content.verb)}</span>
         ${content.size ? `<span class="size">${esc(content.size)}</span>` : ""}
         ${content.qualifier ? `<span class="pill">${esc(content.qualifier)}</span>` : ""}</div>
@@ -653,7 +742,7 @@
   }
 
   function adviceHtml(view, advice, ui) {
-    const content = slabContent(view, advice);
+    const content = slabContent(view, advice, ui);
     const where = contextHtml(advice);
     const why = whyHtml(advice, content.live);
     const chart = content.live ? chartHtml(advice.chart) : "";
@@ -671,7 +760,7 @@
           <button class="tab" role="tab" aria-selected="${panel === "why"}"${emit({ui: {panel: "why"}})}>Why</button>
           <button class="tab" role="tab" aria-selected="${panel === "range"}"${emit({ui: {panel: "range"}})}>Range</button></div>`
       : "";
-    return {panel: panel, html: slabHtml(content) + whyline + tabs + why + chart + where};
+    return {panel: panel, html: slabHtml(content, coachMode(view)) + whyline + tabs + why + chart + where};
   }
 
   /* ---------- 5. Table ---------- */
@@ -712,16 +801,39 @@
     return `top:${y};${x}`;
   }
 
+  /* A finished hand that is still on screen keeps the seat names and the dealer button it was played
+     with (view.hand.positions, view.hand.button), so "CO wins" points at the pod called CO. The table
+     already stands for the next deal (view.table.button, seat.pos); the pods switch to that at the next
+     deal, or as soon as the user moves the button or changes a seat. */
+  let settledSeen = null;      // the finished hand on screen, and the table as it stood when it was first drawn
+  function tableSignature(view) {
+    return view.table.button + "|" + (view.table.seats || []).map((seat) => seat.seat + (seat.empty ? "-" : ":" + seat.pos)).join(",");
+  }
+  function finishedHandNames(view) {
+    const hand = view.hand;
+    if (!hand || hand.needs !== "next" || !hand.positions) { settledSeen = null; return null; }
+    const key = view.mode + ":" + hand.no;
+    const signature = tableSignature(view);
+    if (!settledSeen || settledSeen.key !== key) settledSeen = {key: key, signature: signature, moved: false};
+    // The button was moved or a seat changed: from then on the next hand's names, also if it is moved back.
+    if (settledSeen.signature !== signature) settledSeen.moved = true;
+    if (settledSeen.moved) return null;
+    return {positions: hand.positions, button: hand.button};
+  }
+
   function tableHtml(view, ui) {
     const table = view.table;
     const slots = SLOTS[table.size] || SLOTS[9];
+    const names = finishedHandNames(view);
+    const button = names ? names.button : table.button;
     let pods = "", chips = "", dealer = "";
     (table.seats || []).forEach((seat) => {
       const slot = slots[seat.seat - 1];
       if (!slot) return;
+      if (names) seat = Object.assign({}, seat, {pos: names.positions[seat.seat] || "", is_button: seat.seat === names.button});
       pods += podHtml(view, ui, seat, slot);
       chips += chipHtml(view, seat, slot);
-      if (seat.seat === table.button) dealer = `<span class="deal" style="${dealerPlace(slot, seat.is_hero)}" aria-hidden="true">D</span>`;
+      if (seat.seat === button) dealer = `<span class="deal" style="${dealerPlace(slot, seat.is_hero)}" aria-hidden="true">D</span>`;
     });
     const tools = `<button class="tool table-tools" aria-label="Table tools: dealer button, seats, stacks" title="Table tools" data-arrow tabindex="-1"` +
                   `${emit({ui: only({menu: "table"})})}>${icon("sliders")}</button>`;
@@ -770,7 +882,8 @@
 
   function podState(view, ui, seat) {
     const handOn = !!view.hand;
-    const aimed = ui.target != null ? seat.seat === ui.target : !!seat.is_target;
+    const acting = actingSeat(view, ui);
+    const aimed = acting != null ? seat.seat === acting : !!seat.is_target;
     const target = aimed || ui.seatMenu === seat.seat;
     // Yellow is hero's seat while the decision is his; a white ring is where the next key lands.
     const turn = seat.is_hero && aimed && heroToAct(view) && ui.target == null;
@@ -822,7 +935,7 @@
 
   function heroPodHtml(view, ui, seat, place, state, words) {
     const cards = heroCardsHtml(view);
-    const pick = view.hand ? emit({ui: only({picker: freshPicker("hero")})}) : emit(seatClick(view, seat));
+    const pick = view.hand ? emit({ui: only({picker: freshPicker("hero", true)})}) : emit(seatClick(view, seat));
     return `<div class="${state.cls}" style="${place}" data-seat="${seat.seat}">
       <button class="hand" data-arrow tabindex="0" data-fk="hero-cards" aria-label="Your cards: ${esc(cards.words)}. Change"${pick}>${cards.html}</button>
       <button class="info" data-arrow tabindex="-1" data-fk="hero-info" aria-label="${esc(words)}"${emit(seatClick(view, seat))}>
@@ -917,8 +1030,11 @@
     const last = events.length - 1;
     const chips = list(events, (event, at) => {
       const selected = ui.selected === event.i;
+      // A click selects the step and the cursor stays on it; a second click opens its amount, or lets go of it.
+      const next = !selected ? only({selected: event.i})
+        : eventHasAmount(event) && ui.editing !== event.i ? {editing: event.i} : {selected: null, editing: null};
       return `<button class="evb" data-arrow tabindex="${at === last ? 0 : -1}" aria-pressed="${selected}" data-fk="event-${event.i}"` +
-             `${emit({ui: only({selected: selected ? null : event.i})})}>${eventHtml(event, selected)}</button>`;
+             `${emit({ui: next})}>${eventHtml(event, selected)}</button>`;
     });
     return `<div class="events" role="group" aria-label="This hand, step by step" data-arrows>${chips}</div>`;
   }
@@ -940,18 +1056,19 @@
     const seat = amount.seat != null ? amount.seat : hand.target;
     const forTarget = seat === hand.target;
     const legal = (forTarget && hand.legal && hand.legal[amount.kind]) || {};
-    const typed = amount.text != null ? amount.text : plainAmount(view, legal.default);
+    const chips = amount.to != null ? amount.to : legal.default;
     const player = seatOf(view, seat);
     // Whose bet it is stands on the action bar ("Recording"); the field only says what the number is.
     const who = player && !player.is_hero ? `${seatTitle(player)}: ` : "";
     const label = amount.kind === "bet" ? "Bet" : "Raise to";
     const presets = forTarget ? list(hand.presets, (preset) =>
       `<button type="button" class="preset"${emit({op: "act", seat: seat, kind: amount.kind, to: preset.to, ui: AFTER_ACT})}>${esc(preset.label)}</button>`) : "";
-    return `<form class="amount"${emit({op: "act", seat: seat, kind: amount.kind, ui: AFTER_ACT})}>
-      <label class="field"><span class="eyebrow">${esc(label)}</span>
-        <input name="to" value="${esc(typed)}" inputmode="decimal" autocomplete="off" spellcheck="false" data-fk="amount" data-autofocus
-          aria-label="${esc(who + label)}"${forTarget ? "" : ' placeholder="usual size"'}></label>
-      <div class="presets">${presets}</div>
+    const refused = fieldErrorHtml(ui, ["amount"]);
+    return `<form class="amount" data-from="amount"${emit({op: "act", seat: seat, kind: amount.kind, plain: !!amount.plain, ui: AFTER_ACT})}>
+      <label class="field${refused ? " bad" : ""}"><span class="eyebrow">${esc(label)}</span>
+        ${amountInput(view, {name: "to", chips: chips, fk: "amount", focus: true, bad: !!refused, label: who + label,
+                             placeholder: forTarget ? "" : "usual size"})}</label>
+      ${refused || `<div class="presets">${presets}</div>`}
       <button type="submit" class="btn compact">OK ${keycap("Enter")}</button>
       <button type="button" class="tool" aria-label="Cancel" title="Cancel"${emit({ui: {amount: null}})}>${icon("close")}</button>
     </form>`;
@@ -959,26 +1076,55 @@
 
   /* ---------- 7. Action bar ---------- */
 
+  /* The bar is two rows: one line that says what the bar is for (whose action the plain keys record),
+     and the buttons. While a hand is played the buttons sit in six fixed slots, so a button never
+     turns up where another one was a moment ago:
+       1      the coach's button: Follow on hero's turn (drawn disabled while another player acts),
+              Next hand once hero has folded or the hand is over
+       2 - 5  fold, check or call, bet or raise, all-in: always for the player the first row names
+       6      Rest fold (Rest check, Skip the board)
+     On top of that a pointer click on a bar button that was not at that place 400 ms earlier is
+     ignored (see barClickTooEarly): a double-click records one action. Keys are not affected. */
+
   // A button of the bar: the word with its key, and under it the amount when there is one.
+  // `slot` is its place in the row of fixed slots: "1" ... "6", or a span such as "1 / 6".
   function barButton(opts) {
     const cls = "btn" + (opts.primary ? " primary" : "") + (opts.wide ? " wide" : "");
     const key = opts.key ? keycap(opts.key) : "";
     const sub = opts.sub ? `<span class="sub">${opts.sub}</span>` : "";
-    return `<button class="${cls}"${opts.fk ? ` data-fk="${opts.fk}"` : ""}${opts.off ? " disabled" : ""}${emit(opts.send)}>` +
+    const place = opts.slot ? ` style="grid-column:${opts.slot}"` : "";
+    return `<button class="${cls}"${place}${opts.fk ? ` data-fk="${opts.fk}"` : ""}${opts.off ? " disabled" : ""}${emit(opts.send)}>` +
            `<span class="label">${esc(opts.label)}${key}</span>${sub}</button>`;
   }
-  function aboutBlock(eyebrow, text) {
-    return `<div class="about"><span class="eyebrow">${esc(eyebrow)}</span><span class="who">${esc(text)}</span></div>`;
+  // The first row: a word in small capitals, who or what, and a note.
+  function whoseHtml(eyebrow, text, note) {
+    return `<span class="eyebrow">${esc(eyebrow)}</span>${text ? `<b>${esc(text)}</b>` : ""}${note ? `<span class="note">${esc(note)}</span>` : ""}`;
+  }
+  function barHtml(whose, buttons, slots) {
+    return `<div class="whose" data-fk="whose">${whose}</div><div class="${slots ? "slots" : "row"}">${buttons}</div>`;
+  }
+
+  function heroSeat(view) { return (view.table.seats || []).find((seat) => seat.is_hero) || null; }
+  // Hero has nothing left to decide in the hand on screen: he folded, or was not dealt in.
+  function heroOutOfHand(view) {
+    const hero = heroSeat(view);
+    return !!view.hand && (!hero || !hero.in_hand || hero.folded);
+  }
+  // Hero has no chips and no hand of his is running (view.hero_out; worked out here when the view does not say).
+  function heroOutOfChips(view) {
+    if (view.hero_out != null) return !!view.hero_out;
+    const hero = heroSeat(view);
+    return !!hero && hero.status === "busted" && (!view.hand || view.hand.needs === "next");
   }
 
   function actionsHtml(view, advice, ui) {
     const hand = view.hand;
     if (!hand) return betweenHandsBar(view);
     const selected = ui.selected != null ? (hand.line || []).find((event) => event.i === ui.selected) : null;
-    if (selected) return eventBar(view, selected);
-    if (hand.needs === "cards") return cardsBar();
-    if (hand.needs === "board") return boardBar(hand);
-    if (hand.needs === "result") return resultBar(view, ui);
+    if (selected) return eventBar(view, ui, selected);
+    if (hand.needs === "cards") return cardsBar(view);
+    if (hand.needs === "board") return boardBar(view);
+    if (hand.needs === "result") return ui.split ? splitBar(view, ui) : resultBar(view, ui);
     if (hand.needs === "next") return nextBar(view);
     return actBar(view, advice, ui);
   }
@@ -990,52 +1136,102 @@
     return barButton({label: "New game", sub: "300 chips", key: primary ? "N" : "", primary: primary, wide: primary, fk: "game-300", send: {op: "new_game", start_stack: 300}}) +
            barButton({label: "New game", sub: "500 chips", fk: "game-500", send: {op: "new_game", start_stack: 500}});
   }
+  const nextHandButton = (slot) => barButton({label: "Next hand", key: "N", primary: true, slot: slot, fk: "deal", send: {op: "deal"}});
+
+  // Hero has no chips: the two things he can do, in place of Next hand.
+  function outBar(view) {
+    const again = view.mode === "tournament" ? "New tournament" : "New game";
+    return barHtml(whoseHtml("You are out", "", "no chips on your seat"),
+      barButton({label: "Re-enter", sub: "type your stack", key: "S", wide: true, fk: "reenter", send: {ui: only({seatMenu: 1, menuByKey: false})}}) +
+      barButton({label: again, fk: "new-session", send: {ui: only({sheet: "new"})}}));
+  }
 
   function betweenHandsBar(view) {
-    if (spinOver(view)) return newGameButtons(true);
-    return barButton({label: "New hand", key: "N", primary: true, wide: true, fk: "deal", send: {op: "deal"}}) +
-           barButton({label: "Skip a hand", sub: "the button moves on", send: {op: "skip_hand"}}) +
-           (view.mode === "spin" ? newGameButtons(false) : "");
+    if (spinOver(view)) return barHtml(whoseHtml("Game over", ""), newGameButtons(true));
+    if (heroOutOfChips(view)) return outBar(view);
+    if (view.mode === "spin") {
+      return barHtml(whoseHtml("Between hands", ""),
+        barButton({label: "New hand", key: "N", primary: true, wide: true, fk: "deal", send: {op: "deal"}}) +
+        barButton({label: "Skip a hand", sub: "the button moves on", fk: "skip", send: {op: "skip_hand"}}) + newGameButtons(false));
+    }
+    return barHtml(whoseHtml("Between hands", ""),
+      barButton({label: "New hand", key: "N", primary: true, slot: "1 / 6", fk: "deal", send: {op: "deal"}}) +
+      barButton({label: "Skip a hand", sub: "the button moves on", slot: "6", fk: "skip", send: {op: "skip_hand"}}), true);
   }
 
-  function cardsBar() {
-    return barButton({label: "Pick your cards", wide: true, fk: "pick",
-                      send: {ui: only({picker: freshPicker("hero"), pickerOff: false})}}) +
-           barButton({label: "Discard hand", send: {op: "discard_hand"}});
+  function cardsBar(view) {
+    const want = view.hand.want_suits;
+    return barHtml(whoseHtml("Your cards", "", want ? `the exact ${want.hand}` : ""),
+      barButton({label: "Pick your cards", slot: "1 / 6", fk: "pick", send: {ui: only({picker: freshPicker("hero"), pickerOff: false})}}) +
+      barButton({label: "Discard hand", slot: "6", fk: "discard", send: {op: "discard_hand"}}), true);
   }
 
-  function boardBar(hand) {
+  function boardBar(view) {
+    const hand = view.hand;
     const count = (hand.board || []).length;
     const slot = count < 3 ? "flop" : count === 3 ? "turn" : "river";
+    const out = heroOutOfHand(view);
     // Skipping a street gives everybody still to act a check. While the action is on hero that would
     // be his check too, so the button waits until he has acted (or is all-in, or out of the hand).
-    return barButton({label: `Pick the ${slot}`, wide: true, fk: "pick",
-                      send: {ui: only({picker: freshPicker(slot), pickerOff: false})}}) +
-           barButton({label: "Skip the board", key: "Enter", off: !!hand.target_is_hero, send: {op: "close_round"}});
+    return barHtml(whoseHtml("The " + slot, "", out ? "you are out of this hand" : ""),
+      (out ? nextHandButton("1") : "") +
+      barButton({label: `Pick the ${slot}`, slot: out ? "2 / 6" : "1 / 6", fk: "pick-" + slot,
+                 send: {ui: only({picker: freshPicker(slot), pickerOff: false})}}) +
+      // (named by its street: after a click the same words stand for the next street, and that is another button)
+      barButton({label: "Skip the board", key: "Enter", slot: "6", fk: "skip-" + slot, off: !!hand.target_is_hero, send: {op: "close_round"}}), true);
+  }
+
+  // The players still in the pot who were not named a winner yet.
+  function liveSeats(view, ui) {
+    const ranked = [].concat.apply([], ui.awardTiers || []);
+    return (view.table.seats || []).filter((seat) => !seat.empty && seat.in_hand && !seat.folded && ranked.indexOf(seat.seat) < 0);
   }
 
   // Who won. Each player still in gets a button; a side pot asks again for the next best hand.
   function resultBar(view, ui) {
     const tiers = ui.awardTiers || [];
-    const ranked = [].concat.apply([], tiers);
-    const live = (view.table.seats || []).filter((seat) => !seat.empty && seat.in_hand && !seat.folded && ranked.indexOf(seat.seat) < 0);
+    const live = liveSeats(view, ui);
     const hero = live.find((seat) => seat.is_hero);
     const others = live.filter((seat) => !seat.is_hero);
     const award = (seats) => ({op: "award", ranking: tiers.concat([seats]), ui: {seatMenu: null}});
-    let buttons = "";
-    if (hero) buttons += barButton({label: "You won", key: "W", send: award([hero.seat])});
+    let buttons = heroOutOfHand(view) ? barButton({label: "Next hand", key: "N", primary: true, fk: "deal", send: {op: "deal"}}) : "";
+    if (hero) buttons += barButton({label: "You won", key: "W", fk: "won-1", send: award([hero.seat])});
     if (hero && others.length === 1) {
-      buttons += barButton({label: "You lost", key: "L", send: award([others[0].seat])});
+      buttons += barButton({label: "You lost", key: "L", fk: "won-" + others[0].seat, send: award([others[0].seat])});
     } else {
-      buttons += list(others.slice(0, 4), (seat) => barButton({label: `${seat.pos || seatName(seat)} won`, sub: esc(seatName(seat)), send: award([seat.seat])}));
+      buttons += list(others.slice(0, 4), (seat) => barButton({label: `${seat.pos || seatName(seat)} won`, sub: esc(seatName(seat)), fk: "won-" + seat.seat, send: award([seat.seat])}));
     }
-    if (live.length > 1) buttons += barButton({label: "Split", send: award(live.map((seat) => seat.seat))});
-    return aboutBlock(tiers.length ? "Side pot" : "Showdown", tiers.length ? "Next best hand?" : "Who won?") + buttons;
+    // Two players: the split is between them. More: it asks who shares the pot (the others lose).
+    if (live.length === 2) buttons += barButton({label: "Split", fk: "split", send: award(live.map((seat) => seat.seat))});
+    else if (live.length > 2) buttons += barButton({label: "Split", sub: "tick who shares", fk: "split", send: {ui: {split: [], seatMenu: null}}});
+    return barHtml(whoseHtml(tiers.length ? "Side pot" : "Showdown", tiers.length ? "Next best hand?" : "Who won?"), buttons);
+  }
+
+  // A split between some of the players of a showdown: a tick list, then one button.
+  function splitBar(view, ui) {
+    const tiers = ui.awardTiers || [];
+    const live = liveSeats(view, ui);
+    const ticked = (ui.split || []).filter((n) => live.some((seat) => seat.seat === n));
+    const ticks = list(live, (seat) => {
+      const on = ticked.indexOf(seat.seat) >= 0;
+      const next = on ? ticked.filter((n) => n !== seat.seat) : ticked.concat([seat.seat]);
+      return `<button class="btn tick" role="checkbox" aria-checked="${on}" data-fk="tick-${seat.seat}"${emit({ui: {split: next}})}>` +
+             `<span class="label"><span class="box" aria-hidden="true"></span>${esc(seat.is_hero ? "You" : seat.pos || seatName(seat))}${keycap(String(seat.seat))}</span>` +
+             `${seat.is_hero ? "" : `<span class="sub">${esc(seatName(seat))}</span>`}</button>`;
+    });
+    const enough = ticked.length >= 2;
+    return barHtml(whoseHtml("Split pot", "Who shares it?", "tick two or more: the others lose"),
+      ticks +
+      barButton({label: "Split", key: "Enter", primary: enough, off: !enough, fk: "split-ok",
+                 send: {op: "award", ranking: tiers.concat([ticked]), ui: {split: null, seatMenu: null}}}) +
+      barButton({label: "Cancel", key: "Esc", fk: "split-cancel", send: {ui: {split: null}}}));
   }
 
   function nextBar(view) {
-    if (spinOver(view)) return newGameButtons(true);
-    return barButton({label: "Next hand", key: "N", primary: true, wide: true, fk: "deal", send: {op: "deal"}});
+    if (spinOver(view)) return barHtml(whoseHtml("Game over", ""), newGameButtons(true));
+    if (heroOutOfChips(view)) return outBar(view);
+    // (Slot 6, where Rest fold was, stays empty: a second click there never deals a hand.)
+    return barHtml(whoseHtml("Hand over", ""), nextHandButton("1 / 6"), true);
   }
 
   // What the Follow button will do, in words.
@@ -1046,7 +1242,12 @@
     return `${kind} ${chipsOnlyText(view, follow.to)}`;
   }
 
-  // The bar while a player has to act: hero (Follow first), or the player being recorded.
+  // "HJ · Seat 4", with the name when the player has one.
+  function seatWords(seat) {
+    return [seat.pos, `Seat ${seat.seat}`, seat.name].filter(Boolean).join(" · ");
+  }
+
+  // The bar while a player has to act.
   function actBar(view, advice, ui) {
     const hand = view.hand;
     const seat = actingSeat(view, ui);
@@ -1054,66 +1255,111 @@
     const isHero = !!(player && player.is_hero);
     const known = seat === hand.target;              // the legal moves in the view are for the server's next player
     const legal = hand.legal || {};
-    const act = (kind) => ({op: "act", seat: seat, kind: kind, ui: AFTER_ACT});
-    const ask = (kind) => ({ui: {amount: {kind: kind, seat: seat}, seatMenu: null, selected: null}});
+    // `plain`: the bar was not aimed at a seat, so this is the same as the plain key (see the controller: recording in turn).
+    const plain = ui.target == null;
+    const act = (kind) => ({op: "act", seat: seat, kind: kind, plain: plain, ui: AFTER_ACT});
+    const ask = (kind) => ({ui: {amount: {kind: kind, seat: seat, plain: plain}, seatMenu: null, selected: null}});
     const can = (move) => !known || (legal[move] != null && legal[move] !== false);
+    const who = isHero ? "hero" : "opp";             // a button that changes hands between hero and an opponent is another button
+    const before = (hand.before_target || []).map((n) => seatOf(view, n)).filter(Boolean);
 
-    let first;
-    if (isHero && known) {
-      const follow = isCurrent(view, advice) ? advice.headline.follow : null;
-      first = barButton({label: "Follow", key: "Space", primary: true, wide: true, fk: "follow", off: !follow,
-                         sub: esc(followText(view, follow)),
-                         send: follow ? Object.assign({op: "act", seat: seat, via: "follow", ui: AFTER_ACT}, follow) : {}});
-    } else if (known) {
-      const free = !hand.to_call;
-      first = barButton({label: free ? "Rest check" : "Rest fold", key: "Enter", wide: true, fk: "rest",
-                         sub: esc(player ? `next: ${seatTitle(player)}` : ""), send: {op: "close_round"}});
+    // The first row: whose action the plain keys and the buttons record.
+    let whose;
+    if (isHero) {
+      // Players in front of hero who have not acted take the passive default when he acts.
+      const names = before.map((other) => other.pos || `Seat ${other.seat}`).join(", ");
+      const note = before.length && known
+        ? `before you: ${names} ${before.length === 1 ? (hand.to_call ? "folds" : "checks") : (hand.to_call ? "fold" : "check")} unless you press ${before.length === 1 ? "that seat's" : "their seat"} number first`
+        : "";
+      whose = whoseHtml("Your action", "", note);
     } else {
-      first = aboutBlock("Recording", player ? seatTitle(player) : `Seat ${seat}`);
+      whose = whoseHtml("Recording", player ? seatWords(player) : `Seat ${seat}`, !plain ? "this action only" : "");
     }
 
-    const fold = barButton({label: "Fold", key: "F", off: !can("fold"), send: act("fold")});
+    // Slot 1: the coach's button.
+    let first;
+    if (heroOutOfHand(view)) {
+      first = nextHandButton("1");
+    } else {
+      const follow = isHero && known && isCurrent(view, advice) ? advice.headline.follow : null;
+      first = barButton({label: "Follow", key: "Space", primary: true, slot: "1", fk: "follow", off: !follow,
+                         sub: esc(followText(view, follow)),
+                         send: follow ? Object.assign({op: "act", seat: seat, via: "follow", ui: AFTER_ACT}, follow) : {}});
+    }
+
+    // Slots 2 to 5: the moves of the player the first row names.
+    const fold = barButton({label: "Fold", key: "F", fk: "fold-" + who, off: !can("fold"), send: act("fold")});
     const callSub = known && legal.call != null ? esc(mainText(view, legal.call, hand.to_call_bb)) : "";
     const passive = known && legal.check
-      ? barButton({label: "Check", key: "X", send: act("check")})
-      : barButton({label: "Call", key: "C", sub: callSub, off: !can("call"), send: act("call")});
+      ? barButton({label: "Check", key: "X", fk: "check-" + who, send: act("check")})
+      : barButton({label: "Call", key: "C", fk: "call-" + who, sub: callSub, off: !can("call"), send: act("call")});
     const betting = known ? !!legal.bet : !hand.to_call;
     const raise = betting
-      ? barButton({label: "Bet", key: "B", off: !can("bet"), send: ask("bet")})
-      : barButton({label: "Raise", key: "R", off: !can("raise"), send: ask("raise")});
+      ? barButton({label: "Bet", key: "B", fk: "bet-" + who, off: !can("bet"), send: ask("bet")})
+      : barButton({label: "Raise", key: "R", fk: "raise-" + who, off: !can("raise"), send: ask("raise")});
     const allinSub = known && legal.allin != null ? esc(chipsOnlyText(view, legal.allin, true)) : "";
-    const allin = barButton({label: "All-in", key: "A", sub: allinSub, off: !can("allin"), send: act("allin")});
+    const allin = barButton({label: "All-in", key: "A", fk: "allin-" + who, sub: allinSub, off: !can("allin"), send: act("allin")});
+
+    // Slot 6: the rest take the passive default. Hero's own action is always typed, so while the plain
+    // keys are his the button waits. While players in front of him are recorded in turn, it ends that:
+    // they fold, and the keys are hero's.
+    const free = !hand.to_call;
+    let rest;
+    if (!hand.target_is_hero) {
+      const next = seatOf(view, hand.target);
+      rest = barButton({label: free ? "Rest check" : "Rest fold", key: "Enter", slot: "6", fk: "rest",
+                        sub: esc(next ? `from ${next.pos || "seat " + next.seat}` : ""), send: {op: "close_round", ui: AFTER_ACT}});
+    } else if (!isHero && plain) {
+      rest = barButton({label: free ? "Rest check" : "Rest fold", key: "Enter", slot: "6", fk: "rest", sub: "then you", send: {ui: {turn: null}}});
+    } else {
+      rest = barButton({label: free ? "Rest check" : "Rest fold", key: "Enter", slot: "6", fk: "rest", off: true, sub: "after you", send: {}});
+    }
 
     // All-In or Fold has two moves. A call of an all-in is an all-in.
     if (isAof(view)) {
       const shove = known && legal.call != null
-        ? barButton({label: "Call", key: "C", sub: callSub, send: act("call")})
+        ? barButton({label: "Call", key: "C", fk: "call-" + who, sub: callSub, send: act("call")})
         : allin;
-      return first + shove + fold;
+      return barHtml(whose, first + shove + fold + rest, true);
     }
-    return first + fold + passive + raise + allin;
+    return barHtml(whose, first + fold + passive + raise + allin + rest, true);
   }
 
   // A selected event on the hand line: change its amount, change its cards, or delete it.
-  function eventBar(view, event) {
-    const done = barButton({label: "Done", key: "Esc", send: {ui: {selected: null}}});
+  // The cursor stays on the chip: Delete removes the action, E (or a second click) opens its amount.
+  function eventBar(view, ui, event) {
+    const done = barButton({label: "Done", key: "Esc", fk: "event-done", send: {ui: {selected: null, editing: null}}});
     if (isCardRun(event.text) || event.kind === "cards" || event.kind === "board") {
       // The first board event is the flop, then the turn, then the river (the event says so when the server names its street).
       const before = (view.hand.line || []).filter((other) => other.kind === "board" && other.i < event.i).length;
       const street = ["flop", "turn", "river"].indexOf(event.street) >= 0 ? event.street : ["flop", "turn", "river"][before] || "flop";
       const slot = event.kind === "board" ? street : "hero";
-      return aboutBlock("Selected", "Cards") +
-             barButton({label: "Change the cards", wide: true, send: {ui: only({picker: freshPicker(slot)})}}) + done;
+      return barHtml(whoseHtml("Selected", event.kind === "board" ? "The " + street : "Your cards"),
+             barButton({label: "Change the cards", wide: true, fk: "event-cards", send: {ui: only({picker: freshPicker(slot, true)})}}) + done);
     }
-    const hasAmount = event.to != null && ["bet", "raise", "call", "allin"].indexOf(event.verb) >= 0;
-    const edit = hasAmount
-      ? `<form class="amount"${emit({op: "edit_event", index: event.i, ui: {selected: null}})}>
-          <label class="field"><span class="eyebrow">Amount</span>
-            <input name="to" value="${esc(plainAmount(view, event.to))}" inputmode="decimal" autocomplete="off" data-fk="event-amount" data-autofocus></label>
-          <button type="submit" class="btn compact">Save ${keycap("Enter")}</button></form>`
-      : aboutBlock("Selected", event.text);
-    // An action nobody typed (a fold that follows from a later action) cannot be deleted, only changed.
-    return edit + barButton({label: "Delete", key: "Del", off: !!event.auto, send: {op: "remove_event", index: event.i, ui: {selected: null}}}) + done;
+    const hasAmount = eventHasAmount(event);
+    let edit = "";
+    if (hasAmount && ui.editing === event.i) {
+      edit = `<form class="amount" data-from="event-amount"${emit({op: "edit_event", index: event.i, ui: {selected: null, editing: null}})}>
+          <label class="field${isBad(ui, "event-amount") ? " bad" : ""}"><span class="eyebrow">Amount</span>
+            ${amountInput(view, {name: "to", chips: event.to, fk: "event-amount", focus: true, bad: isBad(ui, "event-amount")})}</label>
+          ${fieldErrorHtml(ui, ["event-amount"])}
+          <button type="submit" class="btn compact">Save ${keycap("Enter")}</button></form>`;
+    } else if (hasAmount) {
+      edit = barButton({label: "Amount", key: "E", fk: "event-edit", send: {ui: {editing: event.i}}});
+    }
+    // A fold nobody typed (it follows from a later action) is where a forgotten caller is put in.
+    const forgotten = event.auto && event.verb === "fold"
+      ? barButton({label: "Called", fk: "event-called", send: {op: "edit_event", index: event.i, kind: "call", ui: {selected: null, editing: null}}}) +
+        barButton({label: "Raised", fk: "event-raised", send: {op: "edit_event", index: event.i, kind: "raise", ui: {selected: null, editing: null}}})
+      : "";
+    // An action nobody typed cannot be deleted, only changed.
+    return barHtml(whoseHtml("Selected", event.text, event.auto ? "nobody typed this: it follows from a later action" : ""),
+      edit + forgotten +
+      barButton({label: "Delete", key: "Del", fk: "event-delete", off: !!event.auto, send: {op: "remove_event", index: event.i, ui: {selected: null, editing: null}}}) + done);
+  }
+  function eventHasAmount(event) {
+    return !!event && event.kind === "act" && event.to != null && ["bet", "raise", "call", "allin"].indexOf(event.verb) >= 0;
   }
 
   /* ---------- 8. Menus on the table: a seat, the cards, the table tools ---------- */
@@ -1122,10 +1368,34 @@
     if (ui.picker && view.hand) return pickerHtml(view, ui.picker);
     if (ui.seatMenu != null) {
       const seat = seatOf(view, ui.seatMenu);
-      if (seat) return seat.empty ? addPlayerHtml(view, seat) : seatMenuHtml(view, ui, seat);
+      if (seat) return seat.empty ? addPlayerHtml(view, ui, seat) : seatMenuHtml(view, ui, seat);
     }
     if (ui.menu === "table") return tableMenuHtml(view);
+    if (ui.menu === "newtable") return newTableHtml(view, ui);
     return "";
+  }
+
+  // A table move: how many seats the new table has and where its dealer button is. Then every stack is typed.
+  function newTableHtml(view, ui) {
+    const limits = (view.settings && view.settings.size_limits) || [2, 9];
+    const pick = ui.newTable || {};
+    const size = Math.max(limits[0], Math.min(limits[1], pick.size || view.table.size));
+    const button = Math.min(size, pick.button || view.table.button || 1);
+    let sizes = "", seats = "";
+    for (let n = limits[0]; n <= limits[1]; n++) {
+      sizes += `<button type="button" class="tab" role="radio" aria-checked="${n === size}" data-fk="nt-size-${n}"${emit({ui: {newTable: {size: n, button: Math.min(button, n)}}})}>${n}</button>`;
+    }
+    for (let n = 1; n <= size; n++) {
+      seats += `<button type="button" class="tab" role="radio" aria-checked="${n === button}" data-fk="nt-button-${n}"${emit({ui: {newTable: {size: size, button: n}}})}>${n === 1 ? "1 you" : n}</button>`;
+    }
+    return `<div class="pop" role="dialog" aria-label="New table">
+      ${popHead("New table", "", {menu: null, newTable: null})}
+      <p class="hint">You were moved: you stay seat 1, the tournament stays. The seats count clockwise from you.</p>
+      <div class="choice"><span>Seats</span><div class="tabs" role="radiogroup" aria-label="Seats at the new table">${sizes}</div></div>
+      <div class="choice"><span>Button on seat</span><div class="tabs" role="radiogroup" aria-label="The seat with the dealer button">${seats}</div></div>
+      <div class="row"><button type="button" class="menu-btn" data-fk="nt-start" data-autofocus` +
+        `${emit({op: "new_table", size: size, button: button, ui: {menu: null, newTable: null}, after: {sheet: "stacks"}})}>Sit down: type the stacks ${keycap("Enter")}</button></div>
+    </div>`;
   }
 
   function popHead(title, small, closePatch) {
@@ -1133,17 +1403,32 @@
       <button type="button" class="tool" aria-label="Close" title="Close"${emit({ui: closePatch})}>${icon("close")}</button></div>`;
   }
 
-  // A labelled field that sends its text on Enter (or when it is left after a change).
+  // A labelled field that sends its text on Enter, and when it is left after a change
+  // (`enterOnly`: on Enter only, so a click elsewhere never saves it; `bad`: the server refused its value).
   function fieldHtml(opts) {
-    return `<label class="field"><span class="eyebrow">${esc(opts.label)}</span>
+    return `<label class="field${opts.bad ? " bad" : ""}"><span class="eyebrow">${esc(opts.label)}</span>
       <input class="${opts.words ? "words" : ""}" value="${esc(opts.value == null ? "" : opts.value)}" data-name="${opts.name || "text"}" data-fk="${esc(opts.fk)}"
-        ${opts.focus ? "data-autofocus" : ""} ${opts.placeholder ? `placeholder="${esc(opts.placeholder)}"` : ""} autocomplete="off" spellcheck="false"${emit(opts.send)}></label>`;
+        ${opts.focus ? "data-autofocus" : ""} ${opts.enterOnly ? "data-enter-only" : ""} ${opts.bad ? 'aria-invalid="true"' : ""}
+        ${opts.placeholder ? `placeholder="${esc(opts.placeholder)}"` : ""} autocomplete="off" spellcheck="false"${opts.unit || ""}${emit(opts.send)}>${opts.mark || ""}</label>`;
   }
+
+  // A hand is being played (a settled one, waiting for the next deal, is not).
+  function midHand(view) { return !!(view.hand && view.hand.needs !== "next"); }
 
   function seatMenuHtml(view, ui, seat) {
     const n = seat.seat;
     const closed = {seatMenu: null, target: null};
-    const stack = fieldHtml({label: "Stack", value: plainAmount(view, seat.stack), fk: "seat-stack", focus: true, send: {op: "set_stack", seat: n}});
+    // The fields of a seat are saved with Enter (or Save), never by a click elsewhere: a number typed
+    // for something else must not become a stack. During a hand a click on a seat leaves the cursor
+    // out of the stack field: the keys stay keys of the table.
+    const inHand = midHand(view);
+    const field = (opts) => fieldHtml(Object.assign({enterOnly: true, bad: isBad(ui, opts.fk)}, opts,
+      "amount" in opts ? {unit: amountAttrs(view, opts.amount), mark: unitMark(view)} : {}));
+    const stack = field({label: "Stack", value: plainAmount(view, seat.stack), fk: "seat-stack", focus: !inHand, amount: seat.stack,
+                         send: {op: "set_stack", seat: n}});
+    const refused = fieldErrorHtml(ui, ["seat-stack", "seat-name", "seat-note"]);
+    const save = `<button class="menu-btn" data-save data-fk="seat-save" title="Save what you typed (Enter in a field does the same)" disabled>Save</button>`;
+    const popFocus = inHand ? ' tabindex="-1" data-autofocus' : "";
     const away = seat.status === "away";
     const sit = `<button class="menu-btn"${emit({op: "set_status", seat: n, status: away ? "active" : "away"})}>${away ? "Sit back" : "Sit out"} ${keycap("O")}</button>`;
     const button = `<button class="menu-btn"${seat.is_button ? " disabled" : ""}${emit({op: "set_button", seat: n})}>Button ${keycap("D")}</button>`;
@@ -1153,37 +1438,38 @@
       ? `<div class="row"><button class="menu-btn"${emit({op: "award", ranking: (ui.awardTiers || []).concat([[n]]), ui: closed})}>Won the pot ${keycap("W")}</button></div>`
       : "";
     if (seat.is_hero) {
-      return `<div class="pop" role="dialog" aria-label="Your seat">
+      return `<div class="pop" role="dialog" aria-label="Your seat"${popFocus}>
         ${popHead(seatTitle(seat), `seat ${n}`, closed)}${won}
-        ${stack}
-        <div class="row">${sit}${button}</div>
+        ${stack}${refused}
+        <div class="row">${sit}${button}${save}</div>
       </div>`;
     }
     const types = list(CHOICES.type, (type) => `<option value="${type}"${type === (seat.type || "unknown") ? " selected" : ""}>${type}</option>`);
-    return `<div class="pop" role="dialog" aria-label="Seat ${n}">
+    return `<div class="pop" role="dialog" aria-label="Seat ${n}"${popFocus}>
       ${popHead(seatTitle(seat), `seat ${n}`, closed)}${won}
       <div class="two">${stack}
-        ${fieldHtml({label: "Name", value: seat.name, words: true, name: "name", fk: "seat-name", send: {op: "rename", seat: n}})}
+        ${field({label: "Name", value: seat.name, words: true, name: "name", fk: "seat-name", send: {op: "rename", seat: n}})}
         <label class="field"><span class="eyebrow">Type</span><select data-name="type" data-fk="seat-type"${emit({op: "set_type", seat: n})}>${types}</select></label>
-        ${fieldHtml({label: "Note", value: seat.note, words: true, fk: "seat-note", send: {op: "note", seat: n}})}
-      </div>
+        ${field({label: "Note", value: seat.note, words: true, fk: "seat-note", send: {op: "note", seat: n}})}
+      </div>${refused}
       <div class="row">${sit}${button}
         <button class="menu-btn"${emit({op: "bust", seat: n, ui: closed})}>Bust ${keycap("K")}</button>
-        <button class="menu-btn"${emit({op: "clear_seat", seat: n, ui: closed})}>Clear ${keycap("Del")}</button></div>
+        <button class="menu-btn"${emit({op: "clear_seat", seat: n, ui: closed})}>Clear ${keycap("Del")}</button>${save}</div>
     </div>`;
   }
 
-  function addPlayerHtml(view, seat) {
+  function addPlayerHtml(view, ui, seat) {
     const closed = {seatMenu: null, target: null};
     // The likeliest stack for a newcomer: the starting stack (All-In or Fold: the 8bb cap).
-    const likely = isAof(view) ? "8" : plainAmount(view, view.strip && view.strip.start_stack);
-    return `<form class="pop" role="dialog" aria-label="Add a player to seat ${seat.seat}"${emit({op: "seat_player", seat: seat.seat, ui: closed})}>
+    const start = isAof(view) ? 8 : view.strip && view.strip.start_stack;
+    return `<form class="pop" role="dialog" aria-label="Add a player to seat ${seat.seat}" data-from="add-stack"${emit({op: "seat_player", seat: seat.seat, ui: closed})}>
       ${popHead("Add a player", `seat ${seat.seat}`, closed)}
       <div class="two">
-        <label class="field"><span class="eyebrow">Stack</span><input name="stack" value="${esc(likely)}" autocomplete="off" data-fk="add-stack" data-autofocus></label>
+        <label class="field${isBad(ui, "add-stack") ? " bad" : ""}"><span class="eyebrow">Stack</span>${amountInput(view, {name: "stack", chips: start, fk: "add-stack", focus: true, bad: isBad(ui, "add-stack")})}</label>
         <label class="field"><span class="eyebrow">Name</span><input class="words" name="name" placeholder="optional" autocomplete="off" data-fk="add-name"></label>
-      </div>
-      <div class="row"><button type="submit" class="menu-btn">Seat the player ${keycap("Enter")}</button></div>
+      </div>${fieldErrorHtml(ui, ["add-stack"])}
+      <div class="row"><button type="submit" class="menu-btn">Seat the player ${keycap("Enter")}</button>
+        <button type="button" class="menu-btn" data-fk="button-here"${seat.is_button ? " disabled" : ""}${emit({op: "set_button", seat: seat.seat, ui: closed})}>Button here ${keycap("D")}</button></div>
     </form>`;
   }
 
@@ -1208,7 +1494,7 @@
       ${sizeRow}
       <div class="row">
         <button class="menu-btn"${emit({ui: only({sheet: "stacks"})})}>Every stack</button>
-        ${view.mode === "tournament" ? `<button class="menu-btn"${emit({op: "new_table", ui: closed})}>New table</button>` : ""}
+        ${view.mode === "tournament" ? `<button class="menu-btn" data-fk="new-table"${emit({ui: {menu: "newtable", newTable: null}})}>New table</button>` : ""}
       </div>
       <div class="row">
         <button class="menu-btn"${emit({op: "skip_hand", ui: closed})}>Skip a hand</button>
@@ -1227,8 +1513,18 @@
   }
 
   // A picker that has just been opened for a slot: hero, flop, turn or river.
-  function freshPicker(slot) { return {slot: slot, cards: [], rank: null, rank2: null}; }
+  // `replace`: the user opened it himself to change hero's cards.
+  function freshPicker(slot, replace) { return {slot: slot, cards: [], rank: null, rank2: null, replace: !!(replace && slot === "hero")}; }
   function cardsNeeded(slot) { return slot === "flop" ? 3 : slot === "hero" ? 2 : 1; }
+
+  // The exact holdings the table is asking for: hero's hand is on record as a class (AKs) and the flop
+  // is out. Null when the user is changing his cards on purpose, or nothing of the kind is wanted.
+  function wantSuits(view, picker) {
+    const hand = view.hand;
+    const want = hand && hand.want_suits;
+    if (!want || !picker || picker.slot !== "hero" || picker.replace) return null;
+    return Array.isArray(want.options) && want.options.length ? want : null;
+  }
 
   // Hero's hand when it is known as a class only (AKs, AKo, 77): its suits can then be picked without the ranks.
   function classToSuit(view, picker) {
@@ -1245,8 +1541,9 @@
     const slot = picker.slot;
     const cards = picker.cards || [];
     const used = cardsInUse(view, picker);
-    const state = (next) => ({ui: {picker: Object.assign(freshPicker(slot), {cards: cards}, next)}});
-    const done = (text) => ({op: "set_cards", slot: slot, text: text, ui: {picker: null, selected: null}});
+    const state = (next) => ({ui: {picker: Object.assign(freshPicker(slot, picker.replace), {cards: cards}, next)}});
+    const done = (text) => Object.assign({op: "set_cards", slot: slot, text: text, ui: {picker: null, selected: null}},
+                                         picker.replace ? {replace: true} : {});
 
     if (step.back) {
       if (picker.rank2) return state({rank: picker.rank});
@@ -1272,6 +1569,22 @@
     if (step.suit) {
       if (picker.rank2) return null;
       let rank = picker.rank;
+      const want = wantSuits(view, picker);
+      if (!rank && want) {
+        // The suit picks among the holdings asked for. A suited hand takes one suit for both cards; otherwise
+        // the first suit is the first card's (the ace of AKo), the second the other card's.
+        const known = (card) => want.options.some((option) => option.indexOf(card) >= 0);
+        const chosen = cards.length === 1 && known(cards[0]) ? cards : [];      // (a stray card typed before is dropped)
+        const open = want.options.filter((option) => chosen.every((card) => option.indexOf(card) >= 0));
+        if (!chosen.length) {
+          const both = open.find((option) => option[0][1] === step.suit && option[1][1] === step.suit);
+          if (String(want.hand)[2] === "s") return both ? done(both.join("")) : null;
+          const first = String(want.hand)[0] + step.suit;
+          return open.some((option) => option.indexOf(first) >= 0) ? state({cards: [first]}) : null;
+        }
+        const match = open.find((option) => option.some((card) => card !== chosen[0] && card[1] === step.suit));
+        return match ? done(match.join("")) : null;
+      }
       const cls = classToSuit(view, picker);
       if (!rank && cls) {
         // The ranks are known from the class: a suit alone is enough. A suited hand takes one suit for both cards.
@@ -1296,6 +1609,7 @@
     const need = cardsNeeded(slot);
     const cards = picker.cards || [];
     const step = (what) => pickerStep(view, picker, what);
+    if (wantSuits(view, picker)) return holdingsHtml(view, picker);
 
     const ranks = list(RANKS.split(""), (rank) => {
       const send = step({rank: rank});
@@ -1346,6 +1660,36 @@
     </div>`;
   }
 
+  // Hero's hand is on record as a class and the exact cards are wanted now: only the holdings of that
+  // class that are still possible are offered, one button each. A suit key picks among them.
+  function holdingsHtml(view, picker) {
+    const want = wantSuits(view, picker);
+    const cards = picker.cards || [];
+    const chosen = cards.length === 1 && want.options.some((option) => option.indexOf(cards[0]) >= 0) ? cards[0] : null;
+    const send = (option) => ({op: "set_cards", slot: "hero", text: option.join(""), ui: {picker: null, selected: null}});
+    const buttons = list(want.options, (option, at) => {
+      const off = chosen && option.indexOf(chosen) < 0;
+      return `<button type="button" class="pick holding" data-fk="hold-${option.join("")}" aria-label="${esc(option.map(cardWords).join(", "))}"` +
+             `${off ? " disabled" : ""}${at === 0 ? " data-autofocus" : ""}${emit(send(option))}>${cardHtml(option[0])}${cardHtml(option[1])}</button>`;
+    });
+    let shown = list(cards, (code) => cardHtml(code));
+    if (picker.rank) shown += rankCardHtml(picker.rank, "", false);
+    for (let i = cards.length + (picker.rank ? 1 : 0); i < 2; i++) shown += slotHtml(false, false);
+    const hand = String(want.hand);
+    const keys = hand[2] === "s" ? "Key: the suit (S H D C)."
+      : hand[0] === hand[1] ? "Keys: the two suits."
+      : `Keys: the suit of the ${rankText(hand[0])}, then the suit of the ${rankText(hand[1])}.`;
+    const back = pickerStep(view, picker, {back: true});
+    return `<div class="pop picker" role="dialog" aria-label="Your cards: which ${esc(hand)}">
+      <div class="pop-head"><h2>Your cards</h2><div class="slots" aria-hidden="true">${shown}</div>
+        <div class="pop-tools"><button class="tool" aria-label="Back one step" title="Back one step"${back ? "" : " disabled"}${emit(back || {})}>${icon("undo")}</button>
+        <button class="tool" aria-label="Close" title="Close"${emit({ui: {picker: null, pickerOff: true}})}>${icon("close")}</button></div></div>
+      <p class="hint">After the flop the coach needs your exact cards. Which ${esc(hand)} is it? ${esc(keys)}</p>
+      <div class="holdings n${want.options.length > 6 ? 12 : want.options.length > 4 ? 6 : 4}">${buttons}</div>
+      <div class="row"><button type="button" class="menu-btn" data-fk="other-cards"${emit({ui: {picker: freshPicker("hero", true)}})}>It was another hand: type the cards again</button></div>
+    </div>`;
+  }
+
   /* ---------- 9. Sheets ---------- */
 
   // A toast shows where the user is working: inside the open sheet, else beside the advice.
@@ -1362,13 +1706,26 @@
       </div>`;
   }
 
-  function overlayHtml(view, advice, ui) {
-    if (!view) return ui.sheet === "keys" ? sheetHtml("Keys", keysBody()) : ui.sheet === "settings" ? sheetHtml("Menu", firstRunMenu(), true) : "";
-    if (ui.sheet === "settings") return sheetHtml("Settings", settingsBody(view), true);
+  function overlayHtml(view, advice, ui, mode) {
+    if (!view) {
+      if (ui.sheet === "keys") return sheetHtml("Keys", keysBody());
+      if (ui.sheet === "settings") return sheetHtml("Menu", firstRunMenu(), true);
+      // (from the screen that says the table cannot be shown: a way to start again)
+      if (ui.sheet === "new") return sheetHtml(mode === "tournament" ? "New tournament" : "New game", setupForm(mode, null));
+      return "";
+    }
+    if (ui.sheet === "settings") return sheetHtml("Settings", settingsBody(view, ui), true);
     if (ui.sheet === "why") return sheetHtml("Why and range", whyBody(view, advice));
     if (ui.sheet === "keys") return sheetHtml("Keys", keysBody());
-    if (ui.sheet === "history") return sheetHtml("Hand history", historyBody(view));
-    if (ui.sheet === "new") return sheetHtml(view.mode === "tournament" ? "New tournament" : "New game", setupForm(view.mode, view.setup));
+    if (ui.sheet === "history") return sheetHtml("Hand history", historyBody(view, ui));
+    if (ui.sheet === "new") {
+      // A session is running: say what Start does to it, and how to get it back.
+      const what = view.mode === "tournament" ? "tournament" : "game";
+      const hands = (view.history || []).length;
+      const note = `<p class="notice" data-fk="replace-note">Start replaces the ${what} that is running` +
+                   `${hands ? ` (${hands} hand${hands === 1 ? "" : "s"} recorded)` : ""}. Undo brings it back.</p>`;
+      return sheetHtml(view.mode === "tournament" ? "New tournament" : "New game", note + setupForm(view.mode, view.setup));
+    }
     if (ui.sheet === "stacks") return sheetHtml("Every stack", stacksBody(view));
     return "";
   }
@@ -1416,16 +1773,16 @@
     return words.join(" ");
   }
 
-  function settingsBody(view) {
+  function settingsBody(view, ui) {
     const strip = view.strip || {};
     const config = (key) => (value) => ({op: "set_config", key: key, value: value});
     const tourney = (label, field, value, opts) => fieldHtml(Object.assign(
-      {label: label, value: value, fk: "set-" + field, send: {op: "set_tournament", field: field}}, opts || {}));
+      {label: label, value: value, fk: "set-" + field, bad: isBad(ui, "set-" + field), send: {op: "set_tournament", field: field}}, opts || {}));
     let html = `<p class="notice">${NOTICE}</p>`;
 
     if (view.mode === "tournament") {
       html += section("Tournament", `<div class="cols">
-          ${fieldHtml({label: "Left", value: strip.remaining, fk: "set-remaining", send: {op: "remaining"}})}
+          ${fieldHtml({label: "Left", value: strip.remaining, fk: "set-remaining", bad: isBad(ui, "set-remaining"), send: {op: "remaining"}})}
           ${tourney("Paid", "paid", strip.paid)}
           ${tourney("Entrants", "entrants", strip.entrants)}
           ${tourney("Start stack", "start_stack", strip.start_stack)}
@@ -1460,6 +1817,14 @@
           <div class="buttons"><button type="submit" class="btn compact">Use this ladder</button></div></form>`);
     }
 
+    if (view.mode !== "aof") {
+      const rule = buttonRule(view);
+      html += section("Table",
+        choiceRow("Dealer button", CHOICES.button_rule, rule, config("button_rule")) +
+        `<p class="hint">Dead button: after a player busts the big blind still moves on by one player, so the button can stand on an empty seat for a hand. Most sites deal this way.</p>
+         <p class="hint">Forward-moving button: the button always goes to the next player.</p>
+         <p class="hint">[ and ] move the button by hand, also onto an empty seat.</p>`);
+    }
     html += section("Screen",
       (view.mode === "aof" ? "" : choiceRow("Numbers in", CHOICES.unit, view.unit, config("unit"))) +
       choiceRow("Cards", CHOICES.deck, view.deck || "one-ink", config("deck")));
@@ -1497,19 +1862,25 @@
   // What hero did, as a word: the server writes "allin".
   function didWord(did) { return did === "allin" ? "all-in" : did || "none"; }
 
-  function historyBody(view) {
+  // A row is a button: it opens that hand's text, with its own Copy.
+  function historyBody(view, ui) {
     const hands = view.history || [];
     if (!hands.length) return `<p class="empty-note">No hands yet. Each hand lands here with what the coach said and what you did.</p>`;
     const rows = list(hands, (hand) => {
       const cards = isCardRun(hand.cards) ? cardsInline(hand.cards) : esc(hand.cards || "");
       const look = hand.net > 0 ? " win" : hand.net < 0 ? " loss" : "";
       const net = hand.net ? plus(hand.net, chipsOnlyText(view, hand.net)) : "0";
-      return `<div class="hrow"><span class="num">${esc(hand.no)}</span><b>${cards}</b><span>${esc(hand.pos || "")}</span>
+      const open = ui.handOpen === hand.no;
+      const row = `<button class="hrow" aria-expanded="${open}" data-fk="hand-${esc(hand.no)}"${emit({ui: {handOpen: open ? null : hand.no}})}>
+        <span class="num">${esc(hand.no)}</span><b>${cards}</b><span>${esc(hand.pos || "")}</span>
         <span>${hand.skipped ? "not recorded" : `coach <b>${esc(hand.advice || "none")}</b>, you <b>${esc(didWord(hand.did))}</b>`}${hand.deviated ? ' <span class="pill near">deviated</span>' : ""}</span>
-        <span class="num${look}">${net}</span></div>`;
+        <span class="num${look}">${net}</span></button>`;
+      if (!open) return row;
+      return row + `<div class="htext"><pre>${esc(hand.text || "Nothing was recorded for this hand.")}</pre>
+        <div class="buttons"><button class="btn compact" data-fk="copy-hand"${emit({cmd: "copy", text: hand.text || ""})}>Copy this hand</button></div></div>`;
     });
     const text = hands.map((hand) => hand.text || "").join("\n");
-    return `<div class="buttons"><button class="btn compact"${emit({cmd: "copy", text: text})}>Copy as text</button></div>
+    return `<div class="buttons"><button class="btn compact" data-fk="copy-all"${emit({cmd: "copy", text: text})}>Copy as text</button></div>
       <div class="history">${rows}</div>`;
   }
 
@@ -1518,9 +1889,11 @@
     const seats = (view.table.seats || []).filter((seat) => !seat.empty);
     const fields = list(seats, (seat, at) =>
       `<label class="field"><span class="eyebrow">${esc(seat.seat + " " + seatTitle(seat))}</span>
-        <input name="${seat.seat}" value="${esc(plainAmount(view, seat.stack))}" autocomplete="off" data-fk="sweep-${seat.seat}"${at === 0 ? " data-autofocus" : ""}></label>`);
-    return `<form class="stacked"${emit({op: "set_stacks", ui: {sheet: null}})} data-into="stacks" data-changed-only>
-      <p class="hint">Type what you see: 12.5k, 25bb, +3k. A stack you leave as it is stays as it is (a ~ stays unsure); a minus sign empties the seat. Enter goes to the next seat and saves after the last.</p>
+        ${amountInput(view, {name: String(seat.seat), chips: seat.stack, fk: "sweep-" + seat.seat, focus: at === 0})}</label>`);
+    const how = typesBb(view) ? "Type what you see, in big blinds: 25, 33.5. Chips need their sign: 12.5k, 12,500 chips is 12.5k."
+      : "Type what you see: 12.5k, 25bb, +3k.";
+    return `<form class="stacked"${emit({op: "set_stacks", ui: {sheet: null}})} data-into="stacks" data-changed-only data-hold>
+      <p class="hint">${how} A stack you leave as it is stays as it is (a ~ stays unsure); a minus sign empties the seat. Enter goes to the next seat and saves after the last.</p>
       <div class="cols">${fields}</div>
       <div class="buttons"><button type="submit" class="btn compact">Save ${keycap("Enter")}</button></div>
     </form>`;
@@ -1573,7 +1946,7 @@
         </div>
         <p class="hint">Every field can be changed later. Players left and places paid switch ICM on.</p>`;
     }
-    return `<form class="stacked"${emit({op: "new_session", mode: mode, ui: {sheet: null}})}>${fields}
+    return `<form class="stacked" data-hold${emit({op: "new_session", mode: mode, ui: {sheet: null}})}>${fields}
       <button type="submit" class="btn primary start">Start ${keycap("Enter")}</button></form>`;
   }
 
@@ -1587,6 +1960,21 @@
     </div>`;
   }
 
+  // The program could not show the table (its answer was an error), or does not answer at all.
+  function viewErrorHtml(error, mode) {
+    const again = mode === "tournament" ? "Start a new tournament" : "Start a new game";
+    const ways = error.down ? "" :
+      `<button class="btn compact" data-fk="trouble-undo"${emit({op: "undo"})}>Undo the last change</button>
+       <button class="btn compact" data-fk="trouble-new"${emit({ui: {sheet: "new"}})}>${again}</button>`;
+    return `<div class="setup trouble" role="alert">
+      <h1>${error.down ? "No answer" : "The table cannot be shown"}</h1>
+      <p class="lead">${esc(error.message || "")}</p>
+      ${error.fix ? `<p class="hint">${esc(error.fix)}</p>` : ""}
+      <div class="buttons">${ways}
+        <button class="btn compact" data-fk="trouble-again"${emit({cmd: "reload"})}>Try again</button></div>
+    </div>`;
+  }
+
   /* ---------- 11. Toast ---------- */
 
   function toastHtml(view, ui) {
@@ -1594,8 +1982,10 @@
     if (!toast) return "";
     const text = typeof toast === "string" ? toast : toast.text || toast.message;
     const fix = toast.fix ? `<small>${esc(toast.fix)}</small>` : "";
-    const undo = toast.undo ? `<button class="link"${emit({op: "undo", ui: {toast: null}})}>Undo</button>` : "";
-    return `<div class="toast"><span class="text">${esc(text)}${fix}</span>${undo}
+    const undo = toast.undo ? `<button class="link" data-fk="toast-undo"${emit({op: "undo", ui: {toast: null}})}>Undo</button>` : "";
+    // A refusal may offer the way round it as a button ("Clear seat 8 and remove it").
+    const action = toast.action ? `<button class="link" data-fk="toast-action"${emit(Object.assign({ui: {toast: null}}, toast.action.send))}>${esc(toast.action.label)}</button>` : "";
+    return `<div class="toast${toast.error ? " refusal" : ""}"><span class="text">${esc(text)}${fix}</span>${action}${undo}
       <button class="tool" aria-label="Dismiss" title="Dismiss"${emit({ui: {toast: null}})}>${icon("close")}</button></div>`;
   }
 
@@ -1634,40 +2024,58 @@
     if (ui.seatMenu != null) return "seat:" + ui.seatMenu;
     if (ui.menu) return "menu:" + ui.menu;
     if (ui.amount) return "amount";
-    if (ui.selected != null) return "event";
+    if (ui.selected != null) return ui.editing != null ? "event:amount" : "event";
     if (ui.edit) return "edit:" + ui.edit;
     return "";
   }
 
   function closeTopPatch(ui) {
     ui = ui || {};
-    if (ui.sheet) return {sheet: null};
+    if (ui.sheet) return {sheet: null, fieldError: null};
     if (ui.picker) return {picker: null, pickerOff: true};
-    if (ui.seatMenu != null) return {seatMenu: null, target: null};
-    if (ui.menu) return {menu: null};
-    if (ui.amount) return {amount: null};
-    if (ui.selected != null) return {selected: null};
-    if (ui.edit) return {edit: null};
+    if (ui.seatMenu != null) return {seatMenu: null, target: null, fieldError: null};
+    if (ui.menu) return {menu: null, newTable: null};
+    if (ui.amount) return {amount: null, fieldError: null};
+    if (ui.split) return {split: null};
+    if (ui.selected != null) return {selected: null, editing: null, fieldError: null};
+    if (ui.edit) return {edit: null, fieldError: null};
     if (ui.target != null) return {target: null};
+    if (ui.turn) return {turn: null};                         // the plain keys are hero's again
     return null;
   }
 
+  // True while the page is being drawn: a field that is replaced then loses the focus, and the
+  // browser tells it "changed". That is no click elsewhere by the user, so nothing is sent for it.
+  let drawing = false;
+
   function render(view, advice, ui) {
+    drawing = true;
+    try { renderParts(view, advice, ui); } finally { drawing = false; }
+  }
+
+  function renderParts(view, advice, ui) {
     ui = ui || {};
     const setup = view && view.setup;                         // the server's own defaults for the first form, if any
     if (view && view.settings && view.settings.keys) keyMap = view.settings.keys;
     const mode = (view && view.mode) || ui.setupMode || "tournament";
+    const can = (view && view.can) || {};
+    // A view that is neither a table nor a first run cannot be shown: the page says so (never the form).
+    if (view && !view.table && !view.first_run && !ui.viewError) {
+      ui = Object.assign({}, ui, {viewError: {message: "The program could not show the table.", fix: "Undo takes back the last change."}});
+    }
     if (view && (!view.table || view.first_run)) view = null; // nothing recorded yet: the first-run form
     const app = document.getElementById("app");
 
     // Remember where the keyboard is, and what was being typed there.
     const active = document.activeElement;
     const activeKey = focusKey(active);
-    const typing = active && active.dataset && active.dataset.dirty && !active.dataset.sent
+    // (A value the server refused was sent, and is kept all the same: the field stays open with it.)
+    const typing = active && active.dataset && active.dataset.dirty && (!active.dataset.sent || isBad(ui, activeKey))
       ? {value: active.value, start: active.selectionStart, end: active.selectionEnd} : null;
+    const halfTyped = typedFields();
 
     app.className = "app" + (view ? "" : " first") + (view && view.deck === "four-colour" ? " deck-four" : "");
-    put("header", headerHtml(view, ui, mode));
+    put("header", headerHtml(view, ui, mode, can));
     if (view) {
       const adviceParts = adviceHtml(view, advice, ui);
       part("advice").dataset.panel = adviceParts.panel;
@@ -1675,29 +2083,124 @@
       part("table").classList.toggle("aof", isAof(view));
       part("table").dataset.size = view.table.size;
       put("table", tableHtml(view, ui));
-      const lineChanged = put("line", lineHtml(view, ui));
+      const events = part("line").querySelector(".events");
+      const scrolled = events ? events.scrollLeft : 0;
+      if (put("line", lineHtml(view, ui))) placeHandLine(view, ui, scrolled);
       put("actions", actionsHtml(view, advice, ui));
       put("first", "");
-      if (lineChanged) showLatestEvent();
     } else {
       put("advice", ""); put("table", ""); put("line", ""); put("actions", "");
-      put("first", firstRunHtml(mode, setup));
+      // No table to draw. The first-run form is for a session that does not exist yet; when the program
+      // answered with an error (or not at all) the page says that, and never offers a blank start by itself.
+      put("first", ui.viewError ? viewErrorHtml(ui.viewError, mode) : firstRunHtml(mode, setup));
     }
     ["advice", "table", "line", "actions"].forEach((name) => { part(name).hidden = !view; });
     part("first").hidden = !!view;
     const toast = toastHtml(view, ui);
     sheetToast = ui.sheet ? toast : "";
-    put("overlay", overlayHtml(view, advice, ui));
+    put("overlay", overlayHtml(view, advice, ui, mode));
     put("toast", ui.sheet ? "" : toast);
     app.inert = !!ui.sheet;                                   // a sheet is modal: the page behind it cannot be used
 
     moveFocus(ui, active, activeKey, typing);
+    keepTyped(halfTyped);
+    keepRefused(ui);
+    noteBar();
   }
 
-  // The hand line scrolls sideways: keep the newest event in sight.
-  function showLatestEvent() {
+  // What is typed and not sent yet, in every field on the page: a menu or a sheet that is drawn anew
+  // while it is open (a type was chosen, a refusal appeared) keeps it. A field is known by its name and
+  // by what it sends, so a text typed for seat 4 never turns up in the menu of seat 5.
+  function fieldId(field) {
+    return field.dataset.fk + "|" + (field.dataset.emit || (field.form && field.form.dataset.emit) || "");
+  }
+  function typedFields() {
+    const typed = {};
+    Array.prototype.forEach.call(document.querySelectorAll("input[data-fk],textarea[data-fk]"), (field) => {
+      if (field.dataset.dirty && !field.dataset.sent && !field.dataset.cancelled && field.type !== "checkbox") typed[fieldId(field)] = field.value;
+    });
+    return typed;
+  }
+  function keepTyped(typed) {
+    if (!Object.keys(typed).length) return;
+    Array.prototype.forEach.call(document.querySelectorAll("input[data-fk],textarea[data-fk]"), (field) => {
+      const value = typed[fieldId(field)];
+      if (value == null || field.dataset.dirty) return;
+      field.value = value;
+      markDirty(field);
+    });
+  }
+
+  // The field whose value was refused was drawn anew (the refusal now stands under it): put the text back.
+  function keepRefused(ui) {
+    const error = ui.fieldError;
+    if (!error || error.value == null) return;
+    const field = document.querySelector('[data-fk="' + error.fk + '"]');
+    if (!field || field.dataset.dirty || !("value" in field)) return;
+    field.value = error.value;
+    markDirty(field);
+  }
+
+  // Something was typed into this field: the Save button of its menu wakes up.
+  function markDirty(field) {
+    field.dataset.dirty = "1";
+    const pop = field.closest(".pop");
+    const save = pop && pop.querySelector("[data-save]");
+    if (save) save.disabled = false;
+  }
+
+  // The hand line scrolls sideways. A step that was added is brought into sight (the line goes to its
+  // end); a step that is selected is brought into sight; otherwise the line stays where it was.
+  let lineWas = "";            // hand and number of steps at the last draw
+  function placeHandLine(view, ui, scrolled) {
     const events = part("line").querySelector(".events");
-    if (events) events.scrollLeft = events.scrollWidth;
+    if (!events) { lineWas = ""; return; }
+    const hand = view.hand;
+    const now = hand ? hand.no + ":" + (hand.line || []).length : "";
+    const grew = now !== lineWas;
+    lineWas = now;
+    events.scrollLeft = scrolled;
+    const chip = ui.selected != null ? events.querySelector('[data-fk="event-' + ui.selected + '"]') : null;
+    if (chip) {
+      const box = events.getBoundingClientRect(), at = chip.getBoundingClientRect();
+      if (at.left < box.left + 4) events.scrollLeft += at.left - box.left - 4;
+      else if (at.right > box.right - 4) events.scrollLeft += at.right - box.right + 4;
+    } else if (grew) {
+      events.scrollLeft = events.scrollWidth;
+    }
+  }
+
+  /* The 400 ms rule of the action bar. A pointer click on a bar button counts only when that button
+     (the same word, for the same side: hero or an opponent) has been at that place for 400 ms. A
+     double-click therefore records one action: the button that turns up under the pointer after the
+     first click (Next hand where Follow was) is not pressed by the second. Keys are not affected. */
+  const BAR_WAIT_MS = 400;
+  let barSince = {};           // button and place -> when it was first there
+  function barId(button) {
+    const box = button.getBoundingClientRect();
+    const label = button.querySelector(".label");
+    const name = button.dataset.fk || (label ? label.textContent : button.textContent);
+    // (its place on the page, not in the window: scrolling the page does not make a button a new one)
+    return name + "@" + Math.round(box.left + window.scrollX) + "," + Math.round(box.top + window.scrollY) + "," + Math.round(box.width);
+  }
+  function noteBar() {
+    const now = performance.now();
+    const next = {};
+    Array.prototype.forEach.call(part("actions").querySelectorAll("button"), (button) => {
+      const id = barId(button);
+      next[id] = barSince[id] != null ? barSince[id] : now;
+    });
+    barSince = next;
+  }
+  function barClickTooEarly(button) {
+    const since = barSince[barId(button)];
+    return since == null || performance.now() - since < BAR_WAIT_MS;
+  }
+  // Every button of the bar can be clicked now (for the browser checks).
+  function barArmed() {
+    noteBar();
+    const now = performance.now();
+    return Object.keys(barSince).every((id) => now - barSince[id] >= BAR_WAIT_MS);
   }
 
   function moveFocus(ui, active, activeKey, typing) {
@@ -1711,7 +2214,7 @@
         opener = null;
         if (back) { back.focus(); return; }
       } else {
-        const first = document.querySelector("#region-overlay [data-autofocus], #region-table .pop [data-autofocus], " +
+        const first = document.querySelector("#region-overlay [data-autofocus], #region-table .pop[data-autofocus], #region-table .pop [data-autofocus], " +
                                              "#region-line [data-autofocus], #region-actions [data-autofocus], #region-header [data-autofocus]") ||
                       document.querySelector("#region-table .pop button:not(:disabled)");
         if (first) {
@@ -1728,16 +2231,19 @@
         again.focus();
         if (typing && "value" in again) {
           again.value = typing.value;
-          again.dataset.dirty = "1";
+          markDirty(again);
           try { again.setSelectionRange(typing.start, typing.end); } catch (error) { /* not a text field */ }
         }
       }
     }
   }
 
-  function send(detail, element) {
+  // `field`: the field the value was typed into. It travels as detail.from = {fk, value}, so the
+  // controller can keep that field open, with its text, when the server refuses the value.
+  function send(detail, element, field) {
     if (!detail || !Object.keys(detail).length) return;
-    lastUsed = focusKey(element);
+    if (element) lastUsed = focusKey(element);
+    if (field && field.dataset && field.dataset.fk) detail.from = {fk: field.dataset.fk, value: field.value};
     document.dispatchEvent(new CustomEvent("menlo:event", {detail: detail}));
   }
 
@@ -1745,10 +2251,20 @@
     try { return JSON.parse(element.dataset.emit); } catch (error) { return null; }
   }
 
+  // What a field sends. An amount typed while the numbers are shown in big blinds: a bare number is
+  // big blinds ("25" travels as "25bb"); one that was not touched travels as the exact chips it stood for.
+  const BARE_NUMBER = /^\s*[+\-\u2212]?\d[\d,]*(?:[.,]\d+)?\s*$/;
+  function fieldValue(field) {
+    if (field.type === "checkbox") return field.checked;
+    const value = field.value;
+    if (field.dataset.unit !== "bb") return value;
+    if (field.dataset.exact != null && value === field.dataset.exactText) return field.dataset.exact;
+    return BARE_NUMBER.test(value) ? value.trim().replace("\u2212", "-") + "bb" : value;
+  }
   // The value of a field, with the name it travels under.
   function withValue(detail, field) {
     const name = field.dataset.name || field.name || "text";
-    detail[name] = field.type === "checkbox" ? field.checked : field.value;
+    detail[name] = fieldValue(field);
     return detail;
   }
 
@@ -1757,10 +2273,24 @@
   }
 
   function onClick(event) {
+    const save = event.target.closest("[data-save]");
+    if (save && !save.disabled) { saveFields(save.closest(".pop")); return; }
     const element = event.target.closest("[data-emit]");
     if (!element || element.disabled) return;
     if (element.tagName === "FORM" || isField(element)) return;        // these send on Enter or on change
+    // A pointer click (not Enter or Space on the button) on the action bar: the 400 ms rule.
+    if (event.detail > 0 && element.tagName === "BUTTON" && element.closest("#region-actions") && barClickTooEarly(element)) return;
     send(readEmit(element), element);
+  }
+
+  // The Save button of a seat's menu: every field of the menu that was changed is sent, as Enter in it would.
+  function saveFields(pop) {
+    if (!pop) return;
+    Array.prototype.forEach.call(pop.querySelectorAll("input[data-emit]"), (field) => {
+      if (!field.dataset.dirty || field.value === field.defaultValue) return;
+      field.dataset.sent = field.value;
+      send(withValue(readEmit(field), field), field, field);
+    });
   }
 
   function onSubmit(event) {
@@ -1774,26 +2304,50 @@
       const field = form.elements[i];
       if (!field.name) continue;
       if (changedOnly && field.value === field.defaultValue) continue;
-      into[field.name] = field.type === "checkbox" ? field.checked : field.value;
+      into[field.name] = fieldValue(field);
     }
     if (changedOnly && !Object.keys(into).length) delete detail.op;    // nothing was typed: only close the sheet
-    send(detail, form);
+    // The field a refusal is shown at: the one the form names, else the first one that was filled in.
+    const from = form.dataset.from ? form.querySelector('[data-fk="' + form.dataset.from + '"]') : null;
+    // data-hold: the form (a sheet) stays open until the server has taken what it sends; a refusal is said at its foot.
+    if (detail.op && !from && form.dataset.hold != null) detail.from = {fk: "", value: ""};
+    send(detail, form, detail.op ? from : null);
   }
 
-  // A lone field sends on Enter, and when it is left after a change.
+  // A lone field sends on Enter, and when it is left after a change: a deliberate click elsewhere.
+  // Not when Esc cancelled it, and never a field that is saved with Enter only (a seat's stack and name).
   function onChange(event) {
     const field = event.target;
-    if (!isField(field) || !field.dataset.emit) return;
+    if (drawing || !isField(field) || !field.dataset.emit) return;
+    if (field.dataset.cancelled || (field.dataset.enterOnly != null && field.tagName === "INPUT")) return;
     if (field.dataset.sent === field.value) return;                    // Enter already sent this value
     field.dataset.sent = field.value;
-    send(withValue(readEmit(field), field), field);
+    send(withValue(readEmit(field), field), field, field);
   }
 
   function onInput(event) {
     const field = event.target;
     if (!isField(field)) return;
-    field.dataset.dirty = "1";
+    markDirty(field);
     delete field.dataset.sent;
+    delete field.dataset.cancelled;
+    // The refusal under this field has been read: typing takes it away.
+    if (field.getAttribute("aria-invalid") === "true") send({ui: {fieldError: null}}, null);
+  }
+
+  // Esc in a field: its first value comes back and nothing is sent, whatever closes the field afterwards.
+  function cancelField(field) {
+    if (!field || !isField(field)) return;
+    if (field.tagName === "SELECT") {
+      Array.prototype.forEach.call(field.options, (option) => { option.selected = option.defaultSelected; });
+    } else if (field.type === "checkbox") {
+      field.checked = field.defaultChecked;
+    } else {
+      field.value = field.defaultValue;
+    }
+    field.dataset.cancelled = "1";
+    field.dataset.sent = field.value;
+    delete field.dataset.dirty;
   }
 
   function onKeyDown(event) {
@@ -1801,7 +2355,8 @@
     if (event.key === "Enter" && element.tagName === "INPUT" && element.dataset.emit && element.type !== "checkbox") {
       event.preventDefault();
       element.dataset.sent = element.value;
-      send(withValue(readEmit(element), element), element);
+      delete element.dataset.cancelled;
+      send(withValue(readEmit(element), element), element, element);
       return;
     }
     const arrows = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1};
@@ -1833,14 +2388,25 @@
     mount: mount,
     render: render,
     closeTopPatch: closeTopPatch,
+    cancelField: cancelField,
     format: {chips: fmtChips, short: fmtShort, stack: fmtStack, bb: fmtBb},
     SLOTS: SLOTS,
     CHOICES: CHOICES,
     // For the controller (controller.js): the same small rules the buttons use, so a key and a click do the same thing.
     pickerStep: pickerStep,
     freshPicker: freshPicker,
+    wantSuits: wantSuits,
     isCurrent: isCurrent,
     actingSeat: actingSeat,
+    roundKey: roundKey,
+    plainAmount: plainAmount,
+    typesBb: typesBb,
+    heroOutOfHand: heroOutOfHand,
+    heroOutOfChips: heroOutOfChips,
+    eventHasAmount: eventHasAmount,
+    barArmed: barArmed,
+    buttonRule: buttonRule,
+    MOVES_WORDS: MOVES_WORDS,
     seatOf: seatOf,
     spinOver: spinOver,
     seatClick: seatClick,

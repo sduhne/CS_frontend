@@ -684,6 +684,94 @@
   withUi("preflop-open", ["ui-target", "Recording a player in front of hero"], {target: 7});
   withUi("preflop-open", ["ui-toast", "An intent was refused"], {toast: {text: "The king of spades is already on the board.", fix: "Pick another card, or change the flop first."}});
 
+  /* ---------- The states that came with the review's fixes ---------- */
+
+  add("recording-in-turn", "Hero is the big blind, a raise in front: the plain keys still record the players in turn", () => ({
+    view: openView({
+      view: {button: 7, players: eight({1: {bet: 600, is_target: true}, 2: FOLD, 3: FOLD, 4: {bet: 1320}, 8: {bet: 300}})},
+      hand: {pot: 2820, pot_bb: 4.7, to_call: 720, to_call_bb: 1.2, before_target: [5, 6, 7, 8],
+             legal: {fold: true, check: false, call: 720, bet: null, raise: {min: 2040, max: 12900, default: 3960}, allin: 12900},
+             presets: [{label: "3x", to: 3960}, {label: "All-in", to: 12900}],
+             line: line([cards("KdJd"), act(2, "UTG", "Ann", "fold", "fold"), act(3, "UTG+1", "Carl", "fold", "fold"), act(4, "LJ", "Dee", "raise", "raise 2.2bb", {to: 1320})])},
+    }),
+    advice: openAdvice({headline: {verb: "CALL", size_text: "1.2bb \u00b7 720", qualifier: "", tone: "passive", sure: "standard", follow: {kind: "call"}},
+                        spot: "KdJd in the big blind, 21.5bb, LJ raises to 2.2bb", chart: null}),
+    ui: {turn: "42:preflop"},
+  }));
+  add("before-you", "Hero's turn with players in front who have not acted: the bar names them", () => ({
+    view: openView({hand: {before_target: [5, 6, 7, 8], line: line([cards("AhKd")])},
+                    view: {players: eight({1: {is_target: true}, 3: {bet: 300}, 4: {bet: 600}})}}),
+    advice: openAdvice(),
+  }));
+  add("hero-folded", "Hero has folded: Next hand is the first button, the others' moves beside it", () => ({
+    view: openView({
+      view: {players: eight({1: FOLD, 2: {is_target: true}, 3: {bet: 300}, 4: {bet: 600}, 5: FOLD, 6: FOLD, 7: FOLD, 8: FOLD})},
+      hand: {hero_cards: ["7h", "2d"], hero_class: "72o", target: 2, target_is_hero: false,
+             line: line([cards("7h2d")].concat(OPEN_LINE.slice(1)).concat([act(1, "CO", "You", "fold", "fold")]))},
+    }),
+    advice: none("You have folded: nothing left to decide. Press N for the next hand."),
+  }));
+  add("want-suits", "The flop is out and hero's hand is a class: only its exact holdings are offered", () => ({
+    view: openView({hand: {phase: "flop", needs: "cards", hero_cards: [], hero_class: "AKs", target: null, target_is_hero: false,
+                           want_suits: {hand: "AKs", options: [["As", "Ks"], ["Ah", "Kh"], ["Ad", "Kd"], ["Ac", "Kc"]]},
+                           line: line([cards("AKs")].concat(OPEN_LINE.slice(1)))}}),
+    advice: none("After the flop the coach needs your exact cards."),
+    ui: {picker: {slot: "hero", cards: [], rank: null, rank2: null}},
+  }));
+  add("want-suits-offsuit", "The same for an offsuit hand: twelve holdings, the first suit chosen", () => ({
+    view: openView({hand: {phase: "flop", needs: "cards", hero_cards: [], hero_class: "AKo", target: null, target_is_hero: false,
+                           want_suits: {hand: "AKo", options: [["As", "Kh"], ["As", "Kd"], ["As", "Kc"], ["Ah", "Ks"], ["Ah", "Kd"], ["Ah", "Kc"],
+                                                               ["Ad", "Ks"], ["Ad", "Kh"], ["Ad", "Kc"], ["Ac", "Ks"], ["Ac", "Kh"], ["Ac", "Kd"]]},
+                           line: line([cards("AKo")].concat(OPEN_LINE.slice(1)))}}),
+    advice: none("After the flop the coach needs your exact cards."),
+    ui: {picker: {slot: "hero", cards: ["Ah"], rank: null, rank2: null}},
+  }));
+  add("hand-done-names", "A settled hand keeps its seat names and its dealer button (the table already stands for the next deal)", (params) => {
+    const example = FIXTURES["hand-done"].build(params);
+    example.view.hand.positions = {1: "UTG", 2: "LJ", 3: "HJ", 5: "BTN", 6: "SB", 7: "BB"};
+    example.view.hand.button = 5;
+    example.view.table.button = 6;
+    return example;
+  });
+  add("hero-out", "Hero has no chips: re-enter or start anew, not Next hand", () => {
+    const view = tournament({size: 7, button: 5, players: showdownPlayers(true), strip: {remaining: 95},
+                             hand: showdownHand({phase: "done", needs: "next", result: {text: "Fox wins 13,100"}})});
+    Object.assign(view.table.seats[0], {stack: 0, stack_bb: 0, status: "busted", delta: -13850});
+    view.hero_out = true;
+    return {view: view, advice: none("Fox wins 13,100")};
+  });
+  add("sitting-out", "Hero is sitting out: the slab says so and names the key", () => ({
+    view: tournament({size: 8, button: 1, players: eight({1: {status: "away"}})}),
+    advice: none("Press N, then type your two cards: A K S."),
+  }));
+  add("mode-line", "Cash first, all-in or fold only, re-entry open, a bounty: all four at the head of the slab", () => ({
+    view: openView({view: {strip: {style: "cash", plan: "allin", reentry_open: true, bounty: true}}}), advice: openAdvice(),
+  }));
+  add("view-error", "The program answered with an error: the table cannot be shown", () => ({
+    view: null, advice: null,
+    ui: {viewError: {message: "The program failed on this request.", fix: "Undo takes back the last change. If that does not help, start a new tournament: the old file stays in its folder."}},
+  }));
+  add("view-down", "The program does not answer", () => ({
+    view: null, advice: null,
+    ui: {viewError: {down: true, message: "The program is not answering.", fix: "Is it still running? Start it again (python -m poker_coach app) and reload this page."}},
+  }));
+  withUi("showdown", ["ui-split", "Three at a showdown: who shares the pot is ticked"], {split: [1]});
+  withUi("preflop-open", ["ui-field-error", "A stack the server refused: the reason under the field"],
+         {seatMenu: 7, menuByKey: true, fieldError: {fk: "seat-stack", text: "Cannot read '12.5kk' as an amount.", fix: "Type it like 1300, 12.5k, 25bb, 3x, 66%.", value: "12.5kk"}});
+  withUi("preflop-open", ["ui-edit-error", "Players left, refused: the reason under the field in the strip"],
+         {edit: "remaining", fieldError: {fk: "edit-remaining", text: "Cannot read 'many' as a number.", fix: "Players left is a whole number, like 96.", value: "many"}});
+  withUi("preflop-open", ["ui-amount-error", "A raise the server refused: the reason in the amount row"],
+         {amount: {kind: "raise", seat: 1}, fieldError: {fk: "amount", text: "Cannot read '2..5' as an amount.", fix: "Type it like 1300, 12.5k, 25bb, 3x, 66%.", value: "2..5"}});
+  withUi("preflop-open", ["ui-new-table", "A table move: seats and the button seat"], {menu: "newtable", newTable: {size: 6, button: 3}});
+  withUi("preflop-open", ["ui-event-auto", "A fold nobody typed, selected: Called and Raised"], {selected: 1});
+  withUi("flop-bet", ["ui-event-amount", "A selected bet with its amount open"], {selected: 9, editing: 9});
+  withUi("preflop-open", ["ui-history-open", "The hand history with one hand opened"], {sheet: "history", handOpen: 40});
+  withUi("unit-bb", ["ui-seat-menu-bb", "A seat's menu while the numbers are in big blinds"], {seatMenu: 7});
+  withUi("preflop-open", ["ui-toast-action", "A refusal that offers the way round it"],
+         {toast: {text: "Seat 8 is taken.", fix: "Clear it as well (the player moved away).", error: true,
+                  action: {label: "Clear seat 8 and remove it", send: {op: "set_size", size: 7, clear: true}}}});
+  withUi("pod-states", ["ui-seat-empty-button", "An empty seat's menu: add a player, or put the button here"], {seatMenu: 5});
+
   /* ---------- The switcher ---------- */
 
   const params = new URLSearchParams(window.location.search);

@@ -1,17 +1,22 @@
 """The local server of the table app.
 
-    python -m poker_coach app [--port N] [--no-browser] [--verbose]
+    python -m poker_coach app [--port N] [--no-browser] [--verbose] [--folder PATH]
 
-It serves the page and the three addresses the page talks to:
+It serves the page and the addresses the page talks to:
 
     GET  /                   the page and its files, from poker_coach/app/static/
     GET  /api/view           everything the page draws (``model.Session.view``)
     POST /api/intent         one change as JSON, such as {"op": "deal"}.  The answer is
                              {"view": ...}, or {"error": {"message", "fix"}, "view": ...} when the
                              change is refused (status 200 both times: the page shows the message).
+                             An intent may carry "rev", the revision of the view it was made on:
+                             when the table has changed since, nothing is done and the answer is a
+                             409 with {"error": {"code": "stale", ...}, "view": the view as it is}.
                              A body that is not JSON is a 400
     GET  /api/advice?rev=N   the coach's answer for revision N of the view, or {"status": "stale"}
                              when the table has changed since.  Without rev: the current revision
+    GET  /api/ping           {"app", "folder", "pid", "port"}: which program this is and whose tables
+                             it holds.  A second start asks it, and opens this copy's page instead
 
 The rules it keeps:
 
@@ -23,6 +28,10 @@ The rules it keeps:
 - The advice adapter (``advice.py``) is imported when the first answer is asked for.  If it
   cannot be loaded, or it fails, the answer is {"status": "none"} with the error text, and the
   table goes on working.
+- One copy of the program per folder of tables.  A running copy leaves ``app.lock`` (its pid
+  and port) beside the session files and takes it away when it stops; a second start on the
+  same folder finds it, asks ``/api/ping`` and steps aside (``AlreadyRunning``).  Two copies
+  would each keep the tables in memory and save over each other.
 
 One ``model.Session`` holds the three modes, each in its own file (tournament.json, spin.json,
 aof.json) beside app.json.  The model saves after every accepted change, in ``tournament/app/``
@@ -48,7 +57,12 @@ from .model import ModelError, Session
 DEFAULT_PORT = 8765
 PORT_TRIES = 20                         # when the port is taken: how many ports are tried, counting up
 MAX_BODY = 1_000_000                    # bytes: the biggest intent accepted (a pasted blind ladder is a few hundred)
+MAX_DROPPED = 8_000_000                 # bytes of a body that is too big which are still read (and thrown away)
 IDLE_SECONDS = 30                       # a connection that sends nothing is dropped after this long
+
+APP_NAME = "Poker Coach table app"      # what /api/ping answers: how a second start knows its own kind
+LOCK_NAME = "app.lock"                  # in the session folder while a copy of the program serves it
+PING_SECONDS = 1                        # how long a start waits for an answer from a copy that may be running
 
 STATIC_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -114,9 +128,10 @@ def snapshot_of(session: Session) -> Session:
 
 
 def coach_unavailable(err: Exception) -> dict:
-    """What the page gets when the adapter cannot answer: nothing to advise, and why."""
+    """What the page gets when the adapter cannot answer: nothing to advise, and (in ``error``) why."""
     text = f"{type(err).__name__}: {err}"
-    return {"status": "none", "spot": "The coach could not answer (" + text + ").", "error": text}
+    return {"status": "none", "error": text,
+            "spot": "The coach cannot answer this spot. The table goes on working; the next spot is asked again."}
 
 
 # ==========================================================================
@@ -153,27 +168,27 @@ class TableApp:
             return self.session.rev
 
     def intent(self, intent) -> dict:
-        """Carry out one change.  A refused change leaves everything as it was and says why."""
+        """Carry out one change.  A refused change leaves everything as it was and says why.
+
+        A change that was made and could not be saved is not a refusal: the view comes back with
+        a toast "Made, not saved yet" (``view.unsaved``), and the next change saves again.
+        """
         with self.lock:
             try:
                 view = self.session.apply(intent)
                 self._warm_the_coach(view)
                 return {"view": view}
             except ModelError as err:
+                if err.code == "unreadable" and self.verbose and sys.stderr is not None:
+                    sys.stderr.write(f"unreadable request: {self.session.last_fault}\n")    # the detail, for the log only
                 return self._refused(err.message, err.fix, err.code)
-            except OSError as err:
-                # The session file could not be written (on Windows another program may hold it
-                # for a moment).  The page gets the table as it stands; the next change saves again.
-                return self._refused(f"The session could not be saved ({err}).",
-                                     f"Check that {self.session.folder} can be written.")
-            except Exception as err:
+            except Exception:
                 # A fault in the program, not in what was typed.  The session in memory may be
                 # half changed, so it is read again from the files: they hold the table as it
                 # was after the last accepted change.
                 print_traceback()
                 self._read_saved_session()
-                return self._refused(f"The program failed on that change ({type(err).__name__}: {err}).",
-                                     "Nothing was changed. Try it another way.")
+                return self._refused("The program failed on that change.", "Nothing was changed. Try it another way.")
 
     def _warm_the_coach(self, view: dict) -> None:
         """The all-in or fold plan reads charts that take seconds to work out the first time.
@@ -202,8 +217,15 @@ class TableApp:
         return {"error": error, "view": self.session.view()}
 
     def _read_saved_session(self) -> None:
-        self.session = Session(self.session.folder)
+        try:
+            self.session = Session(self.session.folder)
+        except OSError:                         # a file is held right now: the session in memory stays
+            print_traceback()
         self._advice_rev = self._advice = None
+
+    def ping(self, port: int) -> dict:
+        """Which program this is and whose tables it holds (no lock: it answers while a change is made)."""
+        return {"app": APP_NAME, "folder": same_folder(self.session.folder), "pid": os.getpid(), "port": port}
 
     # ---- the coach ---------------------------------------------------------------------
 
@@ -364,10 +386,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_error(err.status, err.message, err.fix)
         except (ConnectionError, TimeoutError):
             pass                            # the browser closed the connection, or stopped half-way
-        except Exception as err:
+        except Exception:
             print_traceback()               # a fault of the program: worth seeing even without --verbose
             try:
-                self._send_error(500, f"The program failed on this request ({type(err).__name__}: {err}).",
+                self._send_error(500, "The program failed on this request.",
                                  "Reload the page. If it happens again, restart the program.")
             except (ConnectionError, TimeoutError):
                 pass
@@ -376,12 +398,15 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         if url.path == "/api/view":
             self._send_json(200, self.app.view())
+        elif url.path == "/api/ping":
+            self._send_json(200, self.app.ping(self.server.server_port))
         elif url.path == "/api/advice":
             self._send_json(200, self.app.advice(self._rev_asked(url.query)))
         elif url.path == "/api/intent":
             raise BadRequest(405, "A change is sent with POST.", 'POST {"op": "..."} to /api/intent.')
         elif url.path.startswith("/api/"):
-            raise BadRequest(404, f"There is no {url.path}.", "The addresses are /api/view, /api/intent and /api/advice.")
+            raise BadRequest(404, f"There is no {url.path}.",
+                             "The addresses are /api/view, /api/intent, /api/advice and /api/ping.")
         else:
             self._send_file(url.path)
 
@@ -390,9 +415,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         url = urlsplit(self.path)
         if url.path != "/api/intent":
-            raise BadRequest(405 if url.path in ("/api/view", "/api/advice") else 404,
+            raise BadRequest(405 if url.path in ("/api/view", "/api/advice", "/api/ping") else 404,
                              f"Nothing can be sent to {url.path}.", "Changes go to /api/intent.")
-        self._send_json(200, self.app.intent(self._json_body()))
+        answer = self.app.intent(self._json_body())
+        # made on a view that is no longer the table: 409, with the table as it is now
+        stale = "error" in answer and answer["error"].get("code") == "stale"
+        self._send_json(409 if stale else 200, answer)
 
     # ---- who is asking -----------------------------------------------------------------
 
@@ -446,6 +474,14 @@ class Handler(BaseHTTPRequestHandler):
         if length < 0:
             raise BadRequest(400, "The request does not say how long it is.", fix)
         if length > MAX_BODY:
+            # Read what was sent before answering: a sender that is still writing when the
+            # connection closes sees a broken connection, not the 413.
+            left = min(length, MAX_DROPPED)
+            while left > 0:
+                piece = self.rfile.read(min(65536, left))
+                if not piece:
+                    break
+                left -= len(piece)
             raise BadRequest(413, "The request is too big.", fix)
         body = self.rfile.read(length)
         try:
@@ -504,6 +540,54 @@ class Handler(BaseHTTPRequestHandler):
 # 5. Starting and stopping
 # ==========================================================================
 
+class AlreadyRunning(OSError):
+    """A copy of the program already serves this folder of tables.  ``address`` is its page."""
+
+    def __init__(self, address: str):
+        super().__init__(f"Poker Coach is already running at {address}")
+        self.address = address
+
+
+def same_folder(path: str) -> str:
+    """A folder's name in the one spelling two programs can compare."""
+    return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+
+
+def running_copy(folder: str):
+    """The page address of the copy of this program that serves ``folder``, or ``None``.
+
+    The copy left ``app.lock`` there with its port.  It counts only when something answers
+    ``/api/ping`` on that port as this program with this folder: a lock nobody answers for was
+    left by a copy that was killed, and is taken over.
+    """
+    try:
+        with open(os.path.join(folder, LOCK_NAME), encoding="utf-8") as fh:
+            port = int(json.load(fh)["port"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None                                         # no lock, or not one of ours
+    return copy_at(port, folder)
+
+
+def copy_at(port: int, folder: str):
+    """The page address when the program on this port is this program serving ``folder``, else ``None``."""
+    import http.client
+
+    if not 0 < port <= 65535:
+        return None
+    link = http.client.HTTPConnection("127.0.0.1", port, timeout=PING_SECONDS)     # never through a proxy
+    try:
+        link.request("GET", "/api/ping")
+        answer = link.getresponse()
+        told = json.loads(answer.read(65536).decode("utf-8"))
+        if answer.status == 200 and told.get("app") == APP_NAME and told.get("folder") == same_folder(folder):
+            return f"http://127.0.0.1:{port}/"
+    except (OSError, ValueError, AttributeError, http.client.HTTPException):
+        pass                                                # nothing listens there, or it is another program
+    finally:
+        link.close()
+    return None
+
+
 class TableServer(ThreadingHTTPServer):
     """The HTTP server: a thread per request, this computer only."""
 
@@ -516,6 +600,7 @@ class TableServer(ThreadingHTTPServer):
     def __init__(self, port: int, app: TableApp, verbose: bool = False):
         self.app = app
         self.verbose = verbose
+        self.lock_path = None               # app.lock, once this server has written it
         super().__init__(("127.0.0.1", port), Handler)
 
     def server_bind(self) -> None:
@@ -529,30 +614,75 @@ class TableServer(ThreadingHTTPServer):
         if self.verbose:
             print_traceback()
 
+    def write_lock(self) -> None:
+        """Say in the session folder that this copy serves it, and on which port."""
+        folder = self.app.session.folder
+        path = os.path.join(folder, LOCK_NAME)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"app": APP_NAME, "pid": os.getpid(), "port": self.server_port, "started": time.time()}, fh)
+            self.lock_path = path
+        except OSError:                     # a folder that cannot be written: the first save will say so
+            self.lock_path = None
+
+    def server_close(self) -> None:
+        """A clean stop: the port is given back and the lock taken away (when it is still this copy's)."""
+        super().server_close()
+        path, self.lock_path = self.lock_path, None
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                ours = json.load(fh).get("pid") == os.getpid()
+            if ours:
+                os.remove(path)
+        except (OSError, ValueError, AttributeError):
+            pass
+
 
 def start_server(port: int = DEFAULT_PORT, folder: str | None = None, verbose: bool = False,
                  static: str | None = None, coach=None) -> TableServer:
     """Open the server on ``port``, or on the next free port after it (0: any free port).
 
-    It is listening when this returns; ``serve_forever()`` starts the answering.
+    It is listening when this returns; ``serve_forever()`` starts the answering.  When a copy
+    of the program already serves the folder, nothing is started or touched: ``AlreadyRunning``
+    carries that copy's address.
     """
     if not 0 <= port <= 65535:
         raise ValueError(f"the port must be between 0 and 65535, not {port}")
+    from .model import default_folder
+
+    # Before a file of the folder is read or set aside: is a copy at work on it?  The lock says
+    # where; the port asked for is tried too (a copy that could not write its lock).
+    tables = folder or default_folder()
+    other = running_copy(tables) or copy_at(port, tables)
+    if other:
+        raise AlreadyRunning(other)
     app = TableApp(folder, static, coach, verbose)
     last = port if port == 0 else min(port + PORT_TRIES - 1, 65535)
     problem = None
     for candidate in range(port, last + 1):
         try:
-            return TableServer(candidate, app, verbose)
+            server = TableServer(candidate, app, verbose)
         except OSError as err:
             problem = err                   # taken, or not allowed: try the next one
+            continue
+        server.write_lock()
+        return server
     raise OSError(f"no free port from {port} to {last} ({problem})")
 
 
 def main(port: int = DEFAULT_PORT, open_browser: bool = True, verbose: bool = False,
          folder: str | None = None) -> int:
-    """Start the table app and serve it until Ctrl+C."""
-    server = start_server(port, folder, verbose)
+    """Start the table app and serve it until Ctrl+C.  Started a second time, it opens the running copy's page."""
+    try:
+        server = start_server(port, folder, verbose)
+    except AlreadyRunning as running:
+        print(f"Poker Coach is already running at {running.address}", flush=True)
+        if open_browser:
+            webbrowser.open(running.address)
+        return 0
     address = f"http://127.0.0.1:{server.server_port}/"
     moved = f"port {port} was taken; " if port and server.server_port != port else ""
     print(f"Menlo Coach is running at {address}  ({moved}Ctrl+C stops it)", flush=True)

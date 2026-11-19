@@ -96,7 +96,7 @@ def cmd_new(a) -> int:
 def cmd_sync(a) -> int:
     raw = a.json
     if a.file:
-        with open(a.file) as fh:
+        with open(a.file, encoding="utf-8") as fh:      # a snapshot is UTF-8 on every system: "José" stays José
             raw = fh.read()
     if not raw:
         return _fail("give the snapshot as JSON")
@@ -1504,6 +1504,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    try:
+        # A name the console's code page lacks is printed with an escape, not with a crash
+        # (Windows, when the output is piped: "charmap codec can't encode character").
+        sys.stdout.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError, OSError):       # no console, or a stream that is not a text file
+        pass
     args = build_parser().parse_args(argv)
     try:
         return args.fn(args)
