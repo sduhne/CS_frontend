@@ -3540,8 +3540,122 @@ class SpinSixPlayers(unittest.TestCase):
         self.assertIn(".actions .whose .eyebrow.up,.actions .whose .eyebrow.up+b{color:var(--yellow)}", css)
 
 
+class TheRulesOfTheOrder:
+    """Who acts next in no-limit hold'em, written from the rules; it shares no code with the model.
+
+    Before the flop the first to act is the player after the big blind (two players: the button, who is the
+    small blind); after the flop the first player still in after the button.  The turn passes clockwise to
+    the next player who is still in, has chips, and either owes chips or has not acted in this round (and
+    has somebody left to act against).  The round is over when there is no such player.  Chips are read
+    back from the model's view, so only the order is this class's own.
+    """
+
+    def __init__(self, order, button, view):
+        self.order, self.button = order, button
+        n, b = len(order), order.index(button)
+        self.big_blind = order[(b + 1) % n] if n == 2 else order[(b + 2) % n]
+        self.folded, self.acted = set(), set()
+        self.pointer = (order.index(self.big_blind) + 1) % n
+        self.sync(view)
+
+    def sync(self, view):
+        seats = {x["seat"]: x for x in view["table"]["seats"] if not x.get("empty")}
+        self.stack = {seat: seats[seat]["stack"] for seat in self.order}
+        self.bet = {seat: seats[seat]["bet"] or 0 for seat in self.order}
+
+    def bet_to_match(self):
+        return max(self.bet[seat] for seat in self.order if seat not in self.folded)
+
+    def to_act(self):
+        live = [seat for seat in self.order if seat not in self.folded]
+        if len(live) <= 1:
+            return None
+        with_chips = [seat for seat in live if self.stack[seat] > 0]
+        for k in range(len(self.order)):
+            seat = self.order[(self.pointer + k) % len(self.order)]
+            if seat in self.folded or self.stack[seat] <= 0:
+                continue
+            if self.bet[seat] < self.bet_to_match() or (seat not in self.acted and len(with_chips) > 1):
+                return seat
+        return None
+
+    def did(self, seat, kind):
+        if kind == "fold":
+            self.folded.add(seat)
+        self.acted.add(seat)
+        self.pointer = (self.order.index(seat) + 1) % len(self.order)
+
+    def new_street(self):
+        self.acted = set()
+        self.pointer = (self.order.index(self.button) + 1) % len(self.order)
+
+
 class OrderOfAction(unittest.TestCase):
     """Whose action is asked first: the player whose turn it is at the table (the default), or the user."""
+
+    def test_random_hands_are_asked_in_the_order_of_the_game(self):
+        # the model's next player (the first of the players in front of its target, else the target) against the
+        # rules above, action by action, in random hands of every mode and table size, to the river
+        import random
+        from poker_coach.app.model import ModelError
+        rng = random.Random(20261119)
+        board = {"flop": "Qs7d2c", "turn": "9h", "river": "3s"}
+        settings = [("tournament", n, 100, (150, 250, 400, 800, 1500, 3000, 6000, 10000)) for n in range(2, 10)]
+        settings += [("spin", 3, 20, (30, 60, 150, 300, 500)), ("spin", 6, 20, (30, 60, 150, 300, 500)), ("aof", 4, 1, (8,))]
+        actions = 0
+        for mode, size, bb, stacks in settings:
+            for number in range(12):
+                s = Session(save=False)
+                button = rng.randint(1, size)
+                if mode == "tournament":
+                    s.do("new_session", mode=mode, size=size, start_stack=10000, level=f"{bb // 2}/{bb}/0", button=button)
+                else:
+                    s.do("new_session", mode=mode, size=size)
+                    s.do("set_button", seat=button)
+                if mode == "spin":
+                    s.do("set_level", text=f"{bb // 2}/{bb}")
+                if mode != "aof":
+                    for seat in range(1, size + 1):
+                        s.do("set_stack", seat=seat, text=str(rng.choice(stacks)))
+                view = s.do("deal", hero_cards="AhKd")
+                rules = TheRulesOfTheOrder(list(range(1, size + 1)), button, view)
+                where = f"{mode}, {size} players, hand {number}, button on seat {button}"
+                for _step in range(200):
+                    hand = view["hand"]
+                    mine = rules.to_act()
+                    if hand["needs"] != "action":
+                        self.assertIsNone(mine, f"{where}: the model wants {hand['needs']!r} on the {hand['phase']}")
+                        if hand["needs"] != "board":
+                            break
+                        street = "flop" if len(hand["board"]) < 3 else "turn" if len(hand["board"]) == 3 else "river"
+                        view = s.do("set_cards", slot=street, text=board[street])
+                        rules.new_street()
+                        rules.sync(view)
+                        continue
+                    theirs = hand["before_target"][0] if hand["before_target"] else hand["target"]
+                    self.assertEqual(theirs, mine, f"{where}: who acts next on the {hand['phase']}")
+                    owes = rules.bet_to_match() - rules.bet[mine]
+                    if mode == "aof":
+                        tries = [(rng.choice(("fold", "allin")), None), ("fold", None)]
+                    elif owes > 0:
+                        kind = rng.choice(("fold", "fold", "call", "call", "call", "raise", "allin"))
+                        amount = rules.bet_to_match() + bb * rng.choice((1, 2, 3, 5)) if kind == "raise" else None
+                        tries = [(kind, amount), ("call", None), ("fold", None)]
+                    else:
+                        kind = rng.choice(("check", "check", "check", "bet", "allin"))
+                        tries = [(kind, bb * rng.choice((1, 2, 4)) if kind == "bet" else None), ("check", None)]
+                    for kind, amount in tries:
+                        try:
+                            view = s.do("act", seat=mine, kind=kind, amount=amount)
+                        except ModelError:
+                            continue
+                        break
+                    else:
+                        self.fail(f"{where}: seat {mine} could not act on the {hand['phase']}")
+                    rules.did(mine, kind)
+                    rules.sync(view)
+                    actions += 1
+        self.assertGreater(actions, 600)
 
     def test_the_setting_is_kept_with_the_program_and_starts_in_turn(self):
         import shutil

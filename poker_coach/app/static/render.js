@@ -1446,10 +1446,14 @@
     const two = isAof(view);
     const fold = barButton({label: "Fold", key: "F", fk: "fold-" + who, seat: seat, slot: two ? "4 / 6" : "", off: !can("fold"), send: act("fold")});
     const callSub = known && legal.call != null ? esc(mainText(view, legal.call, hand.to_call_bb)) : "";
-    const passive = known && legal.check
+    // The legal moves in the view are for the server's next player. For another player (one of those in
+    // front, recorded in turn, or a seat that was aimed at) the bar goes by the chips on the table: a player
+    // who has matched the bet of this round checks, and with no bet in the round the raise is a bet.
+    const owes = (hand.street_bet || 0) > ((player && player.bet) || 0);
+    const passive = (known ? legal.check : !owes)
       ? barButton({label: "Check", key: "X", fk: "check-" + who, seat: seat, send: act("check")})
       : barButton({label: "Call", key: "C", fk: "call-" + who, seat: seat, sub: callSub, off: !can("call"), send: act("call")});
-    const betting = known ? !!legal.bet : !hand.to_call;
+    const betting = known ? !!legal.bet : !(hand.street_bet > 0);
     const raise = betting
       ? barButton({label: "Bet", key: "B", fk: "bet-" + who, seat: seat, off: !can("bet"), send: ask("bet")})
       : barButton({label: "Raise", key: "R", fk: "raise-" + who, seat: seat, off: !can("raise"), send: ask("raise")});
