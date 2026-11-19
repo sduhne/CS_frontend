@@ -73,12 +73,16 @@
                              fix: "Is it still running? Start it again (python -m poker_coach app) and reload this page."}};
   const DROPPED = {dropped: true};        // an intent that was not sent: the table had changed under the keys before it
   let epoch = 0;                          // goes up each time the table turns out to have changed elsewhere
+  let traffic = 0;                        // goes up with every intent sent and every answer taken
 
   // Read the table from the program. `ifNew`: only take it when it is another revision than the one on
   // screen (the tab got the focus back: another window may have changed the table meanwhile).
   function fetchView(ifNew) {
+    const asked = traffic;
     return fetch("/api/view", {cache: "no-store"}).then((response) => response.json().then((data) => ({ok: response.ok, data: data}))).then(
       (answer) => {
+        // An intent went out or came back while this look was on its way: its answer is the newer table.
+        if (ifNew && (busy || traffic !== asked)) return;
         const view = answer.data;
         if (!answer.ok || !view || view.error || view.rev == null) {
           // The program answered, but with no table: say what it said. The first-run form is for a
@@ -117,6 +121,7 @@
     const made = epoch;
     const post = () => {
       if (made !== epoch) return DROPPED;
+      traffic += 1;
       const rev = state.view && state.view.rev != null ? {rev: state.view.rev} : {};
       return fetch("/api/intent", {
         method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(Object.assign({}, intent, rev)),
@@ -129,6 +134,7 @@
 
   function intentAnswered(intent, answer, plan, then) {
     busy -= 1;
+    traffic += 1;
     if (answer === DROPPED) {             // typed for a table that had changed: not sent
       if (then) then(false, {message: "", dropped: true});
       draw(plan);
