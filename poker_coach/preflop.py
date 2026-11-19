@@ -1460,6 +1460,10 @@ def cold_vs_3bet(spot: Spot, opener: int, raise_to: float, threebettor: int, thr
         adv.why.append(f"{spot.who(opener)} is all-in for {raise_to / bb:.1f}bb and {spot.who(threebettor)} raised "
                        "over it: that raise is made with far more hands than a re-raise over a full raise, "
                        "and against them the all-in earns")
+    elif over_allin and strong[hand] < 0.5 and eff <= _ISOLATED_UP_TO and ev > _ISOLATED_BAR:
+        # the number alone would move in: say why the fold stands beside it
+        adv.why.append(f"the all-in's number is positive because of the chips already in the pot, but this hand has "
+                       f"only {_pct(eq)} against the hands that raise over an all-in: not enough to move in over the raise")
     else:
         adv.confidence = "clear" if strong[hand] < 0.5 else _conf(ev - 0.5, 2.0, 0.6)
         adv.why.append("a raise and a re-raise in front: fold everything except the very top of your range")

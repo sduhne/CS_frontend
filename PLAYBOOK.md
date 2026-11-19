@@ -86,8 +86,15 @@ Sizes: 2x under 25bb, 2.2x to 40bb, 2.3-2.5x deeper, 3x from the small blind.
   (33+, A8s+, ATo+, KTs+, QTs+, KQo); from the big blind over a button steal
   30% (any pair, any ace, suited kings, broadways); over an early-position
   open only 9% (77+, ATs+, AJo+, KQs).
-- **A raise and a re-raise in front:** KK+ only; QQ/AK only when both players
-  are loose or stacks are short.
+- **A raise and a re-raise in front:** KK+ and AKs; against a first raise
+  from LJ or HJ also AKo, and QQ with 24bb or less; against CO or BTN JJ+
+  and AK. Never just call.
+- **An all-in and a raise over it:** the player who raises over a short
+  all-in does it with many more hands than a re-raise over a full raise.
+  With 45bb or less a hand that is ahead of those hands (55% or more
+  against them) moves all-in when the all-in's number clears +1bb: against
+  a 5bb all-in and a raise to 11bb about 88+ and AJ+; against a 12bb all-in
+  and a raise to 26bb still JJ+ and AK only.
 - **You opened and got 3-bet:** with 45bb or less the all-in goes by the
   seat you raised from: KK+ and AKs from UTG or UTG+1; QQ+ and AK from LJ
   or HJ; TT+, AQs+ and AKo from CO, BTN or SB. TT+, AQs+ and AKo are not
