@@ -1198,18 +1198,19 @@
     if (view.mode === "spin") {
       return barHtml(whoseHtml("Between hands", ""),
         barButton({label: "New hand", key: "N", primary: true, wide: true, fk: "deal", send: {op: "deal"}}) +
-        barButton({label: "Skip a hand", sub: "button moves on", fk: "skip", send: {op: "skip_hand"}}) + newGameButtons(false));
+        barButton({label: "Skip hand", sub: "button moves", fk: "skip", send: {op: "skip_hand"}}) + newGameButtons(false));
     }
     return barHtml(whoseHtml("Between hands", ""),
       barButton({label: "New hand", key: "N", primary: true, slot: "1 / 6", fk: "deal", send: {op: "deal"}}) +
-      barButton({label: "Skip a hand", sub: "button moves on", slot: "6", fk: "skip", send: {op: "skip_hand"}}), true);
+      // (the last slot is narrow: a short word on the button, the rest under it)
+      barButton({label: "Skip hand", sub: "button moves", slot: "6", fk: "skip", send: {op: "skip_hand"}}), true);
   }
 
   function cardsBar(view) {
     const want = view.hand.want_suits;
     return barHtml(whoseHtml("Your cards", "", want ? `the exact ${want.hand}` : ""),
       barButton({label: "Pick your cards", slot: "1 / 6", fk: "pick", send: {ui: only({picker: freshPicker("hero"), pickerOff: false})}}) +
-      barButton({label: "Discard hand", slot: "6", fk: "discard", send: {op: "discard_hand"}}), true);
+      barButton({label: "Discard", sub: "this hand", slot: "6", fk: "discard", send: {op: "discard_hand"}}), true);
   }
 
   function boardBar(view) {
@@ -1224,7 +1225,7 @@
       barButton({label: `Pick the ${slot}`, slot: out ? "2 / 6" : "1 / 6", fk: "pick-" + slot,
                  send: {ui: only({picker: freshPicker(slot), pickerOff: false})}}) +
       // (named by its street: after a click the same words stand for the next street, and that is another button)
-      barButton({label: "Skip the board", key: "Enter", slot: "6", fk: "skip-" + slot, off: !!hand.target_is_hero, send: {op: "close_round"}}), true);
+      barButton({label: "Skip", sub: "the board", key: "Enter", slot: "6", fk: "skip-" + slot, off: !!hand.target_is_hero, send: {op: "close_round"}}), true);
   }
 
   // The players still in the pot who were not named a winner yet.
@@ -1338,8 +1339,10 @@
                          send: follow ? Object.assign({op: "act", seat: seat, via: "follow", ui: AFTER_ACT}, follow) : {}});
     }
 
-    // Slots 2 to 5: the moves of the player the first row names.
-    const fold = barButton({label: "Fold", key: "F", fk: "fold-" + who, off: !can("fold"), send: act("fold")});
+    // Slots 2 to 5: the moves of the player the first row names. (All-In or Fold has two moves: each
+    // takes two of the four slots, so there is no hole in the bar.)
+    const two = isAof(view);
+    const fold = barButton({label: "Fold", key: "F", fk: "fold-" + who, slot: two ? "4 / 6" : "", off: !can("fold"), send: act("fold")});
     const callSub = known && legal.call != null ? esc(mainText(view, legal.call, hand.to_call_bb)) : "";
     const passive = known && legal.check
       ? barButton({label: "Check", key: "X", fk: "check-" + who, send: act("check")})
@@ -1349,7 +1352,7 @@
       ? barButton({label: "Bet", key: "B", fk: "bet-" + who, off: !can("bet"), send: ask("bet")})
       : barButton({label: "Raise", key: "R", fk: "raise-" + who, off: !can("raise"), send: ask("raise")});
     const allinSub = known && legal.allin != null ? esc(chipsOnlyText(view, legal.allin, true)) : "";
-    const allin = barButton({label: "All-in", key: "A", fk: "allin-" + who, sub: allinSub, off: !can("allin"), send: act("allin")});
+    const allin = barButton({label: "All-in", key: "A", fk: "allin-" + who, slot: two ? "2 / 4" : "", sub: allinSub, off: !can("allin"), send: act("allin")});
 
     // Slot 6: the rest take the passive default. Hero's own action is always typed, so while the plain
     // keys are his the button waits. While players in front of him are recorded in turn, it ends that:
@@ -1369,7 +1372,7 @@
     // All-In or Fold has two moves. A call of an all-in is an all-in.
     if (isAof(view)) {
       const shove = known && legal.call != null
-        ? barButton({label: "Call", key: "C", fk: "call-" + who, sub: callSub, send: act("call")})
+        ? barButton({label: "Call", key: "C", fk: "call-" + who, slot: "2 / 4", sub: callSub, send: act("call")})
         : allin;
       return barHtml(whose, first + shove + fold + rest, true);
     }
@@ -1909,7 +1912,7 @@
       (view.mode === "aof" ? "" : choiceRow("Numbers in", CHOICES.unit, view.unit, config("unit"))) +
       choiceRow("Deck", CHOICES.deck, view.deck || "one-ink", config("deck")) +
       `<p class="hint">Two colours: black suits on white cards, with hearts and diamonds drawn as outlines. Four colours: red hearts, blue diamonds, green clubs.</p>`);
-    html += section("Session", `<div class="buttons">
+    html += section("More", `<div class="buttons">
         <button class="btn compact"${emit({ui: only({sheet: "new"})})}>${view.mode === "tournament" ? "New tournament" : "New game"}</button>
         <button class="btn compact"${emit({ui: only({sheet: "history"})})}>Hand history ${keycap("Y")}</button>
         <button class="btn compact"${emit({ui: only({sheet: "keys"})})}>Keys ${keycap("?")}</button>

@@ -347,12 +347,12 @@ button.pod:hover{border-color:var(--grey)}
 
 /* The amount row takes the hand line's place while a bet or raise is typed. */
 .amount{display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:44px}
-.amount .field{width:170px;flex:none}
+.amount .field{width:160px;flex:none}
 .amount .btn kbd{display:none}
 .actions .amount{flex:0 1 auto}
 .presets{display:flex;gap:6px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;padding:3px;margin:-3px}
 .presets::-webkit-scrollbar{display:none}
-.preset{flex:none;height:44px;min-width:44px;padding:0 10px;border:1px solid var(--grey);border-radius:var(--r-pill);background:var(--ink);
+.preset{flex:none;height:44px;min-width:40px;padding:0 8px;border:1px solid var(--grey);border-radius:var(--r-pill);background:var(--ink);
   font:800 15px/1 var(--display);color:var(--white);text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums lining-nums;transition:border-color .12s}
 .preset:hover{border-color:var(--white)}
 .preset:active{background:var(--line)}
@@ -624,6 +624,7 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .actions .slots .btn{padding:0 8px}
   .actions .slots .btn .label{gap:8px;font-size:18px}
   .amount .field{width:176px}
+  .preset{min-width:44px;padding:0 10px}
   .amount .btn kbd{display:inline-grid}
   .sheet.side{left:auto;right:16px;transform:none;width:440px;bottom:12px}
 }
