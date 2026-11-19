@@ -1208,8 +1208,14 @@ class SurvivalGuardFindings(unittest.TestCase):
                 close = next(w["text"] for w in a["warnings"] if w["code"] == "close")
                 self.assertTrue(close.endswith("The sheet calls this hand in the big blind."), close)
                 self.assertNotIn("lower-variance side leads", close)
-            # the exception is 9 to 24bb against 2.5bb or less: deeper, or against a bigger raise, the fold leads
-            self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "T2s", acts=small_raise))), "FOLD")
+            # with 25bb or more the sheet's own row for the big blind is read (against the button: K8o+, not K5o),
+            # so one more big blind of stack never turns a call into a fold; against a bigger raise the fold leads
+            self.assertEqual(verb(A.advise(tournament([24] * 8, BB, "T2s", acts=small_raise))), "CALL")
+            self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "T2s", acts=small_raise))), "CALL")
+            self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "A3s", acts=small_raise))), "CALL")
+            deep = A.advise(tournament([30] * 8, BB, "K5o", acts=small_raise))
+            self.assertEqual((verb(deep), deep["guard"]), ("FOLD", "close"))
+            self.assertIn("25bb or more against a raise from BTN", deep["reason"])
             self.assertEqual(verb(A.advise(tournament([18] * 8, BB, "T2s", acts=[(BTN, "raise", 3)]))), "FOLD")
             # in the money and in the Max EV style the engine's play stands, and no warning claims otherwise
             for more in (dict(left=100), dict(style="maxev")):
@@ -1223,6 +1229,13 @@ class SurvivalGuardFindings(unittest.TestCase):
             self.assertEqual((verb(a), a["guard"]), ("FOLD", "close"))
             self.assertIn("the raise and the fold are worth about the same", a["reason"])
             self.assertIn("(engine: RE-RAISE)", source(a))
+        # ... but in the big blind the quieter play of a bluff re-raise is the call: A5s never folds where K2s calls
+        with engine_says("3-BET to 8.4bb (semi-bluff, fold to a 4-bet)", "close",
+                         numbers=["their opening range ~41%; your equity vs it 51%; pot odds to call 20%"]):
+            a = A.advise(tournament([40] * 8, BB, "A5s", acts=[(BTN, "raise", 2.2)]))
+            self.assertEqual((verb(a), a["guard"]), ("CALL", "close"))
+            self.assertEqual(a["headline"]["follow"], {"kind": "call"})
+            self.assertIn("lower-variance side leads: call", a["reason"])
         # when checking is free the quieter play is the check
         with engine_says("RAISE to 5bb", "close"):
             a = A.advise(tournament([30] * 8, BB, "KTo", acts=[(BTN, "call", None)]))
