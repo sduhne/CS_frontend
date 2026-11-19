@@ -1910,6 +1910,25 @@ class AfterTheFlopFindings(unittest.TestCase):
         flop(s, "Ks7d6d", (seat(BB), "bet", 3000), (seat(UTG), "raise", 9000))
         self.assertEqual(A.advise(s)["spot"], "7h7s on Ks7d6d, UTG raises to 9bb into 8.1bb")
 
+    def test_a_check_with_a_good_hand_is_not_explained_as_nothing_strong(self):
+        # the engine checks an overpair into two players and says "multi-way with nothing strong": the tile
+        # beside it says "overpair", so the sentence is the one for a hand worth a call
+        s, seat = self.three_way("AhAs", [40] * 8, [(UTG, "raise", 2.2)])
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(BB), kind="call")
+        flop(s, "Ts7s4d", (seat(BB), "check"), (seat(UTG), "check"))
+        with postflop_says("CHECK", why=["multi-way with nothing strong: no bluffing into several players"]):
+            a = A.advise(s)
+        self.assertEqual(a["tiles"][-1]["value"], "overpair")
+        self.assertEqual(a["reason"], "A good hand, but not one to bet for value here: keep the pot small and call "
+                                      "one reasonable bet.")
+        s, seat = self.three_way("QhJh", [40] * 8, [(UTG, "raise", 2.2)])           # with air the engine's own words
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(BB), kind="call")
+        flop(s, "Ts7s4d", (seat(BB), "check"), (seat(UTG), "check"))
+        with postflop_says("CHECK", why=["multi-way with nothing strong: no bluffing into several players"]):
+            self.assertIn("nothing strong", A.advise(s)["reason"])
+
     # ---- POST-11 ---------------------------------------------------------------------------------------------
 
     def test_post_11_the_all_in_headline_shows_what_can_be_matched(self):

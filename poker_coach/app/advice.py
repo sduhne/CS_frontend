@@ -2775,6 +2775,7 @@ def read_postflop_action(action: str, bb: float) -> tuple[str, str, float | None
     return ("BET", "bet", chips, qualifier) if size.group(1) == "BET" else ("RAISE", "raise", chips, qualifier)
 
 
+NOTHING_TO_BET = ("nothing strong", "No value and no good bluff")       # the engine's reasons for a check with air
 FOLD_TO_A_RAISE = "fold to a raise unless"      # the engine's warning under a thin value bet with top pair
 BLUFF_CATCHER = "a bluff-catcher"               # ... and under a call with a weak made hand: "fold to a big bet on
                                                 # the next street unless you improve"
@@ -2795,6 +2796,9 @@ def play_after_flop(seen: Seen, adv, made: dict, board_cards: int, told: Told, o
     play = Play(verb=verb, kind=kind, to=to, qualifier=qualifier, sure=adv.confidence,
                 reason=sentence(plain(adv.why[0])) if adv.why else "",
                 also=sentence(plain(adv.alt[0])) if adv.alt else "")
+    if kind == "check" and made["strength"] >= 5 and any(words in play.reason for words in NOTHING_TO_BET):
+        # the engine's sentence for a check is written for a weak hand: beside "You hold: overpair" it reads wrong
+        play.reason = "A good hand, but not one to bet for value here: keep the pot small and call one reasonable bet."
     equity = adv.data.get("equity")
     if equity is not None:
         play.tiles.append(tile("Equity", percent(equity), "against their range after this line"))

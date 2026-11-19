@@ -1008,8 +1008,12 @@
     if (!hand) return "";
     const other = otherText(view, hand.pot, hand.pot_bb);
     const pots = hand.pots && hand.pots.length > 1 ? `<div class="pots">${esc(potsText(view, hand.pots))}</div>` : "";
+    // A pot of a million or more: "2.7M" where the table is small, the exact chips from 1280 (as the bets do).
+    const short = mainText(view, hand.pot, hand.pot_bb);
+    const exact = isAof(view) || view.unit === "bb" ? short : fmtChips(hand.pot);
+    const pot = short === exact ? exact : `<span class="exact">${exact}</span><span class="short">${short}</span>`;
     return `<div class="centre">
-      <div class="pot"><span class="eyebrow">Pot</span><span class="num">${mainText(view, hand.pot, hand.pot_bb)}</span>${other ? `<small>${other}</small>` : ""}</div>
+      <div class="pot"><span class="eyebrow">Pot</span><span class="num">${pot}</span>${other ? `<small>${other}</small>` : ""}</div>
       ${pots}${boardHtml(view)}
     </div>`;
   }
@@ -1140,8 +1144,10 @@
     const who = name ? `<span class="who"> \u00b7 ${esc(name)}</span>` : "";
     return `<span class="eyebrow">${esc(eyebrow)}</span>${text ? `<b>${esc(text)}${who}</b>` : ""}${note ? `<span class="note" title="${esc(note)}">${esc(note)}</span>` : ""}`;
   }
+  // (a row of five buttons or more is marked "many": where the bar is narrow its buttons go without keycaps)
   function barHtml(whose, buttons, slots) {
-    return `<div class="whose" data-fk="whose">${whose}</div><div class="${slots ? "slots" : "row"}">${buttons}</div>`;
+    const many = !slots && (buttons.match(/<button /g) || []).length >= 5 ? " many" : "";
+    return `<div class="whose" data-fk="whose">${whose}</div><div class="${slots ? "slots" : "row" + many}">${buttons}</div>`;
   }
 
   function heroSeat(view) { return (view.table.seats || []).find((seat) => seat.is_hero) || null; }
@@ -1192,11 +1198,11 @@
     if (view.mode === "spin") {
       return barHtml(whoseHtml("Between hands", ""),
         barButton({label: "New hand", key: "N", primary: true, wide: true, fk: "deal", send: {op: "deal"}}) +
-        barButton({label: "Skip a hand", sub: "the button moves on", fk: "skip", send: {op: "skip_hand"}}) + newGameButtons(false));
+        barButton({label: "Skip a hand", sub: "button moves on", fk: "skip", send: {op: "skip_hand"}}) + newGameButtons(false));
     }
     return barHtml(whoseHtml("Between hands", ""),
       barButton({label: "New hand", key: "N", primary: true, slot: "1 / 6", fk: "deal", send: {op: "deal"}}) +
-      barButton({label: "Skip a hand", sub: "the button moves on", slot: "6", fk: "skip", send: {op: "skip_hand"}}), true);
+      barButton({label: "Skip a hand", sub: "button moves on", slot: "6", fk: "skip", send: {op: "skip_hand"}}), true);
   }
 
   function cardsBar(view) {
@@ -2200,7 +2206,14 @@
      elsewhere leave it one after the other, until the rest fits: the average stack (settings), the
      wordmark, the ante (the tooltip of the blinds), the places paid (settings; the pill counts from them). */
   const GIVE_WAY = ["no-avg", "no-word", "no-ante", "no-paid"];
+  // The header's rules run across the whole window, also where the page is a column narrower than it.
+  function bleed() {
+    const app = document.getElementById("app");
+    const side = Math.max(0, (document.documentElement.clientWidth - app.getBoundingClientRect().width) / 2);
+    document.documentElement.style.setProperty("--bleed", side + "px");
+  }
   function fitStrip() {
+    bleed();
     const header = part("header");
     const strip = header.querySelector(".strip");
     GIVE_WAY.forEach((name) => header.classList.remove(name));
