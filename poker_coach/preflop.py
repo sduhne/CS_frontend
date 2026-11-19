@@ -462,6 +462,9 @@ _ALLIN_OVER_RERAISE_LINE = {"nit": 0, "tight": 1, "unknown": 2, "tag": 2, "stati
 # (in position, or in the big blind) the bar is also at least this share of the stack at risk.
 _RESHOVE_CLEARLY = 1.0
 _RESHOVE_CLEARLY_SHARE = 0.04
+# ... and when it does not, the hand is played as a call where its seat calls at all.  The small
+# blind has no calls against a late raise; these hands are too good to fold there all the same.
+_SMALL_BLIND_CALLS = parse_range("TT+, AQs+, AKo")
 
 
 def _allin_over_reraise(spot: Spot, shover: int, first_raiser: int | None) -> tuple[list[float], float]:
@@ -794,9 +797,12 @@ _BB_CALL_MARGIN = {"pair": 0.02, "suited_conn": 0.06, "suited": 0.06, "broadway_
 _BB_CALL_NET = 0.15
 
 
-def bb_call_points(kind: str, risk_premium: float = 0.0, callers: int = 0) -> float:
-    """Equity the big blind needs above the pot odds to call one raise with a hand of this kind."""
-    points = _BB_CALL_MARGIN[kind] + max(0.0, risk_premium) / 2
+def bb_call_points(kind: str, risk_premium: float = 0.0, callers: int = 0, in_position: bool = False) -> float:
+    """Equity the big blind needs above the pot odds to call one raise with a hand of this kind.
+
+    ``in_position``: the raise came from the small blind and nobody else is in, so the big
+    blind acts last after the flop and every kind of hand plays better (two thirds of the points)."""
+    points = _BB_CALL_MARGIN[kind] * (2.0 / 3.0 if in_position else 1.0) + max(0.0, risk_premium) / 2
     if callers and kind in ("off", "broadway_off"):
         points += 0.03                    # offsuit hands lose the most with more players in the pot
     return min(_BB_CALL_NET, points)
@@ -850,7 +856,7 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
     kind = _hand_kind(hand)
 
     # the big blind closes the action: one price test for every hand, charted or not
-    bb_points = bb_call_points(kind, rp, len(flats))
+    bb_points = bb_call_points(kind, rp, len(flats), in_position=o_nb == 1 and not flats and n > 2)
     bb_edge = eq_open - need - bb_points if h_nb == 0 else -1.0
     if h_nb == 0:
         adv.numbers.append(f"big blind closing the action: to call you need {_pct(need + bb_points)} "
@@ -916,6 +922,7 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
     # less it is only made with a hand that then calls: one that would fold moves all-in now
     # where that clearly earns, and is otherwise played as a call or a fold (``demoted``).
     decided = demoted = converted = False
+    can_call = h_nb == 0 or ip or max(call) >= 0.5 or _SMALL_BLIND_CALLS[hand] >= 0.5
     if value[hand] >= 0.5:
         if size >= 0.35 * eff:
             adv.action = "ALL-IN"
@@ -947,7 +954,6 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
                                     flat_callers=flat_rngs, caller_prizes=spot.field_prizes,
                                     types=spot.types, away=spot.away)
                 ev = sol.ev_bb(hand)
-                can_call = h_nb == 0 or ip or max(call) >= 0.5
                 bar = max(_RESHOVE_CLEARLY, _RESHOVE_CLEARLY_SHARE * eff) if can_call else _RESHOVE_CLEARLY
                 if ev >= bar:
                     adv.action = "ALL-IN" if hero_bb <= eff + 7 else \
@@ -969,7 +975,7 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
     # a demoted hand is stronger than the calls of its seat: it calls where that seat calls at all
     if decided:
         pass
-    elif demoted and not (h_nb == 0 or ip or max(call) >= 0.5):
+    elif demoted and not can_call:
         adv.why.append("not strong enough to re-raise and call an all-in at this depth, and from the small "
                        "blind a call is worse than a fold")
     elif demoted or call[hand] >= 0.5 or (setmine[hand] >= 0.5 and odds_ok) or \
@@ -977,11 +983,9 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
         # the big blind's charted hands pass the same price test as every other hand of his;
         # the small blind, out of position with players behind, drops the thin calls under ICM
         price_bad = h_nb == 0 and bb_edge < 0
-        thin_oop = icm_tight and h_nb == 1 and kind in ("off", "broadway_off", "suited")
+        thin_oop = icm_tight and h_nb == 1 and kind in ("off", "broadway_off", "suited") and not demoted
         if price_bad or thin_oop:
-            adv.why.append("in the chart to defend, but the price / ICM makes it a fold here" if not demoted else
-                           "not a re-raise at this depth (it could not call an all-in after it), and with this "
-                           "much ICM pressure not a call out of position either")
+            adv.why.append("in the chart to defend, but the price / ICM makes it a fold here")
             adv.confidence = "close"
         else:
             adv.action = "CALL"

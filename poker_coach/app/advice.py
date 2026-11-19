@@ -65,7 +65,7 @@ from .. import spin as SP
 from .. import state as S
 from .. import tag as TAG
 from ..cards import COMBO_COUNT, HANDS, format_range, parse_cards, parse_hand, parse_range, range_pct
-from ..equity import all_vs_range
+from ..equity import all_vs_range, allin_order
 from ..evaluator import describe
 from ..icm import Prizes
 from ..postflop import PostflopSpot, Villain, advise_postflop
@@ -75,9 +75,10 @@ try:                                            # the engine's plan against an a
     from ..preflop import _reshove_plan as engine_reshove_plan
 except ImportError:                             # renamed there: the sheet's small raise then shows no plan lines
     engine_reshove_plan = None
-from ..pushfold import HandSetup, solve_open_shove, solve_reshove
-from ..ranges import (PLAYER_TYPES, norm_type, parse, play_order, rfi_range, threebet_range, top_percent,
-                      villain_limp_range, villain_open_range, vs_open_chart)
+from ..pushfold import HandSetup, nash_push_range, solve_open_shove, solve_reshove
+from ..ranges import (PLAYER_TYPES, norm_type, parse, play_order, rfi_range, scale_range, threebet_range,
+                      top_percent, villain_limp_range, villain_open_range, vs_open_chart)
+from .amounts import tidy
 from .model import HERO, average_stack, goal_for, icm_level, imply_until, postflop_order, replay, session_level
 
 # --------------------------------------------------------------------------
@@ -111,11 +112,22 @@ STALE_ON_BUBBLE = 3             # ... and this many near the bubble
 BLINDS_UP_BB = 20               # under this stack a pending level gets a second look at the new blinds
 POSTFLOP_ITERS = 20000          # samples for the equity after the flop (heads-up turn and river are exact)
 PLAYBOOK_BIG_BET = 0.60         # a river bet of this share of the pot is "big" for the one-pair rule
-PLAYBOOK_POTS_BEHIND = 1.5      # ... which does not apply with fewer pots than this behind
+PLAYBOOK_POTS_BEHIND = 1.5      # ... which does not apply with fewer pots than this behind when the street began
+TINY_CALL = 0.10                # a call of this share of the pot or less is never folded by a rule of this file
+NO_PAIR_BIG_BET = 0.50          # no pair and no draw: fold to a bet of this share of the pot from a player who did not raise
+DRAW_OUTS = 8                   # "a draw": this many outs or more, with cards to come
+FREE_FLOP_POTS = 4              # all-in plan after the flop: all-in with this many pots behind or fewer
+FREE_FLOP_OUTS = 12             # ... with top pair or better, or a draw with this many outs
+SHORT_ALLIN_BB = 3              # an all-in under this many big blinds (or of less than a full raise) is not "a raise"
+CALLER_SHARE, CALLER_WIDEST = 0.75, 50.0    # a player who called an all-in and has chips behind: this share of the
+                                # solved calling range, and never more than this many percent of hands (as the engine)
+CHIP_STEPS = (1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000)
+                                # after the flop a bet is rounded to the biggest of these that the blinds are made of
 EV_CLOSE_BB = 0.05              # an all-in within this of its threshold is drawn as "close" in a chart
 CHART_SOLVER_WORK = 72          # a solver chart may cost about this many (rounds x players who can call)
 
 PASSIVE_TYPES = ("nit", "tight", "loose", "station")        # their big bets and raises are rarely bluffs
+AGGRESSIVE_TYPES = ("lag", "maniac")                        # the only players the one-pair rule lets hero call down
 LOOSE_TYPES = ("loose", "station", "maniac", "lag")         # they call with far more than the charts
 # A read lifts the guard only when it makes the play safer:
 FOLDS_TOO_MUCH = ("nit", "tight")                           # ... behind hero, for an all-in when nobody has raised
@@ -243,7 +255,8 @@ def blank_answer(rev: int) -> dict:
     """Every key of the answer, empty."""
     return {"rev": rev, "status": "none", "headline": None, "spot": "", "reason": "", "tiles": [], "flip": "",
             "also": "", "source": "", "plans": [], "warnings": [], "chart": None,
-            "context": {"stage": "", "gear": "", "fold_clock": ""}, "icm": "off", "guard": "none"}
+            "context": {"stage": "", "gear": "", "fold_clock": ""}, "icm": "off", "guard": "none",
+            "provisional": ""}
 
 
 def no_advice(answer: dict, err: Exception) -> dict:
@@ -283,19 +296,22 @@ def answer_for(session, now: float) -> dict:
 def what_is_awaited(session, view: dict) -> str | None:
     """What the table is waiting for when there is nothing to advise; ``None`` when hero has a decision."""
     data, hand = session.data, view["hand"]
-    if data["mode"] == "spin" and data["game"]["over"] and (hand is None or hand["needs"] == "next"):
+    over = hand is None or hand["needs"] == "next"
+    if data["mode"] == "spin" and data["game"]["over"] and over:
         return "The game is over: press N for a new game."
+    # no chips on hero's seat, and no hand of his running: what he can do stays on screen
+    out = no_chips_line(data) if over or str(HERO) not in (hand.get("positions") or {}) else ""
     if hand is None:
-        return "No hand is being played: press N to deal."
+        return out or "No hand is being played: press N to deal."
     if hand["needs"] == "next":
-        return "The hand is over: press N for the next hand."
+        return " ".join(part for part in (result_line(view), out or next_hand_line(view)) if part)
     if hand["needs"] == "result":
         return "The betting is over: say who won."
     state = session.hand_state()
     if HERO not in state.order:
-        return "You are not in this hand."
+        return out or "You are not in this hand."
     if HERO in state.folded:
-        return "You have folded: nothing left to decide."
+        return "You have folded: nothing left to decide. Press N for the next hand."
     if hand["needs"] == "cards":
         if state.phase == "preflop":
             return "Type your two cards for advice."
@@ -318,6 +334,45 @@ def what_is_awaited(session, view: dict) -> str | None:
         label = state.labels.get(target, f"seat {target}")
         return f"Waiting for {name + ' (' + label + ')' if name else label}: it is not your turn."
     return None
+
+
+def no_chips_line(data: dict) -> str:
+    """Hero has no chips on his seat: what he can do, said where it stays on screen.  "" while he has chips."""
+    seat = data["table"]["seats"].get(str(HERO)) or {}
+    if seat.get("stack", 0) > 0:
+        return ""
+    if data["mode"] == "tournament":
+        return "You have no chips left: type a new stack on your seat to re-enter, or start a new tournament."
+    return "You have no chips left: type a new stack on your seat to sit down again."
+
+
+def result_line(view: dict) -> str:
+    """Who won the hand on screen, named by seat and by the position of that hand: "Seat 5 (BB) wins 26,475"."""
+    hand = view["hand"]
+    result = hand.get("result")
+    if not result or not result.get("winners"):
+        return "The hand is over."
+    positions = hand.get("positions") or {}
+    parts = []
+    for winner in result["winners"]:
+        amount = bb_number(winner["amount"]) + "bb" if view["mode"] == "aof" else chips_text(winner["amount"])
+        position = positions.get(str(winner["seat"])) or winner.get("pos") or ""
+        if winner["seat"] == HERO:
+            parts.append(f"You{' (' + position + ')' if position else ''} win {amount}")
+        else:
+            parts.append(f"Seat {winner['seat']}{' (' + position + ')' if position else ''} wins {amount}")
+    return ", ".join(parts) + "."
+
+
+def next_hand_line(view: dict) -> str:
+    """One line for the hand to come: where the button is and what hero's seat will be.  The seat names on the
+    table are already the next hand's once a hand is settled."""
+    table = view["table"]
+    hero = next((seat for seat in table["seats"] if seat["is_hero"]), None)
+    if not hero or not hero.get("pos") or hero.get("status") == "away":
+        return "Press N for the next hand."
+    where = SEAT_WORDS.get(hero["pos"], "in " + hero["pos"])
+    return f"The button moves to seat {table['button']} and you are {where}: press N for the next hand."
 
 
 # ==========================================================================
@@ -344,6 +399,9 @@ class Seen:
     acts: list                  # engine actions before the flop, hero's own included
     to_call: float              # what hero must add to stay in
     legal: dict                 # what hero may do, from the view
+    known: int = 0              # how many entries of ``state.log`` really happened: the rest are the passive
+                                # default of the players in front of hero, who have not acted yet
+    pending: list = field(default_factory=list)     # the seats of those players, in the order they will act
 
     @property
     def n(self) -> int:
@@ -380,8 +438,11 @@ class Seen:
 def read_table(session, view: dict) -> Seen:
     data, hand = session.data, session.data["hand"]
     state = replay(hand)
+    known = len(state.log)
     if state.to_act() != HERO:
         imply_until(state, HERO)                # "folded to you": the players in front take the passive default
+    # the players that default was taken for (a player sitting out really does check or fold: he is not waited for)
+    pending = [entry["seat"] for entry in state.log[known:] if entry["seat"] not in state.away]
     order = list(state.order)
     level = hand["level"]
     # Start-of-hand stacks; the engine posts antes and blinds itself.
@@ -409,7 +470,7 @@ def read_table(session, view: dict) -> Seen:
     return Seen(data=data, mode=data["mode"], hand=hand, state=state, order=order, hero=hero, bb=level["bb"],
                 setup=setup, hand_class=hand_class, cards=cards, types=types, tags=tags, away=away,
                 engine_away=engine_away, acts=acts, to_call=view["hand"]["to_call"],
-                legal=view["hand"]["legal"] or {})
+                legal=view["hand"]["legal"] or {}, known=known, pending=pending)
 
 
 def seat_types(data: dict, order: list) -> tuple[list, list]:
@@ -550,23 +611,65 @@ def preflop_story(seen: Seen) -> str:
 
 
 def street_story(seen: Seen) -> str:
-    """What hero faces after the flop: a bet, or nothing."""
+    """What hero faces after the flop: a bet, or nothing, and what is only assumed of the players in front of him."""
     state = seen.state
     pot = state.pot_total()
+    assumed = assumption(seen)
     if seen.to_call <= 0:
+        if assumed:
+            return f"{assumed}, pot {bb_number(seen.bbs(pot))}bb"
         checked = any(e["street"] == state.phase and e["kind"] == "check" for e in state.log)
         return f"{'checked to you' if checked else 'you act first'}, pot {bb_number(seen.bbs(pot))}bb"
-    bettor = max((s for s in state.live() if s != HERO), key=lambda s: state.in_front[s])
-    who = seen.who(seen.order.index(bettor))
+    # the last player who bet or raised on this street, and who has called him since
+    street = [e for e in state.log if e["street"] == state.phase]
+    made = [k for k, e in enumerate(street) if e["kind"] in ("bet", "raise") and e["seat"] != HERO]
+    if made:
+        last = street[made[-1]]
+        bettor, all_in, raised = last["seat"], last["allin"], last["kind"] == "raise"
+        callers = [e["seat"] for e in street[made[-1] + 1:]
+                   if e["kind"] == "call" and e["seat"] != HERO and e["seat"] not in state.folded]
+    else:                                       # no bet on record: the player with the most chips in front
+        bettor = max((s for s in state.live() if s != HERO), key=lambda s: state.in_front[s])
+        all_in, raised, callers = state.stack[bettor] <= 0, state.raises >= 2, []
     bet = state.in_front[bettor]
     before = pot - sum(state.in_front.values())             # the pot before this street's bets
-    if state.stack[bettor] <= 0:
+    if all_in:
         action = f"is all-in for {bb_number(seen.bbs(bet))}bb"
-    elif state.raises >= 2:
+    elif raised:
         action = f"raises to {bb_number(seen.bbs(bet))}bb"
     else:
         action = f"bets {bb_number(seen.bbs(bet))}bb"
-    return f"{who} {action} into {bb_number(seen.bbs(before))}bb"
+    text = f"{seen.who(seen.order.index(bettor))} {action} into {bb_number(seen.bbs(before))}bb"
+    if callers:
+        text += f", {listed([seen.who(seen.order.index(s)) for s in callers])} call{'s' if len(callers) == 1 else ''}"
+    return text + (", " + assumed if assumed else "")
+
+
+def listed(names: list) -> str:
+    """"BB", "BB and CO", "BB, CO and BTN"."""
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def assumption(seen: Seen, short: bool = False) -> str:
+    """After the flop: what is assumed of the players in front of hero who have not acted yet, or "".
+
+    "if BB and CO check", "if BTN folds".  The answer is for the spot as it
+    will be if they do the passive thing; ``short`` names them by seat only.
+    """
+    state = seen.state
+    if state.phase == "preflop" or not seen.pending:
+        return ""
+
+    def name(seat):
+        index = seen.order.index(seat)
+        return seen.label(index) if short else seen.who(index)
+
+    parts = []
+    for word, seats in (("check", [s for s in seen.pending if s not in state.folded]),
+                        ("fold", [s for s in seen.pending if s in state.folded])):
+        if seats:
+            parts.append(f"{listed([name(s) for s in seats])} {word}{'s' if len(seats) == 1 else ''}")
+    return "if " + " and ".join(parts)
 
 
 # ==========================================================================
@@ -2184,28 +2287,45 @@ ACTION_WEIGHT = {"check": 0, "call": 1, "bet": 2, "raise": 3, "shove": 4}
 
 
 def after_the_flop(seen: Seen, money: Money | None) -> Play:
-    """Equity against each opponent's range, narrowed by what he did; then the playbook's one-pair check."""
+    """Equity against each opponent's range, narrowed by what he did; then the adapter's own rules.
+
+    The engine answers first.  Then, in this order: no pair and no draw folds
+    to a real bet from a player who did not raise before the flop; the
+    playbook's one-pair rule; before the money a close call or bluff gives way
+    to the quieter play; and in the all-in plan the free-flop rule.
+    """
     if seen.cards is None:
         raise ValueError("after the flop the exact cards are needed")
     state = seen.state
     board = parse_cards("".join(seen.hand["board"]))[:STREET_CARDS[state.phase]]
-    opponents = [seat for seat in state.live() if seat != HERO]
-    if not opponents:
+    everyone = [seat for seat in state.live() if seat != HERO]
+    if not everyone:
         raise ValueError("nobody else is in the hand")
-    roles, opener_behind, last_raiser = preflop_roles(seen)
+    made = describe(seen.cards, board)          # what hero holds: top pair, a flush draw, the outs
+    # A player who is sitting out checks when it is free and folds to any bet: he has no hand to play against.
+    # (One who is all-in, from posting a blind, cannot fold: he stays an opponent, with any two cards.)
+    absent = [seat for seat in everyone if seat in state.away and state.stack[seat] > 0]
+    opponents = [seat for seat in everyone if seat not in absent]
+    if absent and not any(state.stack[seat] > 0 for seat in opponents) and seen.to_call <= 0 and seen.legal.get("bet"):
+        return bet_into_absent_players(seen, made, absent)
+    if not opponents:
+        opponents = everyone
+    entered = preflop_roles(seen)
     lines, aggressor = street_lines(seen)
     main = main_opponent(seen, opponents, aggressor)
     villains, unknown = [], False
     for seat in [main] + [s for s in opponents if s != main]:
         index = seen.order.index(seat)
-        role = roles.get(seat)
-        if role is None:                        # nothing recorded for him before the flop: read as a caller
-            role, unknown = "call", True
-        weights, did = range_for(role, seen.behind(index), opener_behind, seen.types[index])
-        villains.append(Villain(weights, seen.types[index], lines.get(seat, []), f"{seen.who(index)}: {did}"))
-    # After the flop the small blind acts first and the button last: hero is in position when he acts after everybody.
+        if seat not in entered.roles:           # nothing recorded for him before the flop: read as a caller
+            unknown = True
+        weights, did = range_for(seen, seat, entered)
+        villains.append(Villain(weights, seen.types[index], lines.get(seat, []), f"{seen.who(index)}: {did}",
+                                pfr=seat == entered.last_raiser))
+    # After the flop the small blind acts first and the button last: hero is in position when he acts after
+    # everybody who can still act.
     rank = {seat: k for k, seat in enumerate(postflop_order(seen.order))}
-    in_position = all(rank[HERO] > rank[seat] for seat in opponents)
+    acting = [seat for seat in opponents if state.stack[seat] > 0] or opponents
+    in_position = all(rank[HERO] > rank[seat] for seat in acting)
     to_call = seen.to_call
     # The pot hero plays for: chips in front of a player beyond what hero can match are not his to win.
     reach = state.in_front[HERO] + to_call
@@ -2220,61 +2340,222 @@ def after_the_flop(seen: Seen, money: Money | None) -> Play:
     risk = 0.0
     if money is not None and not money.prizes.chip_ev:
         risk = money.prizes.risk_premium(seen.start, seen.hero, seen.order.index(main))
+    # The stack that matters is the deepest one that can still call hero, not the main opponent's: with three
+    # players a short or all-in bettor leaves a deeper player to play against.
+    can_lose = matchable(seen, opponents)
     spot = PostflopSpot(hero=seen.cards, board=board, pot=pot, to_call=to_call, hero_stack=state.stack[HERO],
-                        villain_stack=state.stack[main], villains=villains, in_position=in_position,
-                        hero_pfr=last_raiser == HERO, facing=facing, bb=seen.bb, risk_premium=risk,
+                        villain_stack=max(0, can_lose - to_call), villains=villains, in_position=in_position,
+                        hero_pfr=entered.last_raiser == HERO, facing=facing, bb=seen.bb, risk_premium=risk,
                         iters=POSTFLOP_ITERS)
     adv = advise_postflop(spot)
-    made = describe(seen.cards, board)          # what hero holds: top pair, a flush draw, the outs
-    play = play_after_flop(seen, adv, made, len(board))
+    main_index = seen.order.index(main)
+    told = Told(street=state.phase, facing=facing, raised=to_call > 0 and state.raises >= 2,
+                bet_share=to_call / max(pot - to_call, 1e-9) if to_call > 0 else 0.0,
+                ptype=seen.types[main_index], who=seen.who(main_index), tagged=seen.tags[main_index] != "unknown",
+                bettor_raised_preflop=main == entered.last_raiser, hero_bet=hero_bet_this_street(seen),
+                pots_behind=pots_behind_at_street_start(seen, main), can_lose=can_lose,
+                least_pots_behind=min(pots_behind_at_street_start(seen, seat) for seat in acting),
+                aggressive_behind=any(seen.types[seen.order.index(seat)] in AGGRESSIVE_TYPES for seat in acting))
+    play = play_after_flop(seen, adv, made, len(board), told, opponents)
     play.source = "after the flop: equity against an estimated range, a rule-based line"
     if unknown:
         play.warnings.append(warning("preflop_unknown", "No action is recorded for an opponent before the flop: "
                                      "he is read as a caller.", "an opponent read as a caller"))
-    main_type = seen.types[seen.order.index(main)]
-    bet_share = to_call / max(pot - to_call, 1e-9) if to_call > 0 else 0.0
-    playbook_check(play, adv, made, state.phase, facing, bet_share, main_type, seen.who(seen.order.index(main)))
+    no_pair_no_draw(play, made, told)
+    playbook_check(play, made, told)
+    close_after_the_flop(seen, money, adv, play, told)
     if seen.mode == "tournament" and seen.data["config"].get("plan") == "allin":
-        return free_flop_rule(seen, play, made, pot)
+        return free_flop_rule(seen, play, made, pot, can_lose)
     return play
 
 
-def preflop_roles(seen: Seen) -> tuple[dict, int | None, int | None]:
-    """How each player entered the pot: ({seat: role}, players behind the first raiser, the last raiser's seat).
+@dataclass
+class Told:
+    """What the adapter's own rules after the flop need to know about the spot."""
+    street: str                 # flop, turn or river
+    facing: str | None          # None, "raise" or "shove", as the engine was told
+    raised: bool                # hero faces a raise: a bet and a raise were made on this street
+    bet_share: float            # what hero must call, as a share of the pot before his call
+    ptype: str                  # the type of the player the decision is about (his tag, else the table's setting)
+    who: str                    # that player, for a sentence
+    tagged: bool                # the type is the user's own tag on that seat
+    bettor_raised_preflop: bool     # he was the last to raise before the flop: his flop bet is a continuation bet
+    hero_bet: bool              # hero's own bet on this street is what was raised
+    pots_behind: float          # hero's chips against that player when the street began, in pots of that moment
+    can_lose: float             # the chips hero can still put in and have matched
+    least_pots_behind: float = 0.0      # the same against the shortest opponent who can still act ...
+    aggressive_behind: bool = False     # ... and whether one of them is tagged lag or maniac
 
-    Roles: open (the first raise), 3bet (a re-raise), 4bet (a further re-raise), call (called a raise),
-    limp (called the big blind), check (the big blind saw a free flop).  A player who raised and then
-    called a re-raise stays a raiser; one who limped and then called a raise stays a limper.
+    @property
+    def draw_street(self) -> bool:
+        return self.street != "river"
+
+
+def bet_into_absent_players(seen: Seen, made: dict, absent: list) -> Play:
+    """Every player who could still act is sitting out: the smallest bet wins the pot."""
+    who = "The player" if len(absent) == 1 else "Every player"
+    return Play(verb="BET", kind="bet", to=seen.legal["bet"]["min"], sure="clear",
+                reason=f"{who} left in the hand is sitting out and folds to any bet: bet the minimum and take the pot.",
+                tiles=[tile("You hold", made["made"].split(" (")[0], made["texture"]["label"])],
+                source="after the flop: nobody is there to call")
+
+
+def matchable(seen: Seen, opponents: list) -> float:
+    """The chips hero can still put in on this street and have matched.
+
+    The smaller of his stack and what the deepest opponent who still has
+    chips can reach above hero's chips in front.  When nobody has chips left
+    it is what hero must call.
     """
-    roles: dict = {}
-    raisers: list = []
-    for entry in seen.state.log:
+    state = seen.state
+    with_chips = [seat for seat in opponents if state.stack[seat] > 0]
+    if not with_chips:
+        return min(state.stack[HERO], seen.to_call)
+    deepest = max(state.in_front[seat] + state.stack[seat] for seat in with_chips)
+    return max(seen.to_call, min(state.stack[HERO], deepest - state.in_front[HERO]))
+
+
+def pots_behind_at_street_start(seen: Seen, main: int) -> float:
+    """Hero's chips against the main opponent when this street began, in pots of that moment.
+
+    The playbook decides commitment before betting, not after: this number
+    is the same for every answer of one street, whatever was bet since.
+    """
+    state = seen.state
+    started = state.pot_total() - sum(state.in_front.values())
+    mine = state.stack[HERO] + state.in_front[HERO]
+    theirs = state.stack[main] + state.in_front[main]
+    return min(mine, theirs) / max(started, 1e-9)
+
+
+def hero_bet_this_street(seen: Seen) -> bool:
+    """Hero's last action on this street was a bet (not a call, not a raise)."""
+    mine = [entry for entry in seen.state.log if entry["street"] == seen.state.phase and entry["seat"] == HERO]
+    return bool(mine) and mine[-1]["kind"] == "bet"
+
+
+@dataclass
+class Entered:
+    """How the players came into the pot before the flop."""
+    roles: dict = field(default_factory=dict)       # {seat: role}, see ``preflop_roles``
+    opener_behind: int | None = None                # players behind the first raiser
+    last_raiser: int | None = None                  # the seat of the last raise (a short all-in is not one)
+    callers_in_front: dict = field(default_factory=dict)    # {seat: callers in the pot when he raised over them}
+    answered: dict = field(default_factory=dict)    # {seat: (seat, total)}: the raise or all-in he called or raised over
+
+
+def preflop_roles(seen: Seen) -> Entered:
+    """How each player entered the pot, the players behind the first raiser, the last raiser.
+
+    Roles:
+
+        open        the first raise                     iso         a raise over players who only called
+        3bet        a re-raise                          4bet        a further re-raise
+        push        an all-in when nobody had raised    reshove     an all-in over a raise
+        iso_short   a raise over a short all-in         iso_push    a raise over a real all-in
+        call        called a raise                      call3       called a re-raise
+        callpush    called an all-in                    limp        called the big blind
+        check       the big blind saw a free flop
+
+    An all-in of less than a full raise, or under ``SHORT_ALLIN_BB`` big
+    blinds, is not "a raise": the next player's ordinary raise is still the
+    first one.  A player who raised and then called a re-raise or an all-in is
+    read by that call; one who limped and then called a raise stays a limper.
+    """
+    state = seen.state
+    entered = Entered()
+    roles = entered.roles
+    level, full_raise = state.bb, state.bb      # the bet to match, and the size of a full raise over it
+    raises: list = []                           # (seat, total, all-in) of every real raise, hero's included
+    short_pushes, limpers = [], 0
+    for entry in state.log:
         if entry["street"] != "preflop":
             continue
-        seat, kind = entry["seat"], entry["kind"]
+        seat, kind, to = entry["seat"], entry["kind"], entry["to"]
         if kind in ("bet", "raise"):
-            raisers.append(seat)
-            roles[seat] = ("open", "3bet", "4bet")[min(len(raisers), 3) - 1]
+            is_full = to - level >= full_raise - 1e-9
+            if entry["allin"] and (not is_full or to < SHORT_ALLIN_BB * state.bb):
+                roles[seat] = "push"            # a short stack's last chips: any raise after it is still the first
+                short_pushes.append(seat)
+            else:
+                small = [r for r in raises if not r[2]]         # the raises that were not all-in
+                if not raises:
+                    roles[seat] = "push" if entry["allin"] else "iso" if limpers else \
+                        "iso_short" if short_pushes else "open"
+                    entered.callers_in_front[seat] = limpers
+                elif not small:                 # only all-ins so far: he plays against the all-in player's range
+                    roles[seat] = "callpush" if entry["allin"] else "iso_push"
+                    entered.answered[seat] = raises[-1][:2]
+                elif len(small) == 1:
+                    roles[seat] = "reshove" if entry["allin"] else "3bet"
+                    entered.answered[seat] = small[0][:2]
+                else:
+                    roles[seat] = "4bet"        # over a re-raise, all-in or not: the top of the range
+                raises.append((seat, to, entry["allin"]))
+            if is_full:
+                full_raise = to - level
+            level = max(level, to)
         elif kind == "call":
-            roles.setdefault(seat, "call" if raisers else "limp")
+            small = [r for r in raises if not r[2]]
+            if raises and raises[-1][2]:
+                roles[seat] = "callpush"        # he called an all-in, whatever he had done before
+                entered.answered[seat] = raises[-1][:2]
+            elif len(small) >= 2:
+                roles[seat] = "call3"           # he called a re-raise: cold, or after his own raise
+            elif small:
+                roles.setdefault(seat, "call")
+            else:
+                roles.setdefault(seat, "limp")
+                limpers += 1
         elif kind == "check":
             roles.setdefault(seat, "check")
     for seat in seen.order[-2:]:                # a blind that went all-in by posting holds any two cards
-        if seat not in roles and seen.state.stack[seat] <= 0 and seat not in seen.state.folded:
+        if seat not in roles and state.stack[seat] <= 0 and seat not in state.folded:
             roles[seat] = "check"
-    opener_behind = seen.behind(seen.order.index(raisers[0])) if raisers else None
-    return roles, opener_behind, (raisers[-1] if raisers else None)
+    if raises:
+        entered.opener_behind = seen.behind(seen.order.index(raises[0][0]))
+        entered.last_raiser = raises[-1][0]
+    return entered
 
 
-def range_for(role: str, behind: int, opener_behind: int | None, ptype: str) -> tuple[list, str]:
+CONTINUE_VS_RERAISE = {         # the hands that call a re-raise, by how tight the caller is
+    "tight": "QQ-JJ, AKs, TT:0.5, AQs:0.5, AKo:0.5, AA:0.25, KK:0.25",
+    "usual": "QQ-TT, AQs+, AKo, KQs, 99:0.5, AJs:0.5, KJs:0.5, QJs:0.5, JTs:0.5, AQo:0.5, AA:0.25, KK:0.25",
+    "loose": "QQ-66, ATs+, A5s-A4s, KTs+, QTs+, JTs, T9s, 98s, AQo+, AJo:0.5, KQo:0.5, AA:0.5, KK:0.5",
+}
+ISOLATE_ALWAYS = "99+, AJs+, AQo+, KQs"         # raised over callers from any seat (the engine's own list)
+CALLS_ANY_ALLIN = "TT+, AQs+, AKo"              # the least a player calls an all-in with, when nothing is solved
+
+
+def range_for(seen: Seen, seat: int, entered: Entered) -> tuple[list, str]:
     """An opponent's range from what he did before the flop, and a word for it."""
-    opener = max(1, 3 if opener_behind is None else opener_behind)
+    index = seen.order.index(seat)
+    behind, ptype = seen.behind(index), seen.types[index]
+    role = entered.roles.get(seat, "call")
+    opener = max(1, 3 if entered.opener_behind is None else entered.opener_behind)
+    kind = norm_type(ptype)
     if role == "open":
         return villain_open_range(behind, ptype), "raised first"
+    if role == "iso_short":
+        return villain_open_range(behind, ptype), "raised over a short all-in"
+    if role == "iso":
+        return isolation_range(behind, ptype, entered.callers_in_front.get(seat, 1)), "raised over the callers"
+    if role == "push":
+        return push_range(seen, index), "moved all-in"
+    if role == "reshove":
+        return reshove_range(seen, index, entered.answered.get(seat), opener), "moved all-in over a raise"
+    if role == "iso_push":
+        return call_all_in_range(seen, index, entered.answered.get(seat), True), "raised over an all-in"
+    if role == "callpush":
+        deep = seen.state.stack[seat] > 0       # chips behind: he could have folded, and others were still in
+        return call_all_in_range(seen, index, entered.answered.get(seat), deep), "called an all-in"
     if role == "3bet":
         return threebet_range(opener, ptype), "re-raised"
     if role == "4bet":
         return threebet_range(opener, "nit"), "re-raised again"     # a second re-raise: the top of that range
+    if role == "call3":
+        how = "tight" if kind in ("nit", "tight") else "loose" if kind in LOOSE_TYPES else "usual"
+        return parse_range(CONTINUE_VS_RERAISE[how]), "called a re-raise"
     if role == "limp":
         return villain_limp_range(behind, ptype), "called the big blind"
     if role == "check":
@@ -2286,10 +2567,92 @@ def range_for(role: str, behind: int, opener_behind: int | None, ptype: str) -> 
     if range_pct(weights) < 6.0:                # the chart re-raises or folds from that seat; people still call
         position = vs_open_chart(opener, 2)
         weights = [max(w, c, s, d) for w, c, s, d in zip(weights, position["call"], position["setmine"], position["deep"])]
-    if norm_type(ptype) in LOOSE_TYPES:         # tables that call too much call with far more
+    if kind in LOOSE_TYPES:                     # tables that call too much call with far more
         extra = top_percent(35.0 if behind == 0 else 25.0, list(play_order()))
         weights = [max(w, 0.7 * e) for w, e in zip(weights, extra)]
     return weights, "called a raise"
+
+
+def isolation_range(behind: int, ptype: str, callers: int) -> list:
+    """A raise over players who only called, by seat: the engine's own isolation range.
+
+    The opening range of the seat (the cutoff's, from the blinds), one line
+    tighter for every caller, and always the strong hands.
+    """
+    seat = max(1, behind) if behind >= 2 else 3
+    shift = PLAYER_TYPES[norm_type(ptype)]["open_shift"] + max(1, callers)
+    return [max(a, b) for a, b in zip(rfi_range(seat, 100.0, shift), parse_range(ISOLATE_ALWAYS))]
+
+
+def dealt_away(seen: Seen) -> list:
+    """By index: sitting out when the hand was dealt."""
+    away = set(seen.hand.get("away", ()))
+    return [seat in away for seat in seen.order]
+
+
+def widened(solution, ptype: str) -> list:
+    """A solved all-in range, wider or narrower by the player's type (as the engine reads an all-in)."""
+    share = range_pct(solution.shove_range) * PLAYER_TYPES[norm_type(ptype)]["shove_mult"]
+    return scale_range(solution.ev, min(100.0, max(1.5, share)))
+
+
+def push_range(seen: Seen, index: int) -> list:
+    """An all-in when nobody had raised: the push range for that stack and seat."""
+    try:
+        solution = solve_open_shove(seen.setup, index, Prizes(), types=seen.types, away=dealt_away(seen),
+                                    use_types=False)
+        weights = widened(solution, seen.types[index])
+    except Exception:                           # the chart for equal stacks is the next best thing
+        weights = None
+    if not weights or range_pct(weights) <= 0:
+        weights = nash_push_range(seen.behind(index), seen.bbs(seen.setup.live[index]), bool(max(seen.setup.antes)))
+    return weights
+
+
+def reshove_range(seen: Seen, index: int, over, opener_behind: int) -> list:
+    """An all-in over a raise: solved against the raiser's opening range, else the re-raising range."""
+    try:
+        raiser = seen.order.index(over[0])
+        opens = villain_open_range(seen.behind(raiser), seen.types[raiser])
+        solution = solve_reshove(seen.setup, index, raiser, over[1], Prizes(), opener_range=opens,
+                                 types=seen.types, away=dealt_away(seen), use_types=False)
+        weights = widened(solution, seen.types[index])
+        if range_pct(weights) > 0:
+            return weights
+    except Exception:
+        pass
+    return threebet_range(opener_behind, seen.types[index])
+
+
+def call_all_in_range(seen: Seen, index: int, called, deep: bool) -> list:
+    """The hands that call an all-in: the preflop engine's calling range for that stack and seat.
+
+    ``called`` is (the all-in player's seat, his total).  ``deep``: the
+    caller had chips behind and players still in the hand, so he is read as
+    tighter than the pot odds alone, the way the engine reads him.
+    """
+    weights, size_bb = None, 12.0
+    try:
+        shover = seen.order.index(called[0])
+        size_bb = seen.bbs(called[1])
+        if index > shover:                      # he acted after the all-in: the solved calling range
+            solution = solve_open_shove(seen.setup, shover, Prizes(), types=seen.types, away=dealt_away(seen),
+                                        use_types=False)
+        else:                                   # he had raised (or called) and the all-in came over it
+            mine = next((act.amount for act in seen.acts if act.idx == index), seen.bb)
+            solution = solve_reshove(seen.setup, shover, index, mine, Prizes(),
+                                     opener_range=villain_open_range(seen.behind(index), seen.types[index]),
+                                     types=seen.types, away=dealt_away(seen), use_types=False)
+        caller = solution.caller(index)
+        if caller is not None and range_pct(caller.call_range) > 0:
+            weights = list(caller.call_range)
+    except Exception:
+        weights = None
+    if weights is None:                         # nothing solved: wider against a small all-in, QQ+ and AK against a big one
+        weights = top_percent(min(45.0, max(3.0, 130.0 / max(size_bb, 1.0))), list(allin_order()))
+    if deep:
+        weights = top_percent(min(CALLER_WIDEST, CALLER_SHARE * range_pct(weights)), list(allin_order()))
+    return [max(a, b) for a, b in zip(weights, parse_range(CALLS_ANY_ALLIN))]
 
 
 def street_lines(seen: Seen) -> tuple[dict, int | None]:
@@ -2299,6 +2662,8 @@ def street_lines(seen: Seen) -> tuple[dict, int | None]:
     street: check, call, bet, raise or shove.  A bet's size is the chips put
     in over the pot before it; a call carries the size of the bet it called.
     The street being played is included, so the engine adds nothing itself.
+    The check a player in front of hero has not made yet is left out: his
+    range is not narrowed by it.
     """
     state = seen.state
     pot = sum(state.ante.values()) + state.dead + sum(state.blind.values())
@@ -2306,7 +2671,7 @@ def street_lines(seen: Seen) -> tuple[dict, int | None]:
     street, standing = "preflop", None          # ``standing``: the size of the bet that is there to be called
     lines: dict = {}
     aggressor = None
-    for entry in state.log:
+    for number, entry in enumerate(state.log):
         if entry["street"] != street:
             pot -= uncalled(front)              # the part of a bet nobody matched went back
             front = dict.fromkeys(front, 0)
@@ -2327,6 +2692,8 @@ def street_lines(seen: Seen) -> tuple[dict, int | None]:
         front[seat] = entry["to"]
         if street == "preflop" or seat == HERO or action == "fold":
             continue
+        if number >= seen.known and seat in seen.pending:
+            continue                            # he has not acted yet: the default was only assumed for him
         line = lines.setdefault(seat, [])
         if line and line[-1][0] == street:
             if ACTION_WEIGHT[action] > ACTION_WEIGHT[line[-1][1]]:
@@ -2343,13 +2710,19 @@ def uncalled(front: dict) -> float:
 
 
 def main_opponent(seen: Seen, opponents: list, aggressor: int | None) -> int:
-    """The player the decision is about: whose bet hero faces, else the last to bet or raise, else the biggest stack."""
+    """The player the decision is about.
+
+    Facing a bet: the player whose bet it is.  Nothing to call: among the
+    players who still have chips, the last to bet or raise, else the biggest
+    stack (a player who is all-in cannot be bet into).
+    """
     state = seen.state
     if seen.to_call > 0:
         return max(opponents, key=lambda seat: (state.in_front[seat], seat == aggressor))
-    if aggressor in opponents:
+    with_chips = [seat for seat in opponents if state.stack[seat] > 0] or opponents
+    if aggressor in with_chips:
         return aggressor
-    return max(opponents, key=lambda seat: state.stack[seat])
+    return max(with_chips, key=lambda seat: state.stack[seat])
 
 
 def read_postflop_action(action: str, bb: float) -> tuple[str, str, float | None, str]:
@@ -2373,10 +2746,21 @@ def read_postflop_action(action: str, bb: float) -> tuple[str, str, float | None
     return ("BET", "bet", chips, qualifier) if size.group(1) == "BET" else ("RAISE", "raise", chips, qualifier)
 
 
-def play_after_flop(seen: Seen, adv, made: dict, board_cards: int) -> Play:
+FOLD_TO_A_RAISE = "fold to a raise unless"      # the engine's warning under a thin value bet with top pair
+
+
+def play_after_flop(seen: Seen, adv, made: dict, board_cards: int, told: Told, opponents: list) -> Play:
     verb, kind, chips, qualifier = read_postflop_action(adv.action, seen.bb)
+    state = seen.state
     # the engine's amount is what hero puts in now; the table wants his total in front on this street
-    to = seen.state.in_front[HERO] + chips if chips is not None else None
+    to = state.in_front[HERO] + chips if chips is not None else None
+    if kind == "allin":
+        # The engine's all-in is for the chips that can be matched.  While a deeper opponent is still in the
+        # hand, hero's own all-in would risk more than that: then it is a bet or a raise of that amount.
+        meant = state.in_front[HERO] + min(state.stack[HERO], told.can_lose)
+        deeper = any(state.in_front[seat] + state.stack[seat] > meant + 1e-9 for seat in opponents)
+        if meant < state.in_front[HERO] + state.stack[HERO] - 1e-9 and deeper:
+            verb, kind, to = ("RAISE", "raise", meant) if seen.to_call > 0 else ("BET", "bet", meant)
     play = Play(verb=verb, kind=kind, to=to, qualifier=qualifier, sure=adv.confidence,
                 reason=sentence(plain(adv.why[0])) if adv.why else "",
                 also=sentence(plain(adv.alt[0])) if adv.alt else "")
@@ -2392,6 +2776,8 @@ def play_after_flop(seen: Seen, adv, made: dict, board_cards: int) -> Play:
         play.tiles.append(tile("You hold", made["made"].split(" (")[0], made["texture"]["label"]))
     play.tiles = play.tiles[:3]
     for text in adv.warnings:
+        if FOLD_TO_A_RAISE in text and not folds_to_a_raise(made, told):
+            continue                            # the next answer would not fold: do not announce it
         play.warnings.append(warning("engine", sentence(plain(text))))
     if adv.confidence == "close":
         text = f"Close: you need {price.group(1)}% and have {price.group(2)}%." if price else \
@@ -2400,44 +2786,148 @@ def play_after_flop(seen: Seen, adv, made: dict, board_cards: int) -> Play:
     return play
 
 
-def playbook_check(play: Play, adv, made: dict, street: str, facing, bet_share: float, ptype: str, who: str) -> None:
-    """The playbook's one-pair rule, the only override after the flop.
+def engine_alone(play: Play) -> str:
+    """A rule of this file takes the place of the engine's play: its summary for the second line, its numbers
+    marked as the engine's own, and its warnings (they were about that play) dropped."""
+    summary = engine_summary(play)
+    for one in play.tiles:
+        if one["label"] in ("Equity", "Need / have"):
+            one["note"] = "the engine alone"
+    play.warnings = [w for w in play.warnings if w["code"] not in ("engine", "close")]
+    return summary
 
-    One pair facing a big river bet, or a raise on the turn or the river, from
-    a player who rarely bluffs (nit, tight, loose, station): fold, unless
-    fewer than 1.5 pots are behind.  The engine calls there.
+
+def has_a_draw(made: dict, told: Told) -> bool:
+    return told.draw_street and made["outs"] >= DRAW_OUTS
+
+
+def folds_to_a_raise(made: dict, told: Told) -> bool:
+    """Will a raise over hero's thin value bet be folded to, whoever makes it?
+
+    The warning under the bet is shown only then, so the answer to the raise
+    (``playbook_check``) never contradicts it: no draw to continue with,
+    nobody who can raise is tagged lag or maniac, and 1.5 pots or more behind
+    against every one of them.
     """
-    one_pair = made["category"] == "pair" or "paired board" in made["made"]
-    big_river_bet = street == "river" and bet_share >= PLAYBOOK_BIG_BET
-    raised = street in ("turn", "river") and facing in ("raise", "shove")
-    deep_enough = adv.data.get("spr", 0) >= PLAYBOOK_POTS_BEHIND
-    if play.kind != "call" or not one_pair or not (big_river_bet or raised) or ptype not in PASSIVE_TYPES \
-            or not deep_enough:
+    return not told.aggressive_behind and not has_a_draw(made, told) \
+        and told.least_pots_behind >= PLAYBOOK_POTS_BEHIND
+
+
+def no_pair_no_draw(play: Play, made: dict, told: Told) -> None:
+    """No pair and no draw facing a real bet from a player who did not raise before the flop: fold.
+
+    Only the raiser's flop bet is a continuation bet, made with any two
+    cards.  A bet of half the pot from anybody else means a hand.
+    """
+    nothing = made["category"] == "high card" or (made["strength"] <= 1 and made["category"] in ("pair", "two pair"))
+    if play.kind != "call" or not nothing or has_a_draw(made, told) or told.bettor_raised_preflop \
+            or told.bet_share < NO_PAIR_BIG_BET:
         return
-    engine = engine_summary(play)
-    what = "a raise" if raised else "a big river bet"
+    engine = engine_alone(play)
+    play.verb, play.kind, play.to = "FOLD", "fold", None
+    play.qualifier, play.sure = "", "standard"
+    play.reason = sentence(f"No pair and no draw against a bet of {percent(told.bet_share)} of the pot from "
+                           f"{told.who}, who did not raise before the flop: that bet is a hand, fold")
+    play.also = f"The engine alone: {engine}."
+    play.flip = "A call with a pair or a draw of 8 outs, or against a small bet."
+
+
+def playbook_check(play: Play, made: dict, told: Told) -> None:
+    """The playbook's one-pair rule.  The engine alone would continue there.
+
+    One pair and no draw, facing a big river bet or a raise on the turn or
+    the river: fold.  And top pair with a medium or weak kicker folds to a
+    raise over its own bet on any street: the plan the coach gave with that
+    bet.  The engine's play stays against a player tagged lag or maniac, with
+    fewer than 1.5 pots behind when the street began (the hand is committed),
+    and at a tiny price.
+    """
+    if play.kind not in ("call", "raise", "allin") or has_a_draw(made, told):
+        return
+    if told.ptype in AGGRESSIVE_TYPES or told.pots_behind < PLAYBOOK_POTS_BEHIND or told.bet_share <= TINY_CALL:
+        return
+    one_pair = made["category"] == "pair" or "paired board" in made["made"]
+    big_river_bet = told.street == "river" and told.bet_share >= PLAYBOOK_BIG_BET
+    raised = told.street in ("turn", "river") and told.raised
+    thin_bet_raised = made["strength"] == 4 and told.raised and told.hero_bet
+    if not (one_pair and (big_river_bet or raised)) and not thin_bet_raised:
+        return
+    engine = engine_alone(play)
+    passive = told.ptype in PASSIVE_TYPES
+    whose = f"{told.who}, {'tagged' if told.tagged else 'read as'} {told.ptype}" if passive else told.who
+    if one_pair and (big_river_bet or raised):
+        what = "a raise" if raised else "a big river bet"
+        why = "such players rarely bluff there" if passive else "that is rarely a bluff"
+        reason = f"One pair facing {what} from {whose}: {why}, so the playbook folds"
+    else:
+        reason = f"You bet top pair without a strong kicker and {whose} raised: fold, as planned with the bet"
     play.verb, play.kind, play.to = "FOLD", "fold", None
     play.qualifier, play.sure = "playbook check", "standard"
-    play.reason = sentence(f"One pair facing {what} from {who}, tagged {ptype}: such players rarely bluff there, "
-                           "so the playbook folds")
+    play.reason = sentence(reason)
     play.also = f"The engine alone: {engine}."
-    play.flip = "A call against an aggressive player, or with less than 1.5 pots behind."
+    play.flip = "A call against a player tagged lag or maniac, or with less than 1.5 pots behind."
 
 
-def free_flop_rule(seen: Seen, engine: Play, made: dict, pot: float) -> Play:
-    """The all-in plan after a free flop: all-in with top pair or better, or 12 outs, at 4 pots or less."""
-    behind = seen.state.stack[HERO]
-    strong = made["strength"] >= 4 or (made["outs"] >= 12 and seen.state.phase != "river")
-    second = f"The full engine: {engine.verb}."
-    if strong and behind <= 4 * pot:
-        return Play(verb="ALL-IN", kind="allin", sure="standard", also=second, source="all-in plan: the playbook's rule",
-                    reason="Top pair or better, or a draw with 12 outs, and 4 pots or less behind: move all-in.",
-                    tiles=[tile("You hold", made["made"].split(" (")[0], made["texture"]["label"]),
-                           tile("Pots behind", f"{behind / pot:.1f}", "all-in at 4 or less")])
-    verb, kind = ("CHECK", "check") if seen.to_call <= 0 else ("FOLD", "fold")
-    return Play(verb=verb, kind=kind, sure="standard", also=second, source="all-in plan: the playbook's rule",
-                reason="No top pair and no 12-out draw (or more than 4 pots behind): check, and fold to a bet.",
-                tiles=[tile("You hold", made["made"].split(" (")[0], made["texture"]["label"])])
+COMMITTED = "you are committed"                 # the engine's own close call with a strong pair and a short stack
+
+
+def close_after_the_flop(seen: Seen, money: Money | None, adv, play: Play, told: Told) -> None:
+    """A close call or bluff before the money: the quieter play leads, as before the flop.
+
+    The headline is FOLD (CHECK when it is free) and the engine's play the
+    second line.  Not in the money, at a final table, in the Max EV style,
+    while re-entry is open, for a stack too short to wait, in Spin, against a
+    player tagged lag or maniac, at a tiny price, and not where the engine
+    says the hand is committed (the playbook takes that hand to showdown).
+    """
+    if money is None or adv.confidence != "close" or guard_is_off(seen, money):
+        return
+    bluff = play.kind in ("bet", "raise", "allin") and play.qualifier in ("semi-bluff", "c-bet")
+    if play.kind != "call" and not bluff:
+        return
+    if play.kind == "call" and (told.bet_share <= TINY_CALL or told.ptype in AGGRESSIVE_TYPES
+                                or any(COMMITTED in text for text in adv.why)):
+        return
+    what = "call" if play.kind == "call" else "bet" if seen.to_call <= 0 else "raise"
+    quiet = "check" if seen.to_call <= 0 else "fold"
+    engine = engine_alone(play)
+    play.also = f"The engine alone: {engine}. The Max EV style plays it."
+    play.verb, play.kind, play.to = ("CHECK", "check", None) if quiet == "check" else ("FOLD", "fold", None)
+    play.qualifier, play.sure, play.guard = "close: lower variance", "close", "close"
+    play.reason = f"Close: the {what} and the {quiet} are worth about the same. Before the money the " \
+                  f"lower-variance side leads: {quiet}."
+    play.flip = "The engine's play again once in the money, or with a read that makes it safer."
+    play.source = f"CLOSE: before the money the lower-variance side leads (engine: {engine})"
+
+
+def free_flop_rule(seen: Seen, engine: Play, made: dict, pot: float, can_lose: float) -> Play:
+    """The all-in plan after a free flop: all-in with top pair or better, or 12 outs, at 4 pots or less.
+
+    "Behind" is what an opponent can still call, not hero's whole stack.  A
+    hand that passes the strength test is never checked or folded by this
+    rule: with more than 4 pots behind the full engine's play is the answer.
+    When all the chips that can go in are in the bet hero faces, the all-in
+    is a call and the headline says so.
+    """
+    strong = made["strength"] >= 4 or (made["outs"] >= FREE_FLOP_OUTS and seen.state.phase != "river")
+    second = f"The full engine: {engine_summary(engine)}."
+    holds = tile("You hold", made["made"].split(" (")[0], made["texture"]["label"])
+    source = "all-in plan: the playbook's rule"
+    if not strong:
+        verb, kind = ("CHECK", "check") if seen.to_call <= 0 else ("FOLD", "fold")
+        return Play(verb=verb, kind=kind, sure="standard", also=second, source=source, tiles=[holds],
+                    reason="No top pair and no 12-out draw: check, and fold to a bet.")
+    if can_lose > FREE_FLOP_POTS * pot:
+        engine.source = "all-in plan: more than 4 pots behind, the full engine's play"
+        engine.flip = engine.flip or "All-in with 4 pots or less behind."
+        return engine
+    pots = tile("Pots behind", f"{can_lose / pot:.1f}", "all-in at 4 or less")
+    if seen.to_call > 0 and not (seen.legal.get("raise") or seen.legal.get("bet")):
+        return Play(verb="CALL", kind="call", sure="standard", also=second, source=source, tiles=[holds, pots],
+                    reason="Top pair or better, or a draw with 12 outs, and 4 pots or less behind: call. "
+                           "Every chip that can go in is in that bet.")
+    return Play(verb="ALL-IN", kind="allin", sure="standard", also=second, source=source, tiles=[holds, pots],
+                reason="Top pair or better, or a draw with 12 outs, and 4 pots or less behind: move all-in.")
 
 
 # ==========================================================================
@@ -2641,7 +3131,13 @@ def limped_chart(seen: Seen, before: Before) -> dict | None:
 # ==========================================================================
 
 def finished_answer(answer: dict, seen: Seen, money: Money | None, play: Play, standing: list) -> dict:
-    answer.update(status="ready", headline=headline(seen, play), reason=play.reason, tiles=play.tiles,
+    head = headline(seen, play)
+    assumed = assumption(seen, short=True)
+    if assumed and head["tone"] != "wait":
+        # players in front of hero have not acted: the answer holds if they do the passive thing, and says so
+        head["qualifier"] = f"{head['qualifier']}, {assumed}" if head["qualifier"] else assumed
+        answer["provisional"] = assumption(seen)
+    answer.update(status="ready", headline=head, reason=play.reason, tiles=play.tiles,
                   flip=play.flip, also=play.also, plans=play.plans, chart=play.chart, guard=play.guard,
                   source=source_line(money, play),
                   warnings=shown_warnings(play.warnings + player_notes(seen) + standing))
@@ -2665,7 +3161,7 @@ def headline(seen: Seen, play: Play) -> dict:
         if box is None:                         # the betting is not open for a raise: the call is what is left
             verb, kind = ("CALL", "call") if to_call > 0 else ("CHECK", "check")
         else:
-            to = max(box["min"], min(round(to), box["max"]))
+            to = max(box["min"], min(on_the_chips(seen, to), box["max"]))
             if to >= box["max"]:
                 verb, kind = "ALL-IN", "allin"
             else:
@@ -2678,12 +3174,48 @@ def headline(seen: Seen, play: Play) -> dict:
         size_text = ("TO " if kind == "raise" else "") + size_words(seen, to)
         follow = {"kind": kind, "to": to}
     elif kind == "allin":
-        size_text, follow = (size_words(seen, all_in) if all_in else ""), {"kind": "allin"}
+        # the amount that can be matched; the intent is hero's all-in, and what nobody matches comes back
+        size_text, follow = (size_words(seen, matched_all_in(seen, all_in)) if all_in else ""), {"kind": "allin"}
     else:
         size_text, follow = "", {"kind": kind}
     tone = "passive" if verb in ("CALL", "CHECK") else "fold" if kind == "fold" else "attack"
     return {"verb": verb, "size_text": size_text, "qualifier": play.qualifier, "tone": tone, "sure": play.sure,
             "follow": follow}
+
+
+def chip_step(seen: Seen):
+    """The smallest chip the blinds of this hand are made of: 25 at 300/600 with an ante of 75."""
+    level = seen.hand["level"]
+    amounts = [level.get(key) or 0 for key in ("sb", "bb", "ante")]
+    amounts = [amount for amount in amounts if amount]
+    if not amounts or any(amount != int(amount) for amount in amounts):
+        return 0.1 if seen.mode == "aof" else 1         # the table's own step (model.Session._step)
+    return max(step for step in CHIP_STEPS if all(amount % step == 0 for amount in amounts))
+
+
+def on_the_chips(seen: Seen, to):
+    """A bet or a raise as an amount the table's chips can make.
+
+    Before the flop sizes are tenths of a big blind and stay whole chips.
+    After the flop they are a share of the pot: rounded to the table's chip
+    (``chip_step``), so 1,155 becomes 1,150.  The caller keeps it legal.
+    """
+    step = chip_step(seen) if seen.state.phase != "preflop" else (0.1 if seen.mode == "aof" else 1)
+    if step <= 1:
+        return tidy(to, step)
+    return step * tidy(to / step)
+
+
+def matched_all_in(seen: Seen, all_in):
+    """Hero's all-in as the amount that can be matched: the smaller of his all-in and the biggest total a
+    player still in the hand can reach (a player sitting out folds, so his chips do not count)."""
+    state = seen.state
+    live = [seat for seat in state.live() if seat != HERO]
+    rivals = [seat for seat in live if not (seat in state.away and state.stack[seat] > 0)] or live
+    if not rivals:
+        return all_in
+    reach = max(state.in_front[seat] + state.stack[seat] for seat in rivals)
+    return min(all_in, max(reach, state.in_front[HERO] + seen.to_call))
 
 
 def size_words(seen: Seen, chips) -> str:

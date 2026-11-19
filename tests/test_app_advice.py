@@ -419,8 +419,9 @@ class AfterTheFlop(unittest.TestCase):
         self.assertEqual(a["headline"]["qualifier"], "playbook check")
         self.assertIn("The engine alone: CALL", a["also"])  # the engine calls there
         self.assertEqual(a["spot"], "AsTd on Tc7h4s2dKh, BB bets 12bb into 18bb")
-        # without the tag there is no rule to apply: the engine's call stands
-        self.assertEqual(verb(self.river_bet_from_the_big_blind(None)), "CALL")
+        # the rule holds for a player without a tag as well (POST-7); only lag and maniac get the engine's call
+        self.assertEqual(verb(self.river_bet_from_the_big_blind(None)), "FOLD")
+        self.assertEqual(verb(self.river_bet_from_the_big_blind("maniac")), "CALL")
 
     def test_P4_close_call_with_icm_priced_in(self):
         # the bubble; the cutoff covers hero, raises to 3bb and moves all-in on the flop
@@ -430,6 +431,8 @@ class AfterTheFlop(unittest.TestCase):
         s.do("set_cards", slot="flop", text="Qs8d3c")
         s.do("act", seat=1, kind="check")
         s.do("act", seat=seat_of(CO, BB, 8), kind="allin")
+        # the engine's own answer (the Max EV style shows it): a close call
+        s.do("set_config", style="maxev")
         a = A.advise(s)
         self.assertEqual(verb(a), "CALL")
         self.assertEqual(a["headline"]["sure"], "close")
@@ -437,6 +440,11 @@ class AfterTheFlop(unittest.TestCase):
         need, have = (int(x.strip("%")) for x in a["tiles"][1]["value"].split(" / "))
         self.assertTrue(have - 3 <= need <= have, (need, have))
         self.assertGreater(need, 55)                        # pot odds alone ask for 39%: the rest is the bubble
+        # in the default style a close call before the money gives way to the fold (decision "close spots")
+        s.do("set_config", style="survive")
+        a = A.advise(s)
+        self.assertEqual((verb(a), a["headline"]["qualifier"], a["guard"]), ("FOLD", "close: lower variance", "close"))
+        self.assertIn("The engine alone: CALL", a["also"])
 
 
 class Spin(unittest.TestCase):
@@ -488,7 +496,8 @@ class AllInOrFold(unittest.TestCase):
         self.assertEqual(verb(a), "ALL-IN")
         self.assertEqual(a["tiles"][0]["value"], "+0.12bb")
         self.assertIn("outside_tables", codes(a))           # answered for the effective stack: an approximation
-        self.assertEqual(a["headline"]["size_text"], "8BB")
+        self.assertEqual(a["headline"]["size_text"], "5.5BB")           # what the big blind can match (POST-11)
+        self.assertEqual(a["headline"]["follow"], {"kind": "allin"})
 
     def test_A3_the_big_blind_calls(self):
         a = A.advise(all_in_or_fold([8, 8, 8, 8], 3, "JTs", movers=[2]))

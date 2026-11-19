@@ -638,10 +638,26 @@
     return {tone: "wait", eyebrow: "Coach", verb: waiting.verb, spot: spot, live: false};
   }
 
-  // Long verbs get a smaller size so they stay on the slab.
-  function verbClass(verb) {
-    const length = String(verb || "").length;
-    return length >= 10 ? " xlong" : length >= 8 ? " long" : "";
+  // Long verbs get a smaller size so they stay on the slab. The longest answer of two words
+  // ("RE-RAISE ALL-IN") is written word under word where the slab is a narrow column (from 1024),
+  // so it keeps a size that still reads as the answer.
+  function verbClass(verb, live) {
+    const text = String(verb || "");
+    if (text.length >= 10) return live && text.length >= 12 && text.split(" ").length === 2 ? " xlong two" : " xlong";
+    return text.length >= 8 ? " long" : "";
+  }
+  function verbHtml(verb, live) {
+    const cls = verbClass(verb, live);
+    const words = cls.indexOf(" two") >= 0 ? String(verb).split(" ").map((word) => `<span>${esc(word)}</span>`).join(" ") : esc(verb);
+    return `<span class="verb${cls}">${words}</span>`;
+  }
+  // The size as the coach writes it, "TO 2BB · 1,200": the second unit is marked, so the narrow slab can
+  // leave it out when a pill needs the room.
+  function sizeHtml(size) {
+    const text = String(size);
+    const at = text.indexOf(" \u00b7 ");
+    if (at < 0) return `<span class="size">${esc(text)}</span>`;
+    return `<span class="size">${esc(text.slice(0, at))}<span class="more">${esc(text.slice(at))}</span></span>`;
   }
 
   // How sure: three bars filled is clear, two standard, one close.
@@ -668,12 +684,12 @@
   function slabHtml(content, mode) {
     const how = mode ? `<button class="mode" data-fk="coach-mode" title="${esc("Style and moves: " + mode + ". Change them in the settings")}"` +
                        ` aria-label="${esc("Style and moves: " + mode + ". Open the settings")}"${emit({ui: only({sheet: "settings"})})}>${esc(mode)}</button>` : "";
-    return `<div class="slab ${esc(content.tone)}">
+    return `<div class="slab ${esc(content.tone)}${content.qualifier ? " has-pill" : ""}">
       <div class="head"><span class="eyebrow">${esc(content.eyebrow)}</span>${how}${content.live ? sureHtml(content.sure) : ""}</div>
-      <div class="act"><span class="verb${verbClass(content.verb)}">${esc(content.verb)}</span>
-        ${content.size ? `<span class="size">${esc(content.size)}</span>` : ""}
-        ${content.qualifier ? `<span class="pill">${esc(content.qualifier)}</span>` : ""}</div>
-      ${content.spot ? `<div class="spot">${prose(content.spot)}</div>` : ""}
+      <div class="act">${verbHtml(content.verb, content.live && content.tone !== "wait")}
+        ${content.size ? sizeHtml(content.size) : ""}
+        ${content.qualifier ? `<span class="pill" title="${esc(content.qualifier)}">${esc(content.qualifier)}</span>` : ""}</div>
+      ${content.spot ? `<div class="spot" title="${esc(content.spot)}">${prose(content.spot)}</div>` : ""}
     </div>`;
   }
 
@@ -1758,8 +1774,10 @@
 
   function whyBody(view, advice) {
     const live = isCurrent(view, advice);
+    // (the spot in full: the narrow slab shows one line of it)
+    const spot = live && advice.spot ? `<p class="spot-full" data-fk="why-spot">${prose(advice.spot)}</p>` : "";
     const body = whyHtml(advice, live) + (live ? chartHtml(advice.chart) : "") + contextHtml(advice);
-    return body || `<p class="empty-note">Nothing to explain yet.</p>`;
+    return body ? spot + body : `<p class="empty-note">Nothing to explain yet.</p>`;
   }
 
   function section(title, body) { return `<div class="section"><h3>${esc(title)}</h3>${body}</div>`; }
@@ -2392,10 +2410,22 @@
     items[(at + step + items.length) % items.length].focus();
   }
 
+  // How wide a thin scroll bar is in this browser: nothing where bars lie over the page (macOS, phones),
+  // about 10px on Windows. The advice column keeps that much room free in the page's margin (app.css, --sbw).
+  function measureScrollBar() {
+    const probe = document.createElement("div");
+    probe.style.cssText = "position:absolute;top:-99px;left:0;width:60px;height:30px;overflow-y:scroll;scrollbar-width:thin";
+    document.body.appendChild(probe);
+    const width = probe.offsetWidth - probe.clientWidth;
+    probe.remove();
+    document.documentElement.style.setProperty("--sbw", Math.max(0, Math.min(width, 14)) + "px");
+  }
+
   let mounted = false;
   function mount() {
     if (mounted) return;
     mounted = true;
+    measureScrollBar();
     document.addEventListener("click", onClick);
     document.addEventListener("submit", onSubmit);
     document.addEventListener("change", onChange);

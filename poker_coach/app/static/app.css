@@ -44,7 +44,7 @@
   --pos:18px;--stack:17px;
   --card-w:36px;--card-h:50px;--hcard-w:40px;--hcard-h:56px;
   --chip-h:22px;--chip-f:13px;--deal:18px;
-  --verb:64px;--size:28px;--pot:24px;
+  --verb:60px;--verb-lh:50px;--size:28px;--pot:24px;
 }
 
 /* ---------- 3. Base ---------- */
@@ -141,11 +141,14 @@ button.value:hover{background:var(--line)}
 
 /* ---------- 6. Advice ---------- */
 .advice{display:flex;flex-direction:column;gap:var(--gap);min-width:0}
-.slab{border-radius:var(--r-card);padding:12px 16px;background:var(--panel);border:1px solid var(--line-strong);
-  display:flex;flex-direction:column;gap:4px;min-width:0}
+/* Under 1024 the slab has one height whatever it says, so the table and the action bar below never move:
+   the eyebrow row, one row for the verb (the same line box in every tone and size) with its size and
+   its pill, and one line for the spot. From 1024 it stands in its own column and takes the room it needs. */
+.slab{border-radius:var(--r-card);padding:10px 16px;background:var(--panel);border:1px solid var(--line-strong);
+  display:flex;flex-direction:column;gap:2px;min-width:0;height:112px;overflow:hidden}
 .slab.attack{background:var(--yellow);border-color:var(--yellow);color:var(--ink)}
 .slab.attack .eyebrow,.slab.attack .spot{color:var(--ink)}
-.slab.passive{border:2px solid var(--white);padding:11px 15px}
+.slab.passive{border:2px solid var(--white);padding:9px 15px}
 .slab.fold{border:1px solid var(--line-strong)}
 .slab.wait{background:var(--ink);border:1px dashed var(--grey);color:var(--grey)}
 .slab .head{display:flex;justify-content:space-between;align-items:center;gap:12px;min-width:0}
@@ -157,17 +160,24 @@ button.value:hover{background:var(--line)}
 .pips{display:flex;gap:3px}
 .pips i{width:6px;height:12px;border-radius:2px;border:1.5px solid currentColor}
 .pips i.on{background:currentColor}
-.act{display:flex;align-items:baseline;column-gap:12px;row-gap:2px;flex-wrap:wrap;min-width:0}
-.verb{font:italic 800 var(--verb)/.9 var(--display);text-transform:uppercase;letter-spacing:-.01em;padding-right:.06em}
+/* (the row is lifted 3px: capitals have nothing under the baseline, and so stand in the middle of their row) */
+.act{display:flex;align-items:baseline;column-gap:12px;height:var(--verb-lh);min-width:0;margin:-3px 0 3px}
+.verb{font:italic 800 var(--verb)/var(--verb-lh) var(--display);text-transform:uppercase;letter-spacing:-.01em;padding-right:.06em;
+  white-space:nowrap;flex:none}
 .verb.long{font-size:calc(var(--verb)*.75)}
-.verb.xlong{font-size:calc(var(--verb)*.48)}
+.verb.xlong{font-size:calc(var(--verb)*.6)}
 .slab.wait .verb{font-size:48px}
 .slab.wait .verb.xlong{font-size:36px}
-.size{font:800 var(--size)/1 var(--display);text-transform:uppercase;font-variant-numeric:tabular-nums lining-nums}
-.slab .pill{align-self:center}
+.size{font:800 var(--size)/1 var(--display);text-transform:uppercase;font-variant-numeric:tabular-nums lining-nums;white-space:nowrap;flex:none}
+/* The pill shares the verb's row. It may take two lines; with a pill the size keeps its first unit only
+   (the Follow button says the other), so the row never needs a second one. */
+.slab .pill{align-self:flex-end;flex:0 1 auto;min-width:0;height:auto;min-height:22px;max-height:36px;padding:4px 10px;border-radius:11px;
+  white-space:normal;line-height:14px;overflow:hidden}
+.slab.has-pill .size .more{display:none}
 .slab.attack .pill{background:var(--ink);color:var(--white)}
-.spot{font-size:13px;font-weight:500;color:var(--soft);min-width:0}
+.spot{font-size:13px;line-height:19px;font-weight:500;color:var(--soft);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .slab.wait .spot{color:var(--grey)}
+.spot-full{font-size:14px;font-weight:500;color:var(--white)}
 
 /* Under 1024 the reasons are one line that opens the full panel as a sheet. */
 .whyline{display:flex;align-items:center;gap:12px;min-height:44px;width:100%;padding:0 4px;border-radius:var(--r-in);font-size:13px;color:var(--soft)}
@@ -494,7 +504,7 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   :root{--gut:16px;--gap:12px;--table-h:360px;--table-h-aof:300px;
     --pod-w:112px;--pod-h:60px;--hero-w:216px;--hero-h:80px;--pos:20px;--stack:18px;
     --card-w:44px;--card-h:62px;--hcard-w:48px;--hcard-h:66px;--chip-h:24px;--chip-f:14px;--deal:20px;
-    --verb:88px;--size:32px}
+    --verb:88px;--verb-lh:.9;--size:32px}
   /* Two columns. The last row takes what is left of the window, so the advice column reaches the bottom. */
   .app{max-width:1640px;height:100%;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:auto auto auto minmax(auto,1fr);column-gap:16px}
   .header{grid-column:1/-1}
@@ -502,8 +512,10 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .word{display:block}
   .brand .mark{width:32px;height:32px}
   /* The advice column scrolls by itself, so the table never moves. */
+  /* It keeps the room of its scroll bar from the start (the bar lies in the page's own margin), so the
+     slab is not made narrower the moment an answer is long enough to scroll. --sbw: render.js measures it. */
   .advice{grid-column:2;grid-row:2/5;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;
-    padding:4px;margin:-4px;align-self:stretch;min-height:0}
+    scrollbar-gutter:stable;padding:4px;margin:-4px calc(-4px - var(--sbw,0px)) -4px -4px;align-self:stretch;min-height:0}
   .table,.line,.actions{grid-column:1}
   .table{grid-row:2}
   .line{grid-row:3}
@@ -518,12 +530,17 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .advice-tabs{display:flex}
   .advice[data-panel=why] > .why,.advice[data-panel=why] > .where{display:flex}
   .advice[data-panel=range] > .chart{display:flex}
-  .slab{padding:16px 20px}
+  .slab{padding:16px 20px;gap:4px;height:auto;overflow:visible}
   .slab.passive{padding:15px 19px}
   .slab .head{flex-wrap:wrap;row-gap:2px}
   .slab .mode{order:3;flex:1 0 100%;text-align:left;padding:0}
-  .act{flex-direction:column;align-items:flex-start;row-gap:4px}
-  .slab .pill{align-self:flex-start;margin-top:2px}
+  .act{flex-direction:column;align-items:flex-start;row-gap:4px;height:auto;margin:0}
+  .verb.xlong{font-size:calc(var(--verb)*.48)}
+  .verb.xlong.two{font-size:calc(var(--verb)*.75);white-space:normal}
+  .verb.two > span{display:block}
+  .slab .pill{align-self:flex-start;margin-top:2px;max-height:none;white-space:nowrap;height:22px;padding:0 10px;line-height:1;border-radius:var(--r-pill)}
+  .slab.has-pill .size .more{display:inline}
+  .spot{white-space:normal;overflow:visible}
   .stack .other{display:block}
   .chip{min-width:40px;padding:0 8px}
   .pod.away .stack .tag,.pod.busted .stack .tag{order:0;margin-left:auto;margin-right:0;padding-left:4px;font-size:11px}
@@ -545,8 +562,10 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
 }
 @media (min-width:1280px){
   /* The table takes the height the window has, up to 600: it gives height up on a short window
-     (a laptop at 1366 x 768) so the action bar stays in sight. A small table (2 to 4 seats) stops at 460. */
-  :root{--gut:24px;--gap:16px;--table-h:clamp(404px,calc(100vh - 206px),600px);--table-h-aof:380px;
+     (a laptop at 1366 x 768, or 1280 x 800) so the action bar stays in sight. A small table (2 to 4 seats)
+     stops at 460. Around the table: header 65, hand line 36, action bar 68 (its caption row and the
+     buttons), three gaps of 16 and 8 under the bar: 225. */
+  :root{--gut:24px;--gap:16px;--table-h:clamp(404px,calc(100vh - 226px),600px);--table-h-aof:380px;
     --pod-w:152px;--pod-h:80px;--hero-w:280px;--hero-h:104px;--pos:26px;--stack:22px;
     --card-w:56px;--card-h:78px;--hcard-w:64px;--hcard-h:88px;--chip-h:28px;--chip-f:16px;--deal:24px;
     --verb:104px;--size:36px;--pot:32px}
@@ -569,8 +588,8 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .pot{height:36px}
   .pot .num{line-height:36px}
 }
-/* Wide but under 610 high: the table of the middle step, so the action bar is not pushed out of the window. */
-@media (min-width:1280px) and (max-height:609px){
+/* Wide but under 630 high: the table of the middle step, so the action bar is not pushed out of the window. */
+@media (min-width:1280px) and (max-height:629px){
   :root{--table-h:360px;--table-h-aof:300px;
     --pod-w:112px;--pod-h:60px;--hero-w:216px;--hero-h:80px;--pos:20px;--stack:18px;
     --card-w:44px;--card-h:62px;--hcard-w:48px;--hcard-h:66px;--chip-h:24px;--chip-f:14px;--deal:20px;--pot:24px}
