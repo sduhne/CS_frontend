@@ -2124,7 +2124,7 @@
           ${setupField("Blinds", "level", d.level)}
           ${setupField("Prizes", "payouts", d.payouts, {placeholder: "winner takes all"})}
         </div>
-        <p class="hint">Three players or six; you are seat 1. One prize, unless you type the prizes the lobby shows,
+        <p class="hint">Three players or six. You are seat 1. One prize, unless you type the prizes the lobby shows,
           first place first: a six-player x10 game pays two places (such as 8 2).</p>`;
     } else if (mode === "aof") {
       fields = `<p class="hint">Four seats, 8 big blinds each, blinds 0.5 and 1. Everything is counted in big blinds.

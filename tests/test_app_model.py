@@ -1242,10 +1242,14 @@ class TableAndTournament(unittest.TestCase):
         self.assertEqual((view["strip"]["level"]["bb"], view["strip"]["remaining"], view["strip"]["style"]),
                          (600, 96, "cash"))
         self.assertEqual([x["stack"] for x in view["table"]["seats"]], [20000] * 6)
-        for mode, low in (("spin", 3), ("aof", 4)):
+        # (Spin & Gold has three seats or six, for a whole game: the other size is a new game, never one seat more)
+        for mode, low, seats in (("spin", 3, "3 or 6 seats"), ("aof", 4, "4 seats")):
             s.do("set_mode", mode=mode)
-            self.assertIn(f"{low} seats", refused(s, "set_size", delta=1).message)
+            self.assertIn(seats, refused(s, "set_size", delta=1).message)
             refused(s, "new_session", size=low - 1)
+        s.do("set_mode", mode="spin")
+        refused(s, "new_session", size=5)
+        self.assertEqual(s.do("new_session", mode="spin", size=6)["table"]["size"], 6)
 
     def test_players_left_marks_do_not_pile_up(self):
         s = Session(save=False)

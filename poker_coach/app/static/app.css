@@ -153,8 +153,8 @@ button.value:hover{background:var(--line)}
 .strip .in{width:132px}
 .strip .in.short{width:84px}
 .strip .from-avg,.strip .from-style{display:none}
-.header.no-avg .strip .from-avg,.header.no-ante .stat.level small,.header.no-paid .stat.paid,.header.no-stage .strip .stage,
-.header.no-prizes .strip .stat.prizes.plain,.header.no-tally .strip .tally{display:none}
+.header.no-avg .strip .from-avg,.header.no-ante .stat.level small,.header.no-paid .stat.paid,.header.no-stage .strip .stage{display:none}
+.header.no-prizes .strip .stat.prizes.plain,.header.no-tally .strip .tally{display:none}      /* Spin & Gold */
 .header.no-word .word{display:none}
 
 /* ---------- 6. Advice ---------- */

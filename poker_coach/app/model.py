@@ -1698,6 +1698,9 @@ class Session:
 
     def _op_set_size(self, a) -> None:
         """More or fewer seats.  Empty seats above a smaller size just go; players there need ``clear``."""
+        if self.mode == "spin":                         # three seats or six, for a whole game (``new_game`` has the size)
+            raise ModelError("A Spin & Gold table has 3 or 6 seats.",
+                             "Start a new game with 3 or with 6 players (Table tools).")
         table = self.data["table"]
         size = self._size_arg(a["size"] if a.get("size") not in (None, "")
                               else table["size"] + _whole(a.get("delta") or 0, "delta"))
