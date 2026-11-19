@@ -195,6 +195,8 @@ button.value:hover{background:var(--line)}
 .spot{font-size:13px;line-height:19px;font-weight:500;color:var(--soft);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .slab.wait .spot{color:var(--grey)}
 .spot-full{font-size:14px;font-weight:500;color:var(--white)}
+/* Where the tournament stands, from the answer before, for the moment the new answer takes: dimmed. */
+.panel.where.old{opacity:.45}
 /* Under 1024 a slab that waits (hand over, folded, no chips, whose turn it is) says a sentence, not an
    answer: its word is smaller and the sentence has two lines, so "... press N for the next hand" and
    "... or start a new tournament" are read in full at 560. The slab keeps its one height, so nothing

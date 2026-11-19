@@ -2213,6 +2213,20 @@ class Rob4DamagedFiles(FilesCase):
         Session(self.folder)                                        # a second bad start: the first file stays
         self.assertEqual(len(self.aside()), 2)
 
+    def test_a_damaged_app_json_is_not_called_a_new_table(self):
+        """app.json holds the mode on screen, the unit and the deck.  When it was damaged the notice said
+        "This is a new table" although every table was back as it had been."""
+        self.saved_table()
+        with open(self.path("app.json"), "w", encoding="utf-8") as fh:
+            fh.write("not json")
+        again = Session(self.folder)
+        view = again.view()
+        self.assertEqual((view["first_run"], self.bob(again)), (False, ("Bob", 23000)))     # the table is there
+        said = toast_of(view)
+        self.assertIn("app.json could not be read and was set aside as app.json.unreadable-", said)
+        self.assertIn("Your tables are as they were", said)
+        self.assertNotIn("new table", said)
+
     def test_rob_4_a_byte_order_mark_is_not_damage(self):
         self.saved_table()
         with open(self.path(), "rb") as fh:
@@ -3374,6 +3388,33 @@ class TheHistoryTextIsEnoughToPlayTheHandAgain(unittest.TestCase):
         text = self.again(s)
         self.assertIn("Seats: 1 BTN 8bb You; 2 SB 5.5bb; 3 BB 5.5bb; 4 CO 5.5bb", text)
         self.assertIn("\nYou: -5.5bb", text)                        # in big blinds, like the result above it
+
+
+class DeletingYourOwnActionSaysWhatItDoes(unittest.TestCase):
+    """Delete on your own call, with a caller behind you on the record, left you folded without a word."""
+
+    def test_deleting_heros_action_that_players_behind_him_followed_is_said(self):
+        s = tournament(size=8, level="300/600/75", stacks=[20000] * 8)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "5 raise 1320, 1 call, 3 call")
+        s.do("set_cards", board="Ks7d2c")
+        mine = next(item["i"] for item in s.view()["hand"]["line"] if item["text"] == "You call")
+        view = s.do("remove_event", index=mine)
+        self.assertIn("You fold*", marked(s))                       # the big blind's call stands: you were passed by
+        self.assertEqual(toast_of(view), "Without that action you are folded on the record. Backspace brings it back")
+        self.assertEqual(marked(s.do("undo") and s), [x for x in marked(s)])
+        self.assertIn("You call", marked(s))                        # one undo and the call is back
+        # deleting the last action of the hand so far leaves you to act again: nothing to say
+        s = tournament(size=8, level="300/600/75", stacks=[20000] * 8)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "5 raise 1320, 1 call")
+        mine = next(item["i"] for item in s.view()["hand"]["line"] if item["text"] == "You call")
+        view = s.do("remove_event", index=mine)
+        self.assertEqual((toast_of(view), view["hand"]["target_is_hero"]), ("", True))
+        # an opponent's action deleted: nothing about you
+        play(s, "1 call, 3 call")
+        theirs = next(item["i"] for item in s.view()["hand"]["line"] if item["text"] == "BB call")
+        self.assertNotIn("you are folded", toast_of(s.do("remove_event", index=theirs)))
 
 
 class NoButtonToCheckOnceAGameIsOver(unittest.TestCase):

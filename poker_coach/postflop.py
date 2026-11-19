@@ -42,6 +42,9 @@ _VALUE_BET_IS_ALL_IN = 2.0 / 3.0
 # asks for 62% and 72%.
 _DRAW_VALUE = 0.50
 _DRAW_VALUE_MULTIWAY = 0.55
+# Against several players a strong draw (12 outs or more) bets when its equity is this far above an
+# even share of the pot (a third against two players): the playbook's "real hands and strong draws".
+_STRONG_DRAW_MULTIWAY = 0.05
 
 
 def _price_scale(share: float, full: float) -> float:
@@ -522,6 +525,18 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
             adv.action = f"BET {_size_txt(amt, pot, spot.bb)} (semi-bluff)"
         adv.why.append(f"a draw with ~{d['outs']} outs: betting wins the pot now or builds it for when you hit")
         adv.alt.append("checking to take a free card is fine in position against a station")
+    elif strong_draw and multiway and (spot.hero_pfr or spot.in_position) and not icm_tight \
+            and eq >= 1.0 / (nv + 1) + _STRONG_DRAW_MULTIWAY:
+        # Several players in: the playbook bets real hands and strong draws there, nothing else.  A draw of
+        # 12 outs or more that holds clearly more than its share of the pot is one.
+        amt = bet(0.6)
+        if spr <= 1.5:
+            adv.action = "BET ALL-IN (semi-bluff)"
+        else:
+            adv.action = f"BET {_size_txt(amt, pot, spot.bb)} (semi-bluff)"
+        adv.why.append(f"a strong draw (~{d['outs']} outs, {_pct(eq)} equity) against several players: bet, it "
+                       "wins the pot now or builds it for when you hit")
+        adv.alt.append("checking to take a free card is fine when a player behind likes to raise")
     elif cbet_spot and strength == 4:
         # top pair is a made hand: the same small bet, but for value, and without the bluff's label
         amt = bet(0.33)
@@ -545,6 +560,10 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
         adv.action = "CHECK"
         if strength in (2, 3, 4):
             adv.why.append("a medium-strength hand: keep the pot small, call one reasonable bet, fold to heavy pressure")
+        elif multiway and any_draw:
+            # (not "nothing strong": the draw is on the screen beside this sentence)
+            adv.why.append(f"a draw (~{d['outs']} outs) against several players: take the free card, and call "
+                           "a reasonable bet")
         elif multiway:
             adv.why.append("multi-way with nothing strong: no bluffing into several players")
         else:

@@ -47,6 +47,14 @@ def _shove_spot(setup: HandSetup, shover: int, prizes: Prizes, *, away=None, bet
     units: 0 when there is no such player.  The value "when everybody folds" then counts that
     showdown at even odds.
     """
+    order = more.get("caller_order")
+    if order:
+        # The same for a raiser who has nothing left to call against this all-in (he is all-in himself, or
+        # his raise covers the shover): he is in whatever happens, so he is asked last, after the players who
+        # still decide.
+        inv = setup.invested(bets)
+        decided = [j for j in order if min(setup.live[shover], setup.live[j]) - inv[j] <= 1e-9]
+        more = dict(more, caller_order=[j for j in order if j not in decided] + decided)
     gone = _posted_all_in(setup, shover, bets)
     if not gone:
         return _solver.build_shove_spot(setup, shover, prizes, away=away, bets=bets, **more) + (0.0,)
@@ -907,7 +915,8 @@ def multi_allin(spot: Spot, allins: list[int], raiser: int | None = None, raise_
         ranges.append(rj)
     eq = preflop_equity(hand, spot.cards, ranges, iters=12000)
     call_amt = min(live[hero], max(live[j] for j in allins)) - setup.invested()[hero]
-    pot = sum(setup.antes) + sum(setup.blinds) + sum(min(live[j], max(live[k] for k in allins)) for j in allins)
+    # the pot hero can win: of a bigger all-in only the part his own stack matches
+    pot = sum(setup.antes) + sum(setup.blinds) + sum(min(live[j], live[hero]) for j in allins)
     need_chip = call_amt / (pot + call_amt)
     big = max(allins, key=lambda k: live[k])
     rp = 0.0 if spot.prizes.chip_ev or spot.desperate else spot.prizes.risk_premium(live, hero, big)
@@ -1111,7 +1120,7 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
                                        f"everyone folds {_pct(sol.fold_equity[hand])}; when called you have "
                                        f"{_pct(sol.eq_called[hand])}")
                     adv.numbers.append(plan_line.replace("if ", "after a small re-raise, if ", 1))
-                    adv.data.update(reshove_ev_bb=ev)
+                    adv.data.update(reshove_ev_bb=ev, reshove_bar_bb=bar)    # the bar: what "close" is measured against
                     decided = converted = True
                 else:
                     demoted = True
@@ -1285,6 +1294,17 @@ def cold_vs_3bet(spot: Spot, opener: int, raise_to: float, threebettor: int, thr
     eff = min(live[hero], max(live[opener], live[threebettor])) / bb
     rng = threebet_range(spot.nb(opener), spot.types[threebettor])
     open_rng = villain_open_range(spot.nb(opener), spot.types[opener])
+    if raise_to >= live[opener] - 1e-9:
+        # The first raise was an all-in.  The player who raised over it holds the hands that play against that
+        # all-in, not a re-raise over a full opening raise: the same reading as for a caller with chips (three
+        # quarters of the solved calling range, at most half of all hands).  The all-in player holds his own
+        # all-in range.
+        pushed = _shover_solution(spot, opener, None, 0.0, None)
+        over = pushed.caller(threebettor)
+        if over and range_combos(over.call_range) > 0:
+            width = min(_CALLER_WIDEST, _CALLER_SHARE * range_pct(over.call_range))
+            rng = top_percent(max(width, range_pct(rng)), list(allin_order()))
+        open_rng = _scaled_range(pushed, spot.types[opener])[0]
     eq = eq_vs_range(hand, rng)[0]
     sit = _situation(spot, f"{spot.who(opener)} raised and {spot.who(threebettor)} 3-bet to {three_to / bb:.1f}bb")
     adv = Advice("FOLD", "standard", sit)
@@ -1367,6 +1387,12 @@ def advise(spot: Spot) -> Advice:
             if r.kind == "allin":
                 return done(vs_shove(spot, r.idx, callers=flats))
             return done(vs_open(spot, r.idx, r.amount, flats))
+        # Two players who have both put in hero's whole stack or their own: for hero these are two all-ins.
+        # (The solver prices one opponent at a time: with the first of them all-in it took the second to fold,
+        # and an all-in read +40bb for a 15bb stack.)
+        in_for_good = [r.idx for r in raises if r.amount >= min(live[hero], live[r.idx]) - 1e-9]
+        if len(in_for_good) >= 2:
+            return done(multi_allin(spot, in_for_good))
         if len(raises) == 2:
             a, b = raises
             if b.kind == "allin":

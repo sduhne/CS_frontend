@@ -62,6 +62,9 @@
   let toastTimer = null;
   let setupFocused = "";                  // the mode whose first-run form already got the focus
   let fieldWaits = 0;                     // values sent from a field and not answered yet: keys wait, the answer says where they go
+  const GRACE_MS = 400;                   // how long the stage, gear and fold clock of the answer before stay (dimmed) after a change
+  let graceUntil = 0;
+  let graceTimer = null;
   let menuDrawn = null;                   // the seat whose menu is drawn, and whether the screen has shown it yet
   let menuSeen = false;
 
@@ -95,6 +98,10 @@
         if (ifNew && state.view && state.view.rev === view.rev && !!state.view.first_run === !!view.first_run && !state.ui.viewError) return;
         state.ui.viewError = null;
         takeView(view);
+        // A view that was only read carries a toast when the program has news of the saved files (one
+        // could not be read and was set aside). That is said until the user dismisses it or makes a
+        // change: it must not go away after six seconds, perhaps before the page is even looked at.
+        if (view.toast) state.ui.toast = Object.assign({}, view.toast, {stay: true});
         draw();
         askAdvice();
       },
@@ -267,6 +274,15 @@
   function takeView(view) {
     const before = state.view;
     state.view = view;
+    // The table changed: the answer on screen is for the table before. None of it is drawn any more
+    // (render.js), except, for the moment an answer usually takes, where the tournament stands.
+    if (!before || before.rev !== view.rev) {
+      graceUntil = performance.now() + GRACE_MS;
+      clearTimeout(graceTimer);
+      graceTimer = setTimeout(() => {
+        if (state.view && !(state.advice && state.advice.rev === state.view.rev)) draw();      // the moment is over
+      }, GRACE_MS + 30);
+    }
     if (before && before.mode !== view.mode) {
       state.advice = null;                // another game: nothing of the old screen applies
       state.ui = {panel: state.ui.panel, toast: state.ui.toast, sheet: state.ui.sheet};
@@ -302,7 +318,14 @@
           if (state.view && state.view.rev === rev) askAdvice(again + 1);
         }, 2000);
       }
-    }, () => { /* no answer from the coach: the table goes on working */ });
+    }, () => {
+      // No answer from the coach (the request broke off, or the program was stopped): the table goes on
+      // working. The slab then says "Updating", which must not stay for ever: ask again in a moment, a
+      // few times. (A program that is gone says so at the next key.)
+      if (again < 10) setTimeout(() => {
+        if (state.view && state.view.rev === rev && !(state.advice && state.advice.rev === rev)) askAdvice(again + 1);
+      }, 1500);
+    });
   }
 
   // The notice "for study and play money" is on the first-run form; the server remembers that it was shown.
@@ -425,6 +448,7 @@
 
   function draw(plan) {
     tidyUi();
+    state.ui.grace = performance.now() < graceUntil;
     UI.render(state.view, state.advice, state.ui);
     if (plan) settleFocus(plan);
     focusFirstRun();
@@ -545,7 +569,7 @@
     if (text === toastShown) return;
     toastShown = text;
     clearTimeout(toastTimer);
-    if (!shown) return;
+    if (!shown || shown.stay) return;       // (stay: news of the saved files, until dismissed or the next change)
     toastTimer = setTimeout(() => {
       state.ui.toast = null;
       draw();

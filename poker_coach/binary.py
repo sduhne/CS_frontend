@@ -217,6 +217,12 @@ def _in(text: str, hand: int) -> bool:
     return parse_range(text)[hand] >= 0.5
 
 
+def _bb(size: float) -> str:
+    """Big blinds for a sentence, to one decimal: 9.6, 12 (never 1.32833)."""
+    text = f"{size:.1f}"
+    return text[:-2] if text.endswith(".0") else text
+
+
 def decide(hand: int, n_behind: int, stack_bb: float, stage: str = "before", facing: str = "",
            facing_seat: int | None = None, allin_bb: float | None = None, bubble: bool = False,
            players: int = PLAYERS) -> tuple[str, str]:
@@ -247,7 +253,7 @@ def decide(hand: int, n_behind: int, stack_bb: float, stage: str = "before", fac
         rng = call("two", size, bubble, big_blind=(n_behind == 0), players=players)
         ok = _in(rng, hand)
         where = "on the bubble" if bubble else "away from the bubble"
-        return ("CALL" if ok else "FOLD"), f"against two all-ins of {size:g}bb {where}: {rng}"
+        return ("CALL" if ok else "FOLD"), f"against two all-ins of {_bb(size)}bb {where}: {rng}"
     if facing_seat is None:
         raise ValueError("facing a raise or an all-in needs that player's seat")
     them = seat_name(_seat(facing_seat, players), players)
@@ -262,7 +268,7 @@ def decide(hand: int, n_behind: int, stack_bb: float, stage: str = "before", fac
     rng = call(kind, size, bubble, big_blind=(n_behind == 0), players=players)
     ok = _in(rng, hand)
     where = "on the bubble" if bubble else "away from the bubble"
-    return ("CALL" if ok else "FOLD"), f"against an all-in of {size:g}bb from {them} {where}: {rng}"
+    return ("CALL" if ok else "FOLD"), f"against an all-in of {_bb(size)}bb from {them} {where}: {rng}"
 
 
 # --------------------------------------------------------------------------

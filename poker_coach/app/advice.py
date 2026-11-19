@@ -21,6 +21,7 @@ How an answer is made, top to bottom of this file:
 
        tournament, full plan     preflop.advise, then the survival guard
        tournament, all-in plan   the all-in or fold tables (binary), the engine as a second line
+                                 (a call for a small part of the stack at a good price is never folded)
        spin                      the spin tables to 16bb (20bb small blind and heads-up), the engine on chips above
        all-in or fold            aof.decide
        after the flop            postflop.advise_postflop, with roles and lines from the recorded actions,
@@ -37,7 +38,9 @@ How an answer is made, top to bottom of this file:
    as a "clear edge".  A good price is never folded, first in with 17bb or more
    the sheet's small raise takes the place of the fold, and the big blind's
    sheet call takes it against a small raise.  A close answer that puts chips
-   in gives way to the quieter play.  The guard is off in the money, for a
+   in gives way to the quieter play (the big blind keeps a close call only
+   with a hand that is on the sheet's row and on its short list of hands that
+   make top pair or a real draw).  The guard is off in the money, for a
    desperate stack, near the bubble when the fold clock says "cannot fold",
    with a read that makes the play safer, while re-entry is open and in the
    Max EV style.
@@ -56,8 +59,10 @@ How an answer is made, top to bottom of this file:
 7. **The answer**: headline (verb, size, tone, how sure, the intent that
    carries it out), one sentence of reason, tiles, what flips it, plan lines,
    warnings, the source line, the range chart, the context.  An all-in shows
-   the amount that can be matched; a bet after the flop is rounded to the
-   table's chips.
+   hero's whole stack, as the All-in button records it, and when nobody still
+   in the hand can match all of it the pill says what is really at risk
+   ("5.5bb of your 8bb can be matched"); an all-in that can only be a call is
+   shown as that call.  A bet after the flop is rounded to the table's chips.
 
 Besides the keys of the build spec the answer carries ``icm`` (off,
 estimated, on, exact), ``guard`` (agrees, survival, edge, close, off, none)
@@ -976,7 +981,9 @@ def fold_clock_line(data: dict, money: Money) -> str:
     else:
         text = sentence(lasts)
     cover = sit_out_cover(data, money)
-    if cover is not None:
+    if cover is not None and cover >= 2:        # ("2524% of what it takes" is a number nobody can read)
+        text += f" You hold {cover:.0f} times what it takes to fold into the money (the sit-out line)."
+    elif cover is not None:
         text += f" You hold {percent(cover)} of what it takes to fold into the money (the sit-out line)."
     after = next_level(data)
     hero_stack = S.hero_stack(money.state)
@@ -989,6 +996,11 @@ def no_bubble_estimate(money: Money) -> bool:
     """Near the bubble, where the fold clock would give a verdict, but with nothing to time the bubble by yet."""
     clock = money.clock
     return bool(clock) and clock.get("eta") is None and clock_gives_a_verdict(money) and not money.in_money
+
+
+def of_the_line(cover: float) -> str:
+    """Hero's stack against the sit-out line, in words: "31% of the sit-out line", "9 times the sit-out line"."""
+    return f"{cover:.0f} times the sit-out line" if cover >= 2 else f"{percent(cover)} of the sit-out line"
 
 
 def sit_out_cover(data: dict, money: Money) -> float | None:
@@ -1116,6 +1128,10 @@ def engine_tiles(facts: dict, kind: str, value_note: str) -> list:
     # A raise or an all-in the engine makes by rule (aces and kings after a raise and a re-raise) while its own
     # all-in number is a loss: that number, and the fold share that goes with it, would contradict the headline.
     by_rule = kind in ("raise", "allin") and facts.get("ev", 0.0) < 0
+    # And a fold the engine made by a rule (the opening chart from 17bb, "only premiums continue" after a raise
+    # and a re-raise): the all-in's number is its reference there, not what the answer was made from.  A gain
+    # beside the fold would read as "all-in instead".
+    by_rule = by_rule or (kind in ("fold", "check") and not number_backs_the_fold(facts))
     if "ev" in facts and not by_rule:
         tiles.append(tile("All-in against folding", signed_bb(facts["ev"]), value_note, sign_of(facts["ev"])))
     if "need" in facts and "equity" in facts:
@@ -1135,6 +1151,12 @@ def engine_tiles(facts: dict, kind: str, value_note: str) -> list:
     if "raise_range" in facts:
         tiles.append(tile("Raise range here", f"{facts['raise_range']:.0f}%", "of hands, over the callers"))
     return tiles[:3]
+
+
+def number_backs_the_fold(facts: dict) -> bool:
+    """Was a fold made from the all-in's own number?  Where the solver decides, the all-in is folded when it
+    earns nothing, or under +0.15bb over a raise.  A fold beside a bigger gain was made by a rule of the engine."""
+    return facts.get("ev", 0.0) <= 0.15 + 1e-9 and "open_range" not in facts
 
 
 PLAN_LINE = re.compile(r"If (.+) \((\d+)bb\) moves all-in: (CALL|FOLD) \(need (\d+)%, have (\d+)%\)")
@@ -1328,8 +1350,12 @@ def close_warning(facts: dict, before: Before, money: Money | None, play: Play) 
         text = f"Close: you need {percent(facts['need'])} and have {percent(facts['equity'])}."
     elif play.kind == "call":
         text = "Close: the call and the fold are worth about the same."
-    elif "ev" in facts:
-        wants = "; over a raise it takes +0.15bb" if before.kind == "raise" else ""
+    elif "ev" in facts and (play.kind not in ("fold", "check") or number_backs_the_fold(facts)):
+        # (a fold made by a rule is close to another play, not to the all-in whose number the engine also gives)
+        if "reshove_bar_bb" in facts:           # an all-in in place of a small re-raise: the hand could call instead
+            wants = f"; in place of a small re-raise it takes {signed_bb(facts['reshove_bar_bb'])}"
+        else:
+            wants = "; over a raise it takes +0.15bb" if before.kind == "raise" else ""
         text = f"Close: an all-in earns {signed_bb(facts['ev'])} against folding{wants}."
     else:
         text = "Close: the other play is nearly as good."
@@ -1996,8 +2022,8 @@ def table_answer(seen: Seen, money: Money, before: Before, bubble_charts: bool =
     zone = sit_out_zone(seen, money) if bubble_charts and money.bubble else None
     if all_ins:
         if zone and zone[0] in ("safe", "close"):
-            return TableSays("FOLD", f"with {percent(zone[1])} of the sit-out line you fold into the money: "
-                                     "no calls", "fold into the money")
+            return TableSays("FOLD", f"with {of_the_line(zone[1])} you fold into the money: no calls",
+                             "fold into the money")
         # what hero has to match: the biggest all-in, or his own stack if that is smaller
         size = min(start[hero], max(start[r.idx] for r in all_ins)) / seen.bb
         covered = any(start[r.idx] >= start[hero] for r in all_ins)
@@ -2190,8 +2216,7 @@ def bubble_chart_answer(seen: Seen, zone: tuple, players: int, kind: str, seat: 
     chart_name = sheet.pick(cover, seen.bbs(seen.start[seen.hero]))
     out = "CHECK" if free else "FOLD"
     if chart_name is None:
-        return TableSays(out, f"sit out: the stack is {percent(cover)} of the sit-out line and lasts until the money",
-                         "sit out")
+        return TableSays(out, f"sit out: the stack is {of_the_line(cover)} and lasts until the money", "sit out")
     weights = sheet.weights(chart_name, kind, seat if kind == "open" else 2)
     words = {"wide": "the wide chart", "short": "the short-stack chart", "tight": "the tight chart",
              "aces": "aces only", "premium": "QQ+ and AK only"}[chart_name]
@@ -2200,7 +2225,7 @@ def bubble_chart_answer(seen: Seen, zone: tuple, players: int, kind: str, seat: 
     chart = range_chart(f"Bubble, {words}: {spot}", seen.hand_name, {"r": weights},
                         legend=(("r", "All-in"), ("f", "Fold")))
     action = "ALL-IN" if weights[seen.hand_class] >= 0.5 else out
-    return TableSays(action, f"on the bubble with {percent(cover)} of the sit-out line {words} applies {spot}: {row}",
+    return TableSays(action, f"on the bubble with {of_the_line(cover)} {words} applies {spot}: {row}",
                      words, chart)
 
 
@@ -2229,9 +2254,17 @@ def allin_plan_play(seen: Seen, money: Money) -> Play:
         # has chips: a call would leave a decision on the flop, and this plan has one decision a hand.
         action = "ALL-IN"
         reason += " The raiser is not all-in yet, so move all-in yourself: this plan never just calls."
+    source = "all-in or fold table"
+    if action == "FOLD" and engine.kind == "call" and 0 < seen.to_call < COMMIT_SHARE * seen.state.stack[HERO]:
+        # The chart reads the size of the all-in, not the price.  A call for a small part of the stack at 3 to 1
+        # or better, or with 15 points to spare, is never folded: the same rule as the guard's.
+        price = good_price(call_price(seen), edge_points(engine.facts))
+        if price:
+            action, source = "CALL", "all-in or fold table: a good price is never folded"
+            reason += f" But this call is {price}, for a small part of your stack: a price like this is never folded."
     kind = {"ALL-IN": "allin", "CALL": "call", "CHECK": "check"}.get(action, "fold")
     play = Play(verb=action, kind=kind, sure=says.sure, reason=reason, chart=says.chart,
-                source="all-in or fold table", also=f"With all moves, on these stacks: {engine_summary(engine)}.")
+                source=source, also=f"With all moves, on these stacks: {engine_summary(engine)}.")
     if says.short and before.kind in ("first_in", "limped"):
         play.tiles.append(tile("The chart", says.short, f"{seen.hand_name} from this seat"))
     for number in engine.tiles:

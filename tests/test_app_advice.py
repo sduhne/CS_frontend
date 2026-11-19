@@ -301,10 +301,17 @@ class TournamentFullPlan(unittest.TestCase):
 
     def test_T13_two_all_ins_near_the_bubble(self):
         two = [(HJ, "allin", None), (CO, "allin", None)]
-        a = A.advise(tournament(STACKS_A, BTN, "TT", acts=two, left=185, style="cash"))
+        # The button with 12bb against all-ins of 40 and 22bb can win 12bb from each: the price is 43%, not the
+        # 28% of the whole of both stacks, and the engine itself folds tens (39%).
+        a = A.advise(tournament(STACKS_A, BTN, "TT", acts=two, left=185))
+        self.assertEqual((verb(a), a["guard"]), ("FOLD", "none"))
+        self.assertEqual(a["tiles"][0]["value"], "43% / 39%")
+        # the button covers both (40bb against 14 and 12bb): the engine calls, and the guard has its say
+        covers = [30, 25, 18, 14, 12, 40, 15, 20]
+        a = A.advise(tournament(covers, BTN, "TT", acts=two, left=185, style="cash"))
         self.assertEqual((verb(a), a["guard"]), ("FOLD", "survival"))
         self.assertIn("CALL", a["also"])
-        a = A.advise(tournament(STACKS_A, BTN, "TT", acts=two, left=185))       # 39% against 28%: no thin edge
+        a = A.advise(tournament(covers, BTN, "QQ", acts=two, left=185))         # 13 points over: no thin edge
         self.assertEqual((verb(a), a["guard"]), ("CALL", "edge"))
 
     def test_T14_final_table_guard_off(self):
@@ -2666,6 +2673,81 @@ class FinalChecks(unittest.TestCase):
         stacks = [20] * 8
         stacks[BB] = 0.6
         self.assertEqual(verb(A.advise(tournament(stacks, SB, "QQ", acts=[(UTG, "raise", 2.2)], style="maxev"))), "ALL-IN")
+
+    def test_a_fold_from_the_opening_chart_shows_no_all_in_gain_beside_it(self):
+        # the small blind with 22bb and A2o: outside the opening range, FOLD, while the engine's reference
+        # number for an all-in is +0.70bb.  A green "all-in against folding" beside the fold says "all-in".
+        a = A.advise(tournament([22] * 8, SB, "A2o"))
+        self.assertEqual((verb(a), a["headline"]["sure"]), ("FOLD", "close"))
+        self.assertNotIn("All-in against folding", [t["label"] for t in a["tiles"]])
+        self.assertNotIn("Everybody folds", [t["label"] for t in a["tiles"]])
+        close = next(w["text"] for w in a["warnings"] if w["code"] == "close")
+        self.assertNotIn("all-in earns", close)
+        # where the solver decides (16bb and under) the number stays beside the answer it made
+        a = A.advise(tournament([12] * 8, SB, "72o"))
+        self.assertEqual(verb(a), "FOLD")
+        self.assertIn("All-in against folding", [t["label"] for t in a["tiles"]])
+
+    def test_a_close_all_in_in_place_of_a_small_re_raise_names_its_own_bar(self):
+        # in the money, tens on the button against a cutoff raise with 30bb: the all-in earns +1.36bb, and it is
+        # "close" to the call it replaces (the bar is 4% of the stack), not to the +0.15bb of a short all-in
+        a = A.advise(tournament([30] * 8, BTN, "TT", acts=[(CO, "raise", 2.2)], left=100))
+        self.assertEqual((verb(a), a["headline"]["sure"]), ("ALL-IN", "close"))
+        close = next(w["text"] for w in a["warnings"] if w["code"] == "close")
+        self.assertIn("in place of a small re-raise it takes +1.20bb", close)
+        self.assertNotIn("+0.15bb", close)
+
+    def test_the_sit_out_line_is_not_given_as_thousands_of_percent(self):
+        a = A.advise(tournament([69, 30], 0, "5s3d", left=151, avg_bb=25))
+        clock = a["context"]["fold_clock"]
+        self.assertIn("You hold 15 times what it takes to fold into the money (the sit-out line).", clock)
+        self.assertFalse(re.search(r"\d{3,}%", clock), clock)
+        a = A.advise(tournament([30, 25, 18, 40, 22, 8, 15, 20], BTN, "A9o", left=165, avg_bb=30, plan="allin"))
+        self.assertIn("You hold 31% of what it takes to fold into the money (the sit-out line).",
+                      a["context"]["fold_clock"])
+        # the all-in plan's own sentence on the bubble says it the same way
+        self.assertEqual(A.of_the_line(8.72), "9 times the sit-out line")
+        self.assertEqual(A.of_the_line(0.31), "31% of the sit-out line")
+        A.warm_bubble_charts(8)
+        a = A.advise(tournament([20] * 7 + [60], BB, "7h2d", acts=[(BTN, "allin", None)], left=151, avg_bb=10,
+                                plan="allin"))
+        self.assertIn("times the sit-out line you fold into the money", a["reason"])
+        self.assertFalse(re.search(r"\d{3,}%", a["reason"]), a["reason"])
+
+    def test_the_all_in_plan_never_folds_a_cheap_call_at_a_good_price(self):
+        # the big blind with 23bb, an all-in of 1.3bb in front: 205 more into a pot of 3,700.  The chart
+        # reads the size of the all-in and folded 6-4 suited at 18 to 1.
+        stacks = [40] * 8
+        stacks[BB], stacks[UTG1] = 23.4, 1.33
+        a = A.advise(tournament(stacks, BB, "64s", acts=[(UTG1, "allin", None)], left=100, plan="allin"))
+        self.assertEqual((verb(a), a["headline"]["follow"]), ("CALL", {"kind": "call"}))
+        self.assertIn("a good price is never folded", source(a))
+        self.assertIn("a price like this is never folded", a["reason"])
+        self.assertNotRegex(a["reason"], r"\d\.\d{2,}bb")             # "an all-in of 1.3bb", not 1.32833bb
+        # on the bubble with the stack over the sit-out line: kings are not folded for a ninth of the stack
+        a = A.advise(tournament([1.9, 7.8], 1, "KhKd", acts=[(0, "allin", None)], left=151, plan="allin"))
+        self.assertEqual(verb(a), "CALL")
+        # a call for a third of the stack or more stays the chart's: T8s with 6bb against a 3bb all-in
+        stacks = [20] * 8
+        stacks[BB], stacks[BTN] = 6, 3
+        a = A.advise(tournament(stacks, BB, "T8s", acts=[(BTN, "allin", None)], plan="allin"))
+        self.assertEqual(source(a).split(" \u00b7 ")[-1], "all-in or fold table")
+
+    def test_a_fold_made_by_a_rule_shows_no_all_in_gain_beside_it(self):
+        # a raise and a re-raise in front, hero deep with A8o: "fold everything except the very top", while the
+        # engine's reference number for a 75bb all-in can be a gain.  The tile would say "all-in".
+        with engine_says("FOLD", "clear", why=["a raise and a re-raise in front: fold everything except the very "
+                                               "top of your range"],
+                         numbers=["3-bettor's range ~3.0% [KK+]; your equity 30%",
+                                  "shove EV +0.66bb vs folding; both fold 83%; when called you have 25%"]):
+            a = A.advise(tournament([75] * 8, HJ, "A8o", acts=[(UTG1, "raise", 2.2), (LJ, "raise", 6.6)]))
+        self.assertEqual(verb(a), "FOLD")
+        self.assertEqual([t["label"] for t in a["tiles"]], ["Their range"])
+        # a fold the number backs keeps it: the solver decides there
+        with engine_says("FOLD", "standard", numbers=["re-shove EV +0.08bb vs folding (chip EV); everyone folds 60%; "
+                                                      "when called you have 40%"]):
+            a = A.advise(tournament([20] * 8, BTN, "KQo", acts=[(CO, "raise", 2)]))
+        self.assertIn("All-in against folding", [t["label"] for t in a["tiles"]])
 
 
 if __name__ == "__main__":

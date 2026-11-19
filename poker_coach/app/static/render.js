@@ -98,7 +98,10 @@
      split        null | [seat, ...]      a split pot is being ticked together (three or more at a showdown)
      awardTiers   [[seat], ...]           winners already chosen when a side pot needs another
      setupMode    "tournament" | "spin" | "aof"    the form shown on first run
+     grace        true for the moment after the table changed (the controller sets it): the panel that says
+                  where the tournament stands stays, dimmed, until the new answer is in or the moment is over
      toast        {text, fix, undo, redo, action: {label, send}} | null     shown instead of view.toast; null hides both
+                  (stay: true = it does not go away by itself: news of the saved files after a start)
      fieldError   {fk, text, fix, value} | null    a value the server refused: drawn under the open field
                                                    with that data-fk, and the field is marked
      menuByKey    true when the seat menu was opened by its digit (the controller keeps it)
@@ -792,13 +795,16 @@
     </div>`;
   }
 
-  function adviceHtml(view, advice, ui) {
+  // `before`: the answer for the table as it was a moment ago, while the new one is on its way and only
+  // for that moment (see renderParts). Of it only "where the tournament stands" is drawn, dimmed.
+  function adviceHtml(view, advice, ui, before) {
     const content = slabContent(view, advice, ui);
-    const where = contextHtml(advice);
+    const where = advice ? contextHtml(advice) : before ? contextHtml(before).replace('class="panel where"', 'class="panel where old"') : "";
     const why = whyHtml(advice, content.live);
     const chart = content.live ? chartHtml(advice.chart) : "";
     // Narrow screens: one line that opens the reasons and the chart as a sheet.
-    const firstLine = content.live ? advice.reason : ((advice && advice.context && (advice.context.fold_clock || advice.context.stage)) || "");
+    const stands = (advice || before || {}).context || {};
+    const firstLine = content.live ? advice.reason : (stands.fold_clock || stands.stage || "");
     // The row is kept even when there is nothing to open, so the table below never moves (a toast also lands on it).
     const whyline = why || chart || where
       ? `<button class="whyline"${emit({ui: only({sheet: "why"})})}><span class="text">${prose(firstLine || "The reasons")}</span>` +
@@ -1536,8 +1542,10 @@
     const save = `<button class="menu-btn" data-save data-fk="seat-save" title="Save what you typed (Enter in a field does the same)" disabled>Save</button>`;
     const popFocus = inHand ? ' tabindex="-1" data-autofocus' : "";
     const away = seat.status === "away";
-    const sit = `<button class="menu-btn"${emit({op: "set_status", seat: n, status: away ? "active" : "away"})}>${away ? "Sit back" : "Sit out"} ${keycap("O")}</button>`;
-    const button = `<button class="menu-btn"${seat.is_button ? " disabled" : ""}${emit({op: "set_button", seat: n})}>Button ${keycap("D")}</button>`;
+    // (like the keys O and D after a seat digit, and like Bust and Clear below: the menu closes with it,
+    //  so the bar is no longer aimed at this seat and the seats under the menu can be clicked again)
+    const sit = `<button class="menu-btn" data-fk="seat-sit"${emit({op: "set_status", seat: n, status: away ? "active" : "away", ui: closed})}>${away ? "Sit back" : "Sit out"} ${keycap("O")}</button>`;
+    const button = `<button class="menu-btn" data-fk="seat-button"${seat.is_button ? " disabled" : ""}${emit({op: "set_button", seat: n, ui: closed})}>Button ${keycap("D")}</button>`;
     // At a showdown the menu can also name this player the winner.
     const showdown = view.hand && view.hand.needs === "result" && seat.in_hand && !seat.folded;
     const won = showdown
@@ -2198,8 +2206,11 @@
   function renderParts(view, advice, ui) {
     ui = ui || {};
     // An answer belongs to one revision of the table. One for another revision (the table has changed
-    // and the new answer is on its way) is not drawn anywhere: not its words, its reasons, its chart,
-    // its warnings, nor what it said about the stage. The slab says "Updating" until the new one is in.
+    // and the new answer is on its way) is not drawn: not its words, its reasons, its numbers, its chart
+    // nor its warnings. The slab says "Updating" until the new one is in. One part is kept for the
+    // moment an answer usually takes (ui.grace, set by the controller, under half a second): where the
+    // tournament stands (stage, gear, fold clock), dimmed, so that panel does not blink at every key.
+    const before = advice && view && advice.rev !== view.rev && ui.grace ? advice : null;
     if (advice && view && advice.rev !== view.rev) advice = null;
     const setup = view && view.setup;                         // the server's own defaults for the first form, if any
     if (view && view.settings && view.settings.keys) keyMap = view.settings.keys;
@@ -2209,6 +2220,9 @@
     if (view && !view.table && !view.first_run && !ui.viewError) {
       ui = Object.assign({}, ui, {viewError: {message: "The program could not show the table.", fix: "Undo takes back the last change."}});
     }
+    // (what the program has to say with this view, such as a saved file that could not be read and was
+    //  set aside: it is said on the first-run form too, where a damaged file leaves the user)
+    const said = view && view.toast ? view.toast : null;
     if (view && (!view.table || view.first_run)) view = null; // nothing recorded yet: the first-run form
     const app = document.getElementById("app");
 
@@ -2223,7 +2237,7 @@
     app.className = "app" + (view ? "" : " first") + (view && view.deck === "four-colour" ? " deck-four" : "");
     put("header", headerHtml(view, ui, mode, can));
     if (view) {
-      const adviceParts = adviceHtml(view, advice, ui);
+      const adviceParts = adviceHtml(view, advice, ui, before);
       part("advice").dataset.panel = adviceParts.panel;
       put("advice", adviceParts.html);
       part("table").classList.toggle("aof", isAof(view));
@@ -2242,7 +2256,7 @@
     }
     ["advice", "table", "line", "actions"].forEach((name) => { part(name).hidden = !view; });
     part("first").hidden = !!view;
-    const toast = toastHtml(view, ui);
+    const toast = toastHtml(view || (said ? {toast: said} : null), ui);
     sheetToast = ui.sheet ? toast : "";
     put("overlay", overlayHtml(view, advice, ui, mode));
     put("toast", ui.sheet ? "" : toast);

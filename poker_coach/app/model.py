@@ -948,7 +948,10 @@ class Session:
             self._dirty.add(name)                           # the next save writes the main file again
             return content2
         if status == "bad":
-            self._notices.append(f"{file} could not be read and was set aside as {aside}. This is a new table")
+            # app.json holds only what the screen looks like (the mode, chips or big blinds, the deck): no table is lost with it
+            lost = "Your tables are as they were; the mode and how numbers are shown start as usual" if name == "app" \
+                else "This is a new table"
+            self._notices.append(f"{file} could not be read and was set aside as {aside}. {lost}")
         return None
 
     @staticmethod
@@ -2655,9 +2658,14 @@ class Session:
         if hand["events"][index].get("auto"):
             raise ModelError("That action was not typed: it follows from the others.",
                              "Change the action that caused it.")
+        was_in = HERO not in replay(hand).folded
         events = copy.deepcopy(hand["events"])
         del events[index]
         self._rebuild(hand, events)
+        if was_in and HERO in replay(hand).folded:
+            # his own action was deleted and players behind him have acted: on the record he was passed by.
+            # Nothing changes without a word, least of all hero's own hand
+            self._say(f"Without that action you are folded on the record. {key_for('undo')} brings it back")
         self._after_action(hand)
 
     def _event_index(self, hand: dict, a: dict) -> int:

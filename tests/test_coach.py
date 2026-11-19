@@ -640,6 +640,46 @@ class Preflop(unittest.TestCase):
         theirs = pushfold.solve_reshove(whole, 6, 4, 2.0, Prizes(), opener_range=parse_range("22+, A2s+, KTs+, ATo+"))
         self.assertEqual(ours.ev, theirs.ev)
 
+    def test_two_players_who_are_in_for_hero_s_stack_are_two_all_ins(self):
+        # The hijack is all-in for 24.7bb and the small blind re-raises to 74bb: hero in the big blind, with
+        # 15.5bb, can call all-in or fold.  It was priced as an all-in of his own with the second player
+        # folding: "shove EV +40bb" for a 15bb stack, and +12bb beside a fold of Q4o.
+        stacks = [40, 40, 24.7, 40, 40, 90, 15.5]
+        acts = [(2, "allin", 0), (5, "raise", 74.2)]
+        for hand, action in (("Q4o", "FOLD"), ("JJ", "CALL"), ("AA", "CALL")):
+            adv = self.play(stacks, 6, hand, acts, left=260)
+            self.assertEqual(adv.action, action, hand)
+            self.assertTrue(any("equity vs both ranges" in line for line in adv.numbers), adv.numbers)
+            self.assertFalse(any("shove EV" in line for line in adv.numbers), adv.numbers)
+        # the price is the pot hero can win: of a bigger all-in only what his own stack matches.  The big blind
+        # with 9.6bb against all-ins of 65, 30 and 20bb puts in 8.6bb to win about 31: 23%, not 9%
+        adv = self.play([65, 30, 20, 40, 40, 40, 40, 40, 9.6], 8, "QJs", [(0, "allin", 0), (1, "allin", 0), (2, "allin", 0)])
+        def need(adv):
+            return int(re.search(r"need about (\d+)%", " | ".join(adv.numbers)).group(1))
+
+        self.assertEqual(adv.action, "FOLD")
+        self.assertTrue(20 <= need(adv) <= 26, adv.numbers)
+        # hero covers both: the whole of each all-in is in his pot, as before
+        adv = self.play([20, 30, 40, 40, 40, 40, 40, 80], 7, "KK", [(0, "allin", 0), (1, "allin", 0)])
+        self.assertEqual(adv.action, "CALL")
+        self.assertTrue(34 <= need(adv) <= 42, adv.numbers)
+
+    def test_a_raise_over_an_all_in_is_not_a_re_raise_over_a_full_raise(self):
+        # under the gun is all-in for 6bb and the cutoff raises to 15bb: the cutoff holds the hands that play
+        # against a 6bb all-in (about one hand in six), not the 3% that re-raise an early raise; and he still
+        # decides when hero moves in (the all-in player is asked last, he is in whatever happens)
+        stacks = [6, 40, 40, 40, 40, 40, 40, 40]
+        acts = [(0, "allin", 0), (4, "raise", 15)]
+        got = {hand: self.play(stacks, 5, hand, acts, left=400) for hand in ("QQ", "AKo", "TT", "72o")}
+        self.assertEqual({hand: adv.action for hand, adv in got.items()},
+                         {"QQ": "ALL-IN", "AKo": "ALL-IN", "TT": "FOLD", "72o": "FOLD"})
+        self.assertTrue(any("3-bettor's range ~1" in line for line in got["QQ"].numbers), got["QQ"].numbers)   # 10 to 19%
+        ev = [line for line in got["72o"].numbers if "shove EV" in line][0]
+        self.assertIn("shove EV -", ev)                                 # 72o for 40bb is a loss, not dead money won
+        # a re-raise over an ordinary raise is read as before
+        adv = self.play([40] * 8, 5, "QQ", [(0, "raise", 2.2), (4, "raise", 7)], left=400)
+        self.assertTrue(any("3-bettor's range ~3" in line or "3-bettor's range ~4" in line for line in adv.numbers), adv.numbers)
+
 
 class Postflop(unittest.TestCase):
     def go(self, hero, board, pot, to_call=0.0, stack=40.0, vs="call:BB", line="", **kw):
@@ -748,6 +788,28 @@ class Postflop(unittest.TestCase):
             villains.append(Villain(w, "unknown", [], label))
         return advise_postflop(PostflopSpot(tuple(parse_cards(hero)), parse_cards(board), pot, 0.0, stack, None,
                                             villains, in_position, pfr, bb=bb))
+
+    def test_a_strong_draw_against_several_players_is_a_bet_not_nothing_strong(self):
+        # the review's own table: QhJh on Th9h2c against two players was a check "multi-way with nothing strong"
+        # beside "21 outs, 54% equity".  The playbook bets real hands and strong draws multi-way.
+        two = ["open:UTG", "call:BB"]
+        adv = self.first_to_bet("QhJh", "Th9h2c", 8, 31, two)
+        self.assertTrue(adv.action.startswith("BET ") and adv.action.endswith("(semi-bluff)"), adv.action)
+        self.assertIn("a strong draw (~21 outs", adv.why[0])
+        self.assertTrue(self.first_to_bet("Ah5h", "Th9h2c", 8, 31, two).action.endswith("(semi-bluff)"))   # 12 outs
+        # out of position it is a check, and the check does not call the draw "nothing"
+        adv = self.first_to_bet("QhJh", "Th9h2c", 8, 31, two, in_position=False)
+        self.assertEqual(adv.action, "CHECK")
+        self.assertIn("a draw (~21 outs) against several players", adv.why[0])
+        # a draw of 8 to 11 outs checks, with the same words; no draw at all is still "nothing strong"
+        adv = self.first_to_bet("8c7d", "Th9h2c", 8, 31, two)
+        self.assertEqual(adv.action, "CHECK")
+        self.assertIn("a draw (~8 outs) against several players", adv.why[0])
+        self.assertIn("nothing strong", self.first_to_bet("AcQd", "Th9h2c", 8, 31, two).why[0])
+        # under ICM pressure nothing is bet as a bluff into two players
+        spot = PostflopSpot(tuple(parse_cards("QhJh")), parse_cards("Th9h2c"), 8, 0.0, 31, None,
+                            [Villain(range_from_spec(x, 9, "unknown", 3)[0]) for x in two], True, False, risk_premium=0.08)
+        self.assertEqual(advise_postflop(spot).action, "CHECK")
 
     def test_l5_a_strong_made_hand_bets_for_value_or_checks_to_call(self):
         sets = "KK, TT, 77, 44, AKs, KTs, QJs, J9s, 98s"
