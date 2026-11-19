@@ -670,15 +670,41 @@ class Preflop(unittest.TestCase):
         # decides when hero moves in (the all-in player is asked last, he is in whatever happens)
         stacks = [6, 40, 40, 40, 40, 40, 40, 40]
         acts = [(0, "allin", 0), (4, "raise", 15)]
-        got = {hand: self.play(stacks, 5, hand, acts, left=400) for hand in ("QQ", "AKo", "TT", "72o")}
+        got = {hand: self.play(stacks, 5, hand, acts, left=400) for hand in ("QQ", "AKo", "TT", "ATo", "K5s", "72o")}
+        # ... so with 45bb or less a hand that is ahead of those hands moves all-in when the number clears twice
+        # the usual bar: tens earn about +7bb here (dead money: the 6bb all-in and the 15bb raise), and were
+        # folded while only JJ+ and ace-king ever played against "a raise and a re-raise"
         self.assertEqual({hand: adv.action for hand, adv in got.items()},
-                         {"QQ": "ALL-IN", "AKo": "ALL-IN", "TT": "FOLD", "72o": "FOLD"})
+                         {"QQ": "ALL-IN", "AKo": "ALL-IN", "TT": "ALL-IN", "ATo": "FOLD", "K5s": "FOLD", "72o": "FOLD"})
+        self.assertTrue(any("raised over it" in line for line in got["TT"].why), got["TT"].why)
+        self.assertFalse(any("raised over it" in line for line in got["QQ"].why), got["QQ"].why)
+        # a re-raise over a full raise keeps the list: tens fold there, whatever the number
+        self.assertEqual(self.play([40] * 8, 5, "TT", [(0, "raise", 2.2), (4, "raise", 7)], left=400).action, "FOLD")
+        # and deeper than 45bb the rule does not apply
+        deep = [6] + [70] * 7
+        self.assertEqual(self.play(deep, 5, "TT", acts, left=400).action, "FOLD")
         self.assertTrue(any("3-bettor's range ~1" in line for line in got["QQ"].numbers), got["QQ"].numbers)   # 10 to 19%
         ev = [line for line in got["72o"].numbers if "shove EV" in line][0]
         self.assertIn("shove EV -", ev)                                 # 72o for 40bb is a loss, not dead money won
         # a re-raise over an ordinary raise is read as before
         adv = self.play([40] * 8, 5, "QQ", [(0, "raise", 2.2), (4, "raise", 7)], left=400)
         self.assertTrue(any("3-bettor's range ~3" in line or "3-bettor's range ~4" in line for line in adv.numbers), adv.numbers)
+
+    def test_a_fold_ahead_of_the_price_of_a_call_is_marked_close(self):
+        # queens raised under the gun, re-raised by the big blind, 35bb: on chips a call; with prizes counted the
+        # hand is ahead of the price and the risk premium by less than the 10 points that make it a call
+        acts = [(0, "raise", 2.2), (7, "raise", 8.4)]
+        self.assertEqual(self.play([35] * 8, 0, "QQ", acts).action, "CALL")
+        adv = self.play([35] * 8, 0, "QQ", acts, left=400)
+        self.assertEqual((adv.action, adv.confidence), ("FOLD", "close"))
+        self.assertTrue(any(line.startswith("CALL is close: ") and "with the prizes counted" in line for line in adv.alt),
+                        adv.alt)
+        need, have, prizes = adv.data["close_call"]
+        self.assertTrue(0.03 <= have - need < 0.10 and prizes, adv.data)
+        # on the bubble the hand is behind the price with the premium: a fold, and not a close one by this rule
+        adv = self.play([35] * 8, 0, "QQ", acts, left=152)
+        self.assertEqual(adv.action, "FOLD")
+        self.assertNotIn("close_call", adv.data)
 
     # ---- the verifier's engine candidates (E3), one test each -----------------------------------
 

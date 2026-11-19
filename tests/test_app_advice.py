@@ -3373,5 +3373,37 @@ class FinalGate(unittest.TestCase):
             self.assertIn("their", A.plain(theirs))
 
 
+class LastCorrections(unittest.TestCase):
+    """Two answers the final gate left open, corrected in the engine afterwards."""
+
+    def test_a_fold_that_is_ahead_of_the_price_is_a_close_fold_and_names_the_call(self):
+        # queens raised under the gun and re-raised by the big blind, 35bb, 250 places from the money: 45%
+        # against a call that needs 34% and a few points of risk premium.  Under the 10 points that make it a
+        # call, so a fold, but a close one in every style, and the note names the call (not the all-in's number)
+        for style in ("survive", "cash", "maxev"):
+            with self.subTest(style=style):
+                a = A.advise(tournament([35] * 8, UTG, "QsQd", [(UTG, "raise", 2.2), (BB, "raise", 8.4)], style=style))
+                self.assertEqual(a["headline"]["verb"], "FOLD")
+                self.assertEqual(a["headline"]["sure"], "close")
+                close = [w["text"] for w in a["warnings"] if w["code"] == "close"]
+                self.assertEqual(len(close), 1, a["warnings"])
+                self.assertRegex(close[0], r"^Close: the call needs \d+% with the prizes counted and you have \d+%; "
+                                           r"calling is nearly as good\.")
+                self.assertNotIn("all-in earns", close[0])
+
+    def test_an_all_in_and_a_raise_over_it_is_not_only_for_premiums(self):
+        # under the gun is all-in for 6bb, the cutoff raises to 15bb, the user has tens on the button with 40bb
+        stacks, acts = [6] + [40] * 7, [(UTG, "allin", 6), (CO, "raise", 15)]
+        a = A.advise(tournament(stacks, BTN, "TsTd", acts))                       # survive: a clear edge stands
+        self.assertEqual(a["headline"]["verb"], "ALL-IN")
+        self.assertIn("raised over it", a["reason"])
+        self.assertIn("CLEAR EDGE", a["source"])
+        a = A.advise(tournament(stacks, BTN, "TsTd", acts, style="cash"))         # cash first: the chart's fold
+        self.assertEqual(a["headline"]["verb"], "FOLD")
+        self.assertIn("SURVIVAL FOLD (engine: ALL-IN", a["source"])
+        a = A.advise(tournament(stacks, BTN, "AsTd", acts))                       # not ahead of the raiser's hands
+        self.assertEqual(a["headline"]["verb"], "FOLD")
+
+
 if __name__ == "__main__":
     unittest.main()

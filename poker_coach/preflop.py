@@ -1319,6 +1319,7 @@ def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
                 adv.confidence = "close"
                 adv.alt.append(f"CALL is close: {_pct(eq)} against their range, and the call needs {_pct(need + rp)}"
                                + (" with the prizes counted" if rp >= 0.005 else ""))
+                adv.data.update(close_call=(need + rp, eq, rp >= 0.005))
     else:
         # QQ+ and AK never fold to one re-raise this deep.  In position they call; out of position
         # with 60bb or less they move all-in when that all-in earns, otherwise they call too.

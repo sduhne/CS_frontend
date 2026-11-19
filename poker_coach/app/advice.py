@@ -1488,7 +1488,13 @@ def add_spot_warnings(seen: Seen, money: Money, before: Before, adv, play: Play)
 def close_warning(seen: Seen, facts: dict, before: Before, money: Money | None, play: Play) -> dict:
     """The engine calls its answer close.  The last sentence says why the headline is what it is."""
     line = engine_line(seen, facts, before)
-    if "need" in facts and "equity" in facts:
+    if play.kind in ("fold", "check") and facts.get("close_call"):
+        # a fold of a hand that is ahead of the price of a call (queens re-raised after an early raise): close
+        # to the call, not to the all-in whose number the engine also gives
+        need, have, prizes = facts["close_call"]
+        text = (f"Close: the call needs {percent(need)}{' with the prizes counted' if prizes else ''} and you "
+                f"have {percent(have)}; calling is nearly as good.")
+    elif "need" in facts and "equity" in facts:
         text = f"Close: you need {percent(facts['need'])} and have {percent(facts['equity'])}."
     elif play.kind == "call" and big_blind_call_numbers(facts):
         need, have, _close = big_blind_call_numbers(facts)
