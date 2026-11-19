@@ -24,6 +24,11 @@ from .ranges import (PLAYER_TYPES, norm_type, parse, play_order, threebet_range,
 
 STREETS = {3: "flop", 4: "turn", 5: "river"}
 
+# Facing a bet: the safety points added to the pot odds are scaled by the call as a share of the
+# pot before the bet.  Nothing is added up to _SMALL_CALL, all of it from _FULL_MARGIN_CALL.
+_SMALL_CALL = 0.10
+_FULL_MARGIN_CALL = 0.50
+
 
 @dataclass
 class Villain:
@@ -346,6 +351,13 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
             margin += 0.04
         if multiway:
             margin += 0.03
+        # the safety points shrink with the price: all of them from a call of about half the
+        # pot, none (and no ICM points) for a call of a tenth of the pot or less, so that such
+        # a call is never folded with the equity for the plain pot odds
+        share = bet_frac if bet_frac is not None else 1.0
+        margin *= min(1.0, max(0.0, (share - _SMALL_CALL) / (_FULL_MARGIN_CALL - _SMALL_CALL)))
+        if share <= _SMALL_CALL:
+            icm_add = 0.0
         implied = 0.0
         if street != "river" and (any_draw or strength >= 6) and eff_behind > to_call:
             implied = min(eff_behind - to_call, 0.5 * (pot + to_call))
@@ -390,7 +402,7 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
             adv.why.append("you have the equity for the price against the hands that bet this way")
             if strong_draw and can_raise and not multiway:
                 adv.alt.append("raising as a semi-bluff is also strong with this much equity")
-            if strength <= 4 and street != "river" and not any_draw:
+            if strength <= 4 and street != "river" and not any_draw and spot.hero_stack > to_call * 1.05:
                 adv.warnings.append("a bluff-catcher: fold to a big bet on the next street unless you improve")
             elif any_draw and strength <= 3:
                 adv.warnings.append("you are drawing: fold the river if you miss, value-bet if you hit")
@@ -401,8 +413,11 @@ def advise_postflop(spot: PostflopSpot) -> Advice:
             if strength >= 5 and spr <= 1.2:
                 adv.warnings.append("stack-to-pot ratio is tiny: folding a strong hand here is only right "
                                     "against a player who never bluffs")
-            if eq >= need and icm_add > 0:
-                adv.why.append("on chips alone this is a call; ICM / survival is what makes it a fold")
+            if eq >= need:
+                if icm_add >= 0.005 and eq >= target - icm_add:
+                    adv.why.append("on chips alone this is a call; ICM / survival is what makes it a fold")
+                elif margin >= 0.005:
+                    adv.why.append("the pot odds alone are met; the safety margin is what makes it a fold")
         if strength >= 5 and spr <= 1.5 and adv.action == "FOLD" and not icm_tight and eq >= need - 0.05:
             adv.action = "CALL"
             adv.confidence = "close"
