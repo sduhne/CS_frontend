@@ -21,7 +21,8 @@ How an answer is made, top to bottom of this file:
        tournament, all-in plan   the all-in or fold tables (binary), the engine as a second line
        spin                      the spin tables to 16bb (20bb small blind and heads-up), the engine on chips above
        all-in or fold            aof.decide
-       after the flop            postflop.advise_postflop, with roles and lines from the recorded actions
+       after the flop            postflop.advise_postflop, with roles and lines from the recorded actions,
+                                 then the adapter's own rules (below)
 
 5. **The survival guard** (tournament, full plan, before the money).  A play
    that can lose a third or more of the chips hero has left before the flop
@@ -38,14 +39,29 @@ How an answer is made, top to bottom of this file:
    desperate stack, near the bubble when the fold clock says "cannot fold",
    with a read that makes the play safer, while re-entry is open and in the
    Max EV style.
-6. **The answer**: headline (verb, size, tone, how sure, the intent that
+6. **After the flop.**  The engine is asked about the opponents who have a
+   hand (a player sitting out has none), each with the range of the way he
+   came in (``preflop_roles``: first raise, raise over callers, re-raise,
+   all-in, called a raise, a re-raise or an all-in ...), narrowed by what he
+   really did since (the check of a player who has not acted yet is only an
+   assumption: the spot line names it and the answer is provisional).  The
+   stack it plays for is the deepest that can still call hero.  Then, in
+   this order: no pair and no draw folds to a bet of half the pot from a
+   player who did not raise before the flop; the playbook's one-pair rule
+   (not against lag and maniac, not with the stack committed when the street
+   began); before the money a close call or bluff gives way to the quieter
+   play, as before the flop; and in the all-in plan the free-flop rule.
+7. **The answer**: headline (verb, size, tone, how sure, the intent that
    carries it out), one sentence of reason, tiles, what flips it, plan lines,
-   warnings, the source line, the range chart, the context.
+   warnings, the source line, the range chart, the context.  An all-in shows
+   the amount that can be matched; a bet after the flop is rounded to the
+   table's chips.
 
 Besides the keys of the build spec the answer carries ``icm`` (off,
-estimated, on, exact) and ``guard`` (agrees, survival, edge, close, off,
-none).  The user's own notes on the opponents in the pot are shown among the
-warnings.
+estimated, on, exact), ``guard`` (agrees, survival, edge, close, off, none)
+and ``provisional`` ("if BB and CO check" while players in front of hero have
+not acted after the flop, else "").  The user's own notes on the opponents in
+the pot are shown among the warnings.
 
 The engine is the baseline, not the last word: everything here is for study
 and play money.
@@ -2355,7 +2371,9 @@ def after_the_flop(seen: Seen, money: Money | None) -> Play:
                 bettor_raised_preflop=main == entered.last_raiser, hero_bet=hero_bet_this_street(seen),
                 pots_behind=pots_behind_at_street_start(seen, main), can_lose=can_lose,
                 least_pots_behind=min(pots_behind_at_street_start(seen, seat) for seat in acting),
-                aggressive_behind=any(seen.types[seen.order.index(seat)] in AGGRESSIVE_TYPES for seat in acting))
+                aggressive_behind=any(seen.types[seen.order.index(seat)] in AGGRESSIVE_TYPES for seat in acting),
+                pots_after_call=0.0 if len(everyone) > 1 else
+                min(state.stack[HERO] - to_call, state.stack[main]) / max(state.pot_total() + to_call, 1e-9))
     play = play_after_flop(seen, adv, made, len(board), told, opponents)
     play.source = "after the flop: equity against an estimated range, a rule-based line"
     if unknown:
@@ -2385,6 +2403,7 @@ class Told:
     can_lose: float             # the chips hero can still put in and have matched
     least_pots_behind: float = 0.0      # the same against the shortest opponent who can still act ...
     aggressive_behind: bool = False     # ... and whether one of them is tagged lag or maniac
+    pots_after_call: float = 0.0        # heads-up: the pots behind with which the next street begins if hero calls
 
     @property
     def draw_street(self) -> bool:
@@ -2747,6 +2766,8 @@ def read_postflop_action(action: str, bb: float) -> tuple[str, str, float | None
 
 
 FOLD_TO_A_RAISE = "fold to a raise unless"      # the engine's warning under a thin value bet with top pair
+BLUFF_CATCHER = "a bluff-catcher"               # ... and under a call with a weak made hand: "fold to a big bet on
+                                                # the next street unless you improve"
 
 
 def play_after_flop(seen: Seen, adv, made: dict, board_cards: int, told: Told, opponents: list) -> Play:
@@ -2778,6 +2799,8 @@ def play_after_flop(seen: Seen, adv, made: dict, board_cards: int, told: Told, o
     for text in adv.warnings:
         if FOLD_TO_A_RAISE in text and not folds_to_a_raise(made, told):
             continue                            # the next answer would not fold: do not announce it
+        if BLUFF_CATCHER in text:
+            text = bluff_catcher_line(told)     # the same: only the fold that will really follow is announced
         play.warnings.append(warning("engine", sentence(plain(text))))
     if adv.confidence == "close":
         text = f"Close: you need {price.group(1)}% and have {price.group(2)}%." if price else \
@@ -2794,6 +2817,7 @@ def engine_alone(play: Play) -> str:
         if one["label"] in ("Equity", "Need / have"):
             one["note"] = "the engine alone"
     play.warnings = [w for w in play.warnings if w["code"] not in ("engine", "close")]
+    play.facts["by_rule"] = True
     return summary
 
 
@@ -2811,6 +2835,22 @@ def folds_to_a_raise(made: dict, told: Told) -> bool:
     """
     return not told.aggressive_behind and not has_a_draw(made, told) \
         and told.least_pots_behind >= PLAYBOOK_POTS_BEHIND
+
+
+def bluff_catcher_line(told: Told) -> str:
+    """The warning under a call with a weak made hand, said so that the next answer keeps it.
+
+    The engine says "fold to a big bet on the next street unless you
+    improve", and then may well call that bet.  What this file does fold is
+    one pair facing a big river bet (``playbook_check``), so that is what a
+    call on the turn announces, heads-up, when the rule will apply on the
+    river: not against a player tagged lag or maniac, and with 1.5 pots or
+    more behind once the call is made.  Otherwise the line makes no promise.
+    """
+    if told.street == "turn" and told.ptype not in AGGRESSIVE_TYPES and told.pots_after_call >= PLAYBOOK_POTS_BEHIND:
+        return f"A bluff-catcher: fold the river to a bet of {percent(PLAYBOOK_BIG_BET)} of the pot or more " \
+               "unless you improve"
+    return "A bluff-catcher: it beats a bluff and nothing else"
 
 
 def no_pair_no_draw(play: Play, made: dict, told: Told) -> None:
@@ -2918,7 +2958,9 @@ def free_flop_rule(seen: Seen, engine: Play, made: dict, pot: float, can_lose: f
     tiny price (a tenth of the pot or less) when the engine calls.
     """
     strong = made["strength"] >= 4 or (made["outs"] >= FREE_FLOP_OUTS and seen.state.phase != "river")
-    second = f"The full engine: {engine_summary(engine)}."
+    # what the plan "All moves" answers here: the engine's play with its numbers, or the rule that replaced it
+    second = f"The plan with all moves: {engine.verb}." if engine.facts.get("by_rule") else \
+        f"The full engine: {engine_summary(engine)}."
     holds = tile("You hold", made["made"].split(" (")[0], made["texture"]["label"])
     source = "all-in plan: the playbook's rule"
     if not strong:
@@ -3172,7 +3214,9 @@ def headline(seen: Seen, play: Play) -> dict:
         if box is None:                         # the betting is not open for a raise: the call is what is left
             verb, kind = ("CALL", "call") if to_call > 0 else ("CHECK", "check")
         else:
-            to = max(box["min"], min(on_the_chips(seen, to), box["max"]))
+            if to < box["max"]:                 # (all the chips are all the chips: nothing to round)
+                to = on_the_chips(seen, to)
+            to = max(box["min"], min(to, box["max"]))
             if to >= box["max"]:
                 verb, kind = "ALL-IN", "allin"
             else:

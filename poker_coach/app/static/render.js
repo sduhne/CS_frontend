@@ -410,7 +410,8 @@
     let parts;
     if (view.mode === "spin") parts = [levelStat(view, ui), opponentsStat(view), spinTally(view)];
     else if (view.mode === "aof") parts = [aofBlinds(view), opponentsStat(view), aofTally(view)];
-    else parts = [levelStat(view, ui), leftStat(view, ui), paidStat(view, ui), stagePill(view), averageStat(view, ui), styleStat(view)];
+    // (the style stands at the head of the slab, at every width: it is not repeated here)
+    else parts = [levelStat(view, ui), leftStat(view, ui), paidStat(view, ui), stagePill(view), averageStat(view, ui)];
     return `<div class="strip">${parts.join("")}</div>`;
   }
 
@@ -425,18 +426,23 @@
         aria-label="${esc(opts.fieldLabel)}" data-fk="edit-${name}" data-autofocus data-name="text"${badAttr(ui, "edit-" + name)}${emit(opts.send)}>` +
         `${fieldErrorHtml(ui, ["edit-" + name])}</span>`;
     }
-    return `<button class="value" aria-label="${esc(opts.label)}. Change" data-fk="value-${name}"${emit({ui: only({edit: name})})}>
+    return `<button class="value" aria-label="${esc(opts.label)}. Change" title="${esc(opts.label)}" data-fk="value-${name}"${emit({ui: only({edit: name})})}>
         <span class="eyebrow">${esc(opts.eyebrow)}</span>${opts.shown}</button>`;
   }
   function unset() { return '<span class="unset">Set</span>'; }
 
+  // Blinds are written the short way: 1,000 / 2,000 is "1k / 2k" and 1,500 "1.5k"; 300, 1,250 and 12.5k stay as they are.
+  function fmtBlind(n) {
+    if (n != null && n >= 1000 && n < 10000 && n % 100 === 0) return dropZeros((n / 1000).toFixed(1)) + "k";
+    return fmtShort(n);
+  }
   function blindsText(level) {
     if (!level || level.bb == null) return "?";
-    return `${fmtShort(level.sb)} / ${fmtShort(level.bb)}`;
+    return `${fmtBlind(level.sb)} / ${fmtBlind(level.bb)}`;
   }
   function anteText(level) {
     if (!level || !level.ante || level.ante_kind === "none") return "no ante";
-    return level.ante_kind === "bb" ? `BB ante ${fmtShort(level.ante)}` : `ante ${fmtShort(level.ante)}`;
+    return level.ante_kind === "bb" ? `BB ante ${fmtBlind(level.ante)}` : `ante ${fmtBlind(level.ante)}`;
   }
   // What the user would type to get the current blinds.
   function typedLevel(level) {
@@ -457,7 +463,7 @@
       fieldLabel: "Blinds: small blind / big blind / ante",
       send: {op: "set_level", ui: {edit: null}},
     });
-    return `<div class="stat">${stepper(MINUS, "Blinds down", {op: "level_down"})}${value}` +
+    return `<div class="stat level">${stepper(MINUS, "Blinds down", {op: "level_down"})}${value}` +
            `${stepper("+", "Blinds up", {op: "level_up"}, level.due)}</div>`;
   }
 
@@ -477,7 +483,7 @@
 
   function paidStat(view, ui) {
     const paid = view.strip.paid;
-    return `<div class="stat">` + stripValue(ui, "paid", {
+    return `<div class="stat paid">` + stripValue(ui, "paid", {
       eyebrow: "Paid", short: true,
       shown: paid == null ? unset() : `<span class="num v">${fmtChips(paid)}</span>`,
       label: paid == null ? "Places paid: not set" : `${fmtChips(paid)} places paid`,
@@ -520,15 +526,6 @@
   function nextOf(choices, value) {
     const at = choices.findIndex((choice) => choice.value === value);
     return choices[(at + 1) % choices.length].value;
-  }
-
-  // One click moves to the next style.
-  function styleStat(view) {
-    const style = view.strip.style;
-    const next = nextOf(CHOICES.style, style);
-    return `<div class="stat from-style"><button class="value" aria-label="Style: ${esc(labelOf(CHOICES.style, style))}. Change"` +
-           `${emit({op: "set_config", key: "style", value: next})}><span class="eyebrow">Style</span>` +
-           `<span class="text">${esc(labelOf(CHOICES.style, style))}</span></button></div>`;
   }
 
   // A row of either-or buttons. `send` turns a value into the event it sends.
@@ -697,7 +694,9 @@
     const look = tile.sign > 0 ? " win" : tile.sign < 0 ? " loss" : "";
     const length = String(tile.value || "").length;
     const fit = length > 11 ? " xlong" : length > 7 ? " long" : "";
-    return `<div class="tile"><div class="eyebrow">${esc(tile.label)}</div>
+    // A value made of words ("pocket pair below top card") gets the whole row and may take two lines.
+    const words = length > 11 && /[a-z]{3}/i.test(String(tile.value));
+    return `<div class="tile${words ? " wide" : ""}"><div class="eyebrow">${esc(tile.label)}</div>
       <div class="num${look}${fit}">${esc(tile.value)}</div>
       ${tile.note ? `<div class="sub">${esc(tile.note)}</div>` : ""}</div>`;
   }
@@ -2156,7 +2155,21 @@
     moveFocus(ui, active, activeKey, typing);
     keepTyped(halfTyped);
     keepRefused(ui);
+    fitStrip();
     noteBar();
+  }
+
+  /* The strip never cuts a value in half. Its widths are chosen so the usual numbers fit (app.css); when
+     a row is too short all the same (six-digit blinds, five-digit fields), the parts that can be read
+     elsewhere leave it one after the other, until the rest fits: the average stack (settings), the
+     wordmark, the ante (the tooltip of the blinds), the places paid (settings; the pill counts from them). */
+  const GIVE_WAY = ["no-avg", "no-word", "no-ante", "no-paid"];
+  function fitStrip() {
+    const header = part("header");
+    const strip = header.querySelector(".strip");
+    GIVE_WAY.forEach((name) => header.classList.remove(name));
+    if (!strip) return;
+    for (let i = 0; i < GIVE_WAY.length && strip.scrollWidth > strip.clientWidth; i++) header.classList.add(GIVE_WAY[i]);
   }
 
   // What is typed and not sent yet, in every field on the page: a menu or a sheet that is drawn anew
@@ -2440,6 +2453,8 @@
     if (mounted) return;
     mounted = true;
     measureScrollBar();
+    window.addEventListener("resize", fitStrip);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitStrip);
     document.addEventListener("click", onClick);
     document.addEventListener("submit", onSubmit);
     document.addEventListener("change", onChange);

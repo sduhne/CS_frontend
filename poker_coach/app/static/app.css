@@ -26,6 +26,7 @@
 
 /* ---------- 2. Tokens ---------- */
 :root{
+  color-scheme:dark;                     /* the browser's own parts (scroll bars, the list of a select) follow the page */
   --ink:#0A0A0B;--panel:#151518;--line:#26262B;--line-strong:#3A3A42;
   --yellow:#FFD60A;--yellow-hover:#E6B800;
   --yellow-wash:#1E1A0B;                 /* hero's turn: 8% yellow on Ink, made solid */
@@ -57,6 +58,7 @@ button{cursor:pointer;background:none;border:0;padding:0;text-align:inherit}
 button:disabled{cursor:default}
 h1,h2,h3,p{margin:0}
 [hidden]{display:none!important}
+::selection{background:var(--white);color:var(--ink)}       /* selected text: white, as everything that is selected */
 :focus{outline:0}
 :focus-visible{outline:2px solid var(--white);outline-offset:2px;box-shadow:0 0 0 2px var(--ink)}
 .num{font-family:var(--display);font-weight:800;line-height:1;font-variant-numeric:tabular-nums lining-nums}
@@ -111,19 +113,19 @@ kbd{font:700 12px/1 var(--body);min-width:18px;height:18px;padding:0 4px;display
 
 .strip{grid-area:strip;display:flex;align-items:center;gap:6px;height:52px;min-width:0;
   border-top:1px solid var(--line);margin:0 calc(-1*var(--gut));padding:0 var(--gut)}
-.stat{display:flex;align-items:center;gap:4px;flex:none}
+.stat{display:flex;align-items:center;gap:2px;flex:none}
 .stat .v{font-size:20px;white-space:nowrap}
-.stat small{font:600 12px/1.2 var(--body);color:var(--soft);white-space:nowrap}
+.stat small{font:700 13px/1.2 var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--soft);white-space:nowrap}
 .stat .text{font:600 13px/1.2 var(--body);color:var(--white);white-space:nowrap}
 /* A strip value is a button: a click turns it into an input. */
 .value{min-height:44px;min-width:44px;padding:0 4px;border-radius:var(--r-in);display:flex;flex-direction:column;
   justify-content:center;gap:1px;transition:background-color .12s}
 button.value:hover{background:var(--line)}
 .value .row{display:flex;flex-direction:column;align-items:flex-start}      /* under 1024 the small print goes below the number */
-.value .row small{font-size:12px;line-height:1.15}
+.value .row small{line-height:1.1}
 .value .unset{display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px dashed var(--grey);border-radius:var(--r-pill);
   font:700 12px/1 var(--body);letter-spacing:.02em;text-transform:uppercase;color:var(--white)}
-.step{width:44px;height:44px;flex:none;border:1px solid var(--line-strong);background:var(--ink);border-radius:var(--r-ctl);
+.step{width:40px;height:44px;flex:none;border:1px solid var(--grey);background:var(--ink);border-radius:var(--r-ctl);
   font:800 24px/1 var(--display);color:var(--white);text-align:center;transition:border-color .12s,background-color .12s}
 .step:hover{border-color:var(--white)}
 .step:active{background:var(--line)}
@@ -134,10 +136,13 @@ button.value:hover{background:var(--line)}
 .pill.bubble{background:var(--yellow);color:var(--ink)}
 .pill.money{background:var(--win-tint);color:var(--win)}
 .pill.you{background:var(--white);color:var(--ink)}
+/* The pill that says how far the money is stays whole at every width; what gives way is listed in render.js (fitStrip). */
 .strip .stage{flex:none;padding:0 8px}
 .strip .in{width:132px}
 .strip .in.short{width:84px}
 .strip .from-avg,.strip .from-style{display:none}
+.header.no-avg .strip .from-avg,.header.no-ante .stat.level small,.header.no-paid .stat.paid{display:none}
+.header.no-word .word{display:none}
 
 /* ---------- 6. Advice ---------- */
 .advice{display:flex;flex-direction:column;gap:var(--gap);min-width:0}
@@ -199,6 +204,8 @@ button.whyline:hover{background:var(--panel)}
 .tile .num{font-size:36px;margin-top:4px;white-space:nowrap}
 .tile .num.long{font-size:26px;margin-top:9px;margin-bottom:5px}
 .tile .num.xlong{font-size:19px;margin-top:13px;margin-bottom:8px}
+.tile.wide{grid-column:1/-1}
+.tile.wide .num.xlong{font-size:22px;line-height:1.1;white-space:normal;margin-top:8px;margin-bottom:4px}
 .tile .sub{font-size:12px;color:var(--grey);margin-top:2px}
 .group{display:flex;flex-direction:column;gap:4px}
 .group ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
@@ -287,8 +294,8 @@ button.pod:hover{border-color:var(--grey)}
 .centre{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:6px}
 .pot{display:flex;align-items:baseline;gap:8px;height:26px;white-space:nowrap}
 .pot .num{font-size:var(--pot);line-height:26px}
-.pot small{font-size:12px;color:var(--grey)}
-.pots{font-size:12px;line-height:14px;color:var(--soft);white-space:nowrap;margin-top:-4px}
+.pot small{font:700 13px/1 var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--grey)}
+.pots{font:700 13px/14px var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--soft);white-space:nowrap;margin-top:-4px}
 .board{display:flex;gap:8px}
 .street{display:flex;gap:4px;padding:0 4px;margin:0 -4px;border-radius:6px}
 .table-tools{position:absolute;right:0;top:0}
@@ -298,18 +305,18 @@ button.pod:hover{border-color:var(--grey)}
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;flex:none}
 .card b{font:800 calc(var(--card-h)*.5)/.9 var(--display);letter-spacing:-.02em}
 .card .suit{width:calc(var(--card-h)*.3);height:calc(var(--card-h)*.3)}
-.card .so{font:700 calc(var(--card-h)*.24)/1 var(--body);height:calc(var(--card-h)*.3);color:#5A5A63;text-transform:lowercase}
+.card .so{font:700 calc(var(--card-h)*.24)/1 var(--body);height:calc(var(--card-h)*.3);color:var(--ink);text-transform:lowercase}
 .card.big{width:var(--hcard-w);height:var(--hcard-h);border-radius:calc(var(--hcard-w)*.13)}
 .card.big b{font-size:calc(var(--hcard-h)*.5)}
 .card.big .suit{width:calc(var(--hcard-h)*.3);height:calc(var(--hcard-h)*.3)}
 .card.big .so{font-size:calc(var(--hcard-h)*.24);height:calc(var(--hcard-h)*.3)}
-.card.slot{background:none;border:1.5px dashed var(--line-strong)}
+.card.slot{background:none;border:1.5px dashed var(--grey)}
 .card.slot.now{border:2px solid var(--white)}
 /* Suits: spades and clubs solid, hearts and diamonds drawn as outlines (the one-ink deck). */
 .suit{fill:currentColor;stroke:currentColor;stroke-width:0;stroke-linejoin:round;flex:none}
 .suit.open{fill:none;stroke-width:2.4}
 .txt{white-space:nowrap}
-.txt .suit{width:.8em;height:.8em;vertical-align:-.06em;margin-left:1px}
+.txt .suit{width:1em;height:1em;vertical-align:-.14em;margin-left:1px}      /* in a sentence a suit is as tall as its rank */
 /* The four-colour deck: these inks appear only inside a white card. */
 .deck-four .card.h{color:#B3121A}
 .deck-four .card.d{color:#1D4ED8}
@@ -339,7 +346,7 @@ button.pod:hover{border-color:var(--grey)}
 .actions .amount{flex:0 1 auto}
 .presets{display:flex;gap:6px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;padding:3px;margin:-3px}
 .presets::-webkit-scrollbar{display:none}
-.preset{flex:none;height:44px;min-width:44px;padding:0 10px;border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--ink);
+.preset{flex:none;height:44px;min-width:44px;padding:0 10px;border:1px solid var(--grey);border-radius:var(--r-pill);background:var(--ink);
   font:800 15px/1 var(--display);color:var(--white);text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums lining-nums;transition:border-color .12s}
 .preset:hover{border-color:var(--white)}
 .preset:active{background:var(--line)}
@@ -361,11 +368,11 @@ button.pod:hover{border-color:var(--grey)}
 .btn.tick[aria-checked=true]{border-color:var(--white)}
 .btn.tick[aria-checked=true] .box{background:var(--white);border-color:var(--white)}
 .field .unit{flex:none;font:700 12px/1 var(--display);color:var(--grey)}
-.btn{min-height:48px;min-width:44px;padding:0 8px;border-radius:var(--r-btn);border:1px solid var(--line-strong);background:var(--ink);color:var(--white);
+.btn{min-height:48px;min-width:44px;padding:0 8px;border-radius:var(--r-btn);border:1px solid var(--grey);background:var(--ink);color:var(--white);
   font:800 16px/1 var(--display);text-transform:uppercase;letter-spacing:.02em;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
   gap:3px;white-space:nowrap;flex:1 1 0;transition:border-color .12s,background-color .12s}
 .btn .label{display:inline-flex;align-items:center;gap:6px}
-.btn .sub{font:600 12px/1 var(--body);letter-spacing:0;text-transform:none;color:var(--soft);font-variant-numeric:tabular-nums;
+.btn .sub{font:700 13px/1 var(--display);letter-spacing:.01em;text-transform:none;color:var(--soft);font-variant-numeric:tabular-nums lining-nums;
   max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .btn:hover{border-color:var(--white)}
 .btn:active{background:var(--line)}
@@ -384,12 +391,12 @@ button.pod:hover{border-color:var(--grey)}
   background:var(--panel);border:1px solid var(--line-strong);border-radius:14px;box-shadow:0 0 0 4px var(--ink);
   padding:8px 10px 10px;display:flex;flex-direction:column;gap:8px}
 .pop-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:36px}
-.pop-head h2{font:800 18px/1 var(--display);text-transform:uppercase;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.pop-head h2 small{font:500 12px/1 var(--body);color:var(--grey);text-transform:none;letter-spacing:0;margin-left:2px}
+.pop-head h2{font:italic 800 18px/1 var(--display);text-transform:uppercase;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pop-head h2 small{font:500 12px/1 var(--body);font-style:normal;color:var(--grey);text-transform:none;letter-spacing:0;margin-left:2px}
 .pop-head .tool{margin:-4px -6px -4px 0}
 .pop .two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .pop .row{display:flex;gap:6px}
-.menu-btn{flex:1 1 0;min-width:44px;height:44px;padding:0 6px;border:1px solid var(--line-strong);border-radius:var(--r-in);background:var(--ink);
+.menu-btn{flex:1 1 0;min-width:44px;height:44px;padding:0 6px;border:1px solid var(--grey);border-radius:var(--r-in);background:var(--ink);
   display:inline-flex;align-items:center;justify-content:center;gap:6px;font:600 13px/1 var(--body);color:var(--white);white-space:nowrap;transition:border-color .12s}
 .menu-btn:hover{border-color:var(--white)}
 .menu-btn:active{background:var(--line)}
@@ -406,7 +413,7 @@ button.pod:hover{border-color:var(--grey)}
 .ranks{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
 .suits{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
 .suits.with-class{grid-template-columns:repeat(6,minmax(0,1fr))}
-.pick{height:44px;min-width:44px;border:1px solid var(--line-strong);border-radius:var(--r-in);background:var(--ink);display:grid;place-items:center;
+.pick{height:44px;min-width:44px;border:1px solid var(--grey);border-radius:var(--r-in);background:var(--ink);display:grid;place-items:center;
   font:800 20px/1 var(--display);color:var(--white);transition:border-color .12s}
 .pick:hover{border-color:var(--white)}
 .pick.on{background:var(--white);border-color:var(--white);color:var(--ink)}
@@ -447,6 +454,8 @@ button.pod:hover{border-color:var(--grey)}
 .history .htext{display:flex;flex-direction:column;gap:8px;padding:10px 0 12px;border-bottom:1px solid var(--line)}
 .history .htext pre{margin:0;font:500 12px/1.5 var(--body);color:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
 .history .hrow .num{font-size:16px;color:var(--white)}
+.history .hrow .num.win{color:var(--win)}
+.history .hrow .num.loss{color:var(--loss)}
 .history .hrow b{color:var(--white);font-weight:600}
 .history .pill{height:18px;padding:0 7px;font-size:12px;margin-left:6px}
 .empty-note{font-size:14px;color:var(--grey)}
@@ -474,7 +483,13 @@ button.pod:hover{border-color:var(--grey)}
 .in:focus-visible{border-color:var(--white)}
 textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--body);resize:vertical;width:100%}
 .check{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--soft);cursor:pointer}
-.check input{width:20px;height:20px;accent-color:var(--white);flex:none;cursor:pointer}
+.check:hover{color:var(--white)}
+/* A drawn box: empty it is Ink with a Grey edge; ticked it is White with an Ink tick (a white fill means "on", as everywhere). */
+.check input{appearance:none;-webkit-appearance:none;width:20px;height:20px;flex:none;cursor:pointer;margin:0;
+  background:var(--ink);border:1px solid var(--grey);border-radius:6px;transition:border-color .12s,background-color .12s}
+.check input:hover{border-color:var(--white)}
+.check input:checked{border-color:var(--white);
+  background:var(--white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 10.5l3.4 3.4L15 6.8' fill='none' stroke='%230A0A0B' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/18px no-repeat}
 /* A value the server refused: the field is marked with a dashed white edge and the reason stands under it. */
 .field.bad,.in[aria-invalid=true]{border:2px dashed var(--white)}
 .field.bad{padding:0 9px}
@@ -565,11 +580,12 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .other,.pod .tag{font-size:13px}
   .chip{min-width:40px;padding:0 8px}
   .strip{gap:8px}
-  .strip .stage{padding:0 10px;font-size:12px}
+  .strip .stage{padding:0 10px}
+  .step{width:44px}
   .stat{gap:6px}
   .value{padding:0 6px;gap:2px}
   .value .row{flex-direction:row;align-items:baseline;gap:6px}
-  .value .row small{font-size:12px;line-height:1.2}
+  .value .row small{line-height:1.2}
   .btn{font-size:18px;padding:0 12px}
   .btn .label{gap:8px}
   .actions .row,.actions .slots{gap:8px}
@@ -637,16 +653,17 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
   .pot{height:26px}
   .pot .num{line-height:26px}
 }
-/* From 1280 the strip shares one row with the tabs. Up to 1400 that row is tight: smaller numbers, closer together. */
-@media (min-width:1280px) and (max-width:1399px){
+/* From 1280 the strip shares one row with the tabs. Up to 1536 that row is tight: smaller numbers, closer
+   together, and under 1366 the mark stands without the wordmark. */
+@media (min-width:1280px) and (max-width:1535px){
   .header{column-gap:16px}
   .bar{gap:14px}
   .strip{gap:8px}
   .stat .v{font-size:20px}
 }
-/* The average stack and the style need more room than that. */
-@media (min-width:1024px) and (max-width:1279px),(min-width:1440px){.strip .from-avg{display:flex}}
-@media (min-width:1024px) and (max-width:1279px),(min-width:1640px){.strip .from-style{display:flex}}
+@media (min-width:1280px) and (max-width:1365px){.word{display:none}}
+/* The average stack (Spin & Gold: the win rate) needs more room than that. */
+@media (min-width:1024px) and (max-width:1279px),(min-width:1536px){.strip .from-avg,.strip .from-style{display:flex}}
 /* Room for the reasons and the range chart together, without scrolling: no tabs.
    (The reasons carry plans, warnings and a source line, so this takes a window about 1100 high.) */
 @media (min-width:1280px) and (min-height:1100px){
@@ -655,7 +672,7 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
 }
 
 /* ---------- 16. Motion ---------- */
-@keyframes due{from{border-color:var(--yellow);color:var(--yellow)}to{border-color:var(--line-strong);color:var(--white)}}
+@keyframes due{from{border-color:var(--yellow);color:var(--yellow)}to{border-color:var(--grey);color:var(--white)}}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition:none!important;animation:none!important}
 }

@@ -1604,6 +1604,24 @@ class AfterTheFlopFindings(unittest.TestCase):
         a = A.advise(s)
         self.assertEqual(verb(a), "FOLD")
         self.assertEqual(a["reason"], "No top pair and no 12-out draw: check, and fold to a bet.")
+        # ... but not at a tiny price: 0.2bb more into 3bb is the full engine's call
+        s = tournament([30, 30, 30, 30, 30, 30, 1.325, 30], BB, "Qh3d", acts=[(SB, "call", None)], plan="allin")
+        s.do("act", seat=1, kind="check")
+        flop(s, "7d2c2s", (seat_of(SB, BB, 8), "allin"))
+        with postflop_says("CALL", numbers=["to call 200: need 6%, have 11%"]):
+            a = A.advise(s)
+        self.assertEqual((verb(a), source(a).split(" \u00b7 ")[-1]), ("CALL", "all-in plan: a tiny price, the full engine's play"))
+        with postflop_says("FOLD"):
+            self.assertEqual(verb(A.advise(s)), "FOLD")
+        # the second line is the other plan's answer: the engine's numbers only beside the engine's own play
+        s = tournament([30, 30, 30, 30, 30, 30, 8, 30], BB, "AhKd", acts=[(SB, "call", None)], plan="allin")
+        s.do("act", seat=1, kind="check")
+        flop(s, "Ks7d2c", (seat_of(SB, BB, 8), "allin"))
+        with postflop_says("CALL", "close", numbers=CALL_58_56):       # a close call: "all moves" folds it
+            a = A.advise(s)
+        self.assertEqual((verb(a), a["also"]), ("CALL", "The plan with all moves: FOLD."))
+        with postflop_says("CALL", "clear", numbers=CALL_58_56):
+            self.assertEqual(A.advise(s)["also"], "The full engine: CALL, 58% against 56%.")
         # (d) top pair with 4 pots or less behind against a player who covers: all-in, as before
         s = tournament([30, 30, 30, 30, 30, 30, 30, 10], BB, "AhKd", acts=[(UTG, "call", None)], plan="allin")
         s.do("act", seat=1, kind="check")
@@ -1713,10 +1731,15 @@ class AfterTheFlopFindings(unittest.TestCase):
             self.assertEqual(verb(self.raised_on_the_turn(aggressive)), "CALL")
         # two pair is not one pair
         self.assertEqual(verb(self.raised_on_the_turn(None, "Kh7h")), "CALL")
+        # a hand weaker than one pair never plays on where one pair folds
+        self.assertEqual(verb(self.raised_on_the_turn(None, "AhQd")), "FOLD")
+        self.assertEqual(verb(self.raised_on_the_turn(None, "JhJd")), "FOLD")
+        # with a draw of 8 outs or more the engine decides
+        self.assertEqual(verb(self.raised_on_the_turn(None, "QsJs")), "CALL")
 
-    def thin_bet_then_raised(self, tag=None, stack=60):
+    def thin_bet_then_raised(self, tag=None, stack=60, cards="Kh4h"):
         """Top pair, weak kicker: (the answer to the flop checked to hero, the answer after his bet is raised)."""
-        s, seat = six_handed([stack] * 6, 2, "Kh4h", types={5: tag} if tag else None)
+        s, seat = six_handed([stack] * 6, 2, cards, types={5: tag} if tag else None)
         villain = seat(5)
         s.do("act", seat=1, kind="raise", amount=2200)
         s.do("act", seat=villain, kind="call")
@@ -1741,6 +1764,41 @@ class AfterTheFlopFindings(unittest.TestCase):
             first, second = self.thin_bet_then_raised(**more)
             self.assertNotIn(announced, [w["text"] for w in first["warnings"]], more)
             self.assertEqual(verb(second), "CALL", more)
+        # second pair folds there too (a stronger hand never folds where a weaker one calls); top pair with a
+        # strong kicker is the engine's decision on the flop
+        self.assertEqual(verb(self.thin_bet_then_raised(cards="8h7h")[1]), "FOLD")
+        self.assertEqual(verb(self.thin_bet_then_raised(cards="AhKd")[1]), "CALL")
+
+    def test_post_8_a_bluff_catcher_only_announces_the_fold_that_follows(self):
+        engine_warning = ["a bluff-catcher: fold to a big bet on the next street unless you improve"]
+
+        def called_twice(tag=None, river_bet=20000):
+            """The big blind calls the button's flop and turn bets with top pair, weak kicker: (flop, turn, river)."""
+            s, seat = six_handed([60] * 6, 5, "Kh4h", acts=[(3, "raise", 2.2)], types={3: tag} if tag else None)
+            answers = []
+            s.do("act", seat=1, kind="call")
+            for cards, bet in (("Ks7d2c", 2500), ("5c", 8000), ("3d", river_bet)):
+                flop(s, cards, (1, "check"), (seat(3), "bet", bet))
+                with postflop_says("CALL", numbers=["to call: need 32%, have 55%"], warnings=engine_warning):
+                    answers.append(A.advise(s))
+                if cards != "3d":
+                    s.do("act", seat=1, kind="call")
+            return answers
+
+        said = lambda answer: [w["text"] for w in answer["warnings"] if w["code"] == "engine"]
+        on_flop, on_turn, on_river = called_twice()
+        # the engine's own line promises a fold on the next street that the next answer does not make
+        self.assertEqual(said(on_flop), ["A bluff-catcher: it beats a bluff and nothing else."])
+        self.assertEqual((verb(on_flop), verb(on_turn)), ("CALL", "CALL"))
+        # what the turn announces, the river does: one pair folds to a big river bet
+        self.assertEqual(said(on_turn), ["A bluff-catcher: fold the river to a bet of 60% of the pot or more "
+                                         "unless you improve."])
+        self.assertEqual((verb(on_river), on_river["headline"]["qualifier"]), ("FOLD", "playbook check"))
+        self.assertEqual(verb(called_twice(river_bet=9000)[2]), "CALL")         # a smaller bet: the engine's answer
+        # against a player tagged maniac the rule does not fold, so nothing is promised
+        on_flop, on_turn, on_river = called_twice("maniac")
+        self.assertEqual(said(on_turn), ["A bluff-catcher: it beats a bluff and nothing else."])
+        self.assertEqual(verb(on_river), "CALL")
 
     # ---- POST-9 ----------------------------------------------------------------------------------------------
 
@@ -1904,6 +1962,16 @@ class AfterTheFlopFindings(unittest.TestCase):
         with postflop_says(f"RAISE to {low - 1900 - 10:,} (7bb, 50% pot)"):            # 8,956 would round to 8,950
             self.assertEqual(A.advise(s)["headline"]["follow"]["to"], low)             # never under the minimum
         s.do("act", seat=1, **a["headline"]["follow"])                  # and the table takes it
+        # a bet of every chip hero has stays an all-in, whatever the chips
+        s, seat = six_handed([60, 60, 22.303, 60, 60, 60], 2, "7h7s")
+        s.do("act", seat=1, kind="raise", amount=2200)
+        s.do("act", seat=seat(5), kind="call")
+        flop(s, "Ks7d6d", (seat(5), "check"))
+        with postflop_says("BET 19,978 (20bb, 300% pot)"):
+            a = A.advise(s)
+        self.assertEqual((verb(a), a["headline"]["follow"]), ("ALL-IN", {"kind": "allin"}))
+        self.assertEqual(a["headline"]["size_text"], "20BB \u00b7 19,978")
+        seen = A.read_table(s, s.view())
         for level, step in (("300/600/75", 25), ("100/200/25", 25), ("1000/2000/250", 250), ("10/20", 10),
                             ("15/30", 5), ("300/600", 100), ("1/2", 1)):
             sb, bb, *ante = (int(x) for x in level.split("/"))
