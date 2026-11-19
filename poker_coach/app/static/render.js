@@ -9,7 +9,8 @@
                                           alone, and the focus and a half-typed value survive.
          view     the JSON of GET /api/view (SPEC section 6); null, without "table", or with
                   first_run: true = the first-run form
-         advice   the JSON of GET /api/advice (SPEC section 7); null while it is on its way
+         advice   the JSON of GET /api/advice (SPEC section 7); null while it is on its way. An answer
+                  whose rev is not the view's is treated as null: nothing of it is drawn
          ui       what is open on this screen only (never sent to the server), see UI STATE
      MenloUI.closeTopPatch(ui)            The ui patch that closes the topmost open thing (for Esc),
                                           or null when nothing is open.
@@ -124,6 +125,8 @@
                                      keeps them on the pods until the next deal
      view.hand.want_suits            {hand: "AKs", options: [["Ah","Kh"], ...]}: the exact holdings to pick from
      view.hand.before_target         the seats in front of the target that have not acted, in order
+     view.hand.allin_matched         how much of the target's all-in (legal.allin, his whole stack) a player still
+                                     in can match: when it is less, the All-in button's tooltip says both numbers
      view.hero_out                   true: hero has no chips and no hand of his is running
      view.settings.button_rule       "dead" | "forward": how the dealer button moves after a hand
      view.strip.prizes_typed         how many of the paid places have a prize typed (the settings say so)
@@ -637,10 +640,9 @@
     }
     const fresh = advice && advice.rev === view.rev && advice.status === "none";
     if (heroToAct(view) && !fresh) {
-      // A new answer is on its way. The old one stays readable but never wears yellow.
-      const old = advice && advice.headline;
-      return {tone: "wait", eyebrow: old ? "Updating" : "Coach", verb: old ? old.verb : "Updating",
-              size: old ? old.size_text : "", spot: old ? advice.spot : "The coach is working on this spot.", live: false};
+      // The answer for this spot is on its way. Nothing of the answer before it is drawn: that one was
+      // for another spot (another hand, even), and a word such as FOLD must never stand over this one.
+      return {tone: "wait", eyebrow: "Coach", verb: "Updating", spot: "The coach is working on this spot.", live: false};
     }
     const waiting = waitingFor(view);
     // Hero is sitting out: the slab says so, and which key ends it.
@@ -1302,6 +1304,18 @@
     return barHtml(whoseHtml("Hand over", ""), nextHandButton("1 / 6"), true);
   }
 
+  // An all-in for more than anybody still in can match. The button's second line is the stack (that is
+  // what goes in front of the player); the coach's answer names what can be matched. The tooltip says
+  // both, so the two numbers never read as two different all-ins. "" when the whole all-in can be matched.
+  function allInWords(view, legal, isHero) {
+    const matched = view.hand ? view.hand.allin_matched : null;
+    if (!legal || legal.allin == null || matched == null || !(matched < legal.allin)) return "";
+    const whose = isHero ? "your" : "the";
+    const back = isHero ? "comes back to you" : "goes back";
+    return `All-in is ${whose} whole stack, ${chipsOnlyText(view, legal.allin)}. ` +
+           `The other players can match ${chipsOnlyText(view, matched)} of it; the rest ${back}.`;
+  }
+
   // What the Follow button will do, in words.
   function followText(view, follow) {
     if (!follow) return "";
@@ -1361,9 +1375,11 @@
       // Recording one of them first brings a fresh answer.
       const assumed = follow && advice.provisional ? String(advice.provisional) : "";
       const does = followText(view, follow);
+      // (following an all-in puts the whole stack in, as the All-in button does: the same tooltip)
+      const whole = follow && follow.kind === "allin" ? allInWords(view, legal, true) : "";
       first = barButton({label: "Follow", key: "Space", primary: true, slot: "1", fk: "follow", off: !follow,
                          sub: esc(assumed || does), subClass: assumed ? "assumed" : "",
-                         title: assumed ? `${does}, ${assumed}` : "",
+                         title: assumed ? `${does}, ${assumed}` : whole,
                          send: follow ? Object.assign({op: "act", seat: seat, via: "follow", ui: AFTER_ACT}, follow) : {}});
     }
 
@@ -1380,7 +1396,8 @@
       ? barButton({label: "Bet", key: "B", fk: "bet-" + who, off: !can("bet"), send: ask("bet")})
       : barButton({label: "Raise", key: "R", fk: "raise-" + who, off: !can("raise"), send: ask("raise")});
     const allinSub = known && legal.allin != null ? esc(chipsOnlyText(view, legal.allin, true)) : "";
-    const allin = barButton({label: "All-in", key: "A", fk: "allin-" + who, slot: two ? "2 / 4" : "", sub: allinSub, off: !can("allin"), send: act("allin")});
+    const allin = barButton({label: "All-in", key: "A", fk: "allin-" + who, slot: two ? "2 / 4" : "", sub: allinSub, off: !can("allin"),
+                             title: known ? allInWords(view, legal, isHero) : "", send: act("allin")});
 
     // Slot 6: the rest take the passive default. Hero's own action is always typed, so while the plain
     // keys are his the button waits. While players in front of him are recorded in turn, it ends that:
@@ -2180,6 +2197,10 @@
 
   function renderParts(view, advice, ui) {
     ui = ui || {};
+    // An answer belongs to one revision of the table. One for another revision (the table has changed
+    // and the new answer is on its way) is not drawn anywhere: not its words, its reasons, its chart,
+    // its warnings, nor what it said about the stage. The slab says "Updating" until the new one is in.
+    if (advice && view && advice.rev !== view.rev) advice = null;
     const setup = view && view.setup;                         // the server's own defaults for the first form, if any
     if (view && view.settings && view.settings.keys) keyMap = view.settings.keys;
     const mode = (view && view.mode) || ui.setupMode || "tournament";
@@ -2324,7 +2345,9 @@
   /* The 400 ms rule of the action bar. A pointer click on a bar button counts only when that button
      (the same word, for the same side: hero or an opponent) has been at that place for 400 ms. A
      double-click therefore records one action: the button that turns up under the pointer after the
-     first click (Next hand where Follow was) is not pressed by the second. Keys are not affected. */
+     first click (Next hand where Follow was) is not pressed by the second. Keys are not affected.
+     (The second click can also come before the program has answered the first, while the old bar is
+     still drawn: the controller drops a bar click made while a change is on its way.) */
   const BAR_WAIT_MS = 400;
   let barSince = {};           // button and place -> when it was first there
   function barId(button) {
@@ -2430,8 +2453,12 @@
     if (!element || element.disabled) return;
     if (element.tagName === "FORM" || isField(element)) return;        // these send on Enter or on change
     // A pointer click (not Enter or Space on the button) on the action bar: the 400 ms rule.
-    if (event.detail > 0 && element.tagName === "BUTTON" && element.closest("#region-actions") && barClickTooEarly(element)) return;
-    send(readEmit(element), element);
+    const onBar = event.detail > 0 && element.tagName === "BUTTON" && !!element.closest("#region-actions");
+    if (onBar && barClickTooEarly(element)) return;
+    const detail = readEmit(element);
+    // (`byPointer`: the controller drops such a click while a change is still on its way, see onPageEvent there)
+    if (onBar && detail) detail.byPointer = true;
+    send(detail, element);
   }
 
   // The Save button of a seat's menu: every field of the menu that was changed is sent, as Enter in it would.

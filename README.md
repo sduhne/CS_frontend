@@ -24,6 +24,8 @@ reads the screen, nothing clicks for you and nothing leaves the computer: the
 program is a small server on 127.0.0.1 written with Python's standard library
 alone, and the page is plain HTML, CSS and JavaScript with its fonts beside
 it. It is for study and play money; real-money sites ban real-time help.
+The program calls itself Menlo Coach: that is the name on the page and in
+its windows. The files keep "Poker Coach" in their names.
 
 **Start it.** On Windows, double-click `Start Poker Coach.bat`: it needs
 Python 3.10 or newer, installs nothing and works offline (`START HERE.txt`
@@ -32,10 +34,13 @@ says the same in a few lines). Anywhere:
 ```bash
 python3 -m poker_coach app                      # http://127.0.0.1:8765/, and the browser opens on it
 python3 -m poker_coach app --port 9000 --no-browser --folder ~/my-tables
+python3 -m poker_coach app --verbose            # also print every request, and the detail when the coach cannot answer
 ```
 
 A black window stays open while it runs; closing it, or Ctrl+C in it, stops
 the coach. When port 8765 is taken it moves to the next free one and says so.
+Started a second time on the same folder of tables, it opens the page of the
+copy that is running and ends: two copies would save over each other.
 `Build exe.bat` (or `python tools/build_exe.py --check`, with `pip install
 pyinstaller`) makes `dist/PokerCoach.exe`: the same app as one program that
 needs no Python. It has no black window; a small one shows the address and
@@ -46,68 +51,225 @@ Alt+1, Alt+2, Alt+3):
 
 | Mode | The table | What answers |
 |---|---|---|
-| Tournament | 2 to 9 seats, a blind ladder, players left, places paid, payouts | The engine with ICM, as `advise` does. Before the money a survival guard turns a play that risks the stack into a fold when the all-in or fold table would not make it |
-| Spin & Gold | 3 seats, heads-up after a bust, winner takes all, a tally of games and wins | The spin tables on chips; the engine above 16 big blinds |
+| Tournament | 2 to 9 seats, blind levels, players left, places paid, payouts | The engine with ICM, as `advise` does, and before the money the survival guard (see the styles below) |
+| Spin & Gold | 3 seats, heads-up after a bust, winner takes all, a tally of games and wins | The spin tables on chips; the engine above 16 big blinds (20 from the small blind and heads-up) |
 | All-In or Fold | 4 seats, stacks cut to 8 big blinds at the deal, the fee, the session's result in big blinds | The solved All-In or Fold tables |
 
-**A hand.** `N` deals. Type your two cards (`a k s` is ace-king suited,
-`a h k d` the exact cards), then what happens: a seat's digit and one of
-`f c x b r a` for that player, the same letters alone for you. Players you
-skip over are folded (or checked) for you. When it is your turn the answer is
-on screen and `Space` does what it says. `?` lists every key, and everything
-can also be done with the mouse. Undo is `Backspace`, as often as you like.
-The hand history (`Y`) keeps each hand with what the coach said and what you
-did; its Copy as text button puts the session's hands on the clipboard.
+You are always seat 1, and seats count clockwise from you.
 
-**The tournament settings** (`I`, `G`, or the menu): players left and places
-paid tell the coach how far the money is; without them it plays on chip maths
-and says so. Three styles: *Cash first* (the survival guard, and a min-cash
-counts double until the bubble bursts), *Survive, then win* (the default: the
-guard on plain prize maths) and *Max EV* (plain prize maths, no guard). Two
-plans: *Full* and *All-in or fold* (one decision a hand, from the all-in or
-fold tables).
+**A hand.** `N` deals. Type your two cards (`a k s` is ace-king suited,
+`a h k d` the exact cards), then what happens. The row above the action bar
+says whose action the letters `f c x b r a` record. On your turn it reads
+YOUR ACTION: the letters are yours, and the players in front of you whom you
+did not type are folded (or checked). A seat's digit first gives one action
+to that player. Once you record an opponent with a plain letter the row
+reads RECORDING with the next player's position and seat, and the letters go
+on in turn until it is your turn. An opponent's bet or raise is taken at the
+usual size and `E` changes the amount; your own is typed. When it is your
+turn the answer is on screen and `Space` does what it says. After the flop
+type the board (`k s 7 d 2 c`); the coach then needs your exact cards. When
+players in front of you have not acted yet, the answer says what it takes
+for granted ("if BB and CO check") and `Space` records their checks with
+your play. Undo is `Backspace`, as often as you like, back to the first
+table of the session.
+
+**The keys.** `?` on the page lists them; the list is made from
+`poker_coach/app/defaults.py`, so it is always the current one.
+
+| Key | What it does |
+|---|---|
+| `N` | New hand, next hand. Spin & Gold: a new game of 300 chips once one is over (`Shift+N`: of 500 chips) |
+| `Space` | Do what the coach says |
+| `F` `C` `X` `B` `R` `A` | Fold, call, check, bet, raise, all-in. Your own bet or raise: type the amount, then `Enter` |
+| `Enter` | The rest fold (or check). While you record the players in front of you in turn: they fold and the keys are yours. While a street's cards are wanted: skip the board. While a split is ticked: split |
+| `W` `L` `Shift+W` | You won the pot; you lost a heads-up pot; split pot (three or more players: tick who shares it with the seat numbers, then `Enter`) |
+| `Backspace` `Z` `Ctrl+Z` | Undo. `Ctrl+Y` or `Ctrl+Shift+Z`: redo. `Ctrl+Backspace`: discard the hand |
+| `Left` `Right` | Previous and next step of the hand. `E` changes the amount of the selected bet (or of the last one), `Delete` deletes the selected action |
+| `[` `]` | Dealer button one seat back, one seat forward |
+| `{` `}` | One seat fewer, one seat more |
+| `+` (or `=`) `-` | Blinds up, blinds down. `Shift+B`: type the blinds (`300/600/75`, or `600` alone). `Shift+A`: ante none, every player, big blind |
+| `,` `.` `<` `>` | Players left minus one, plus one, minus ten, plus ten |
+| `S` `Shift+S` `O` | Your own stack; every stack, clockwise; sit out and back in |
+| `I` `G` `V` | Tournament numbers; style (Spin & Gold and All-In or Fold: the opponents); chips or big blinds |
+| `Y` `?` | Hand history; the list of keys |
+| `Alt+1` `Alt+2` `Alt+3` | Tournament, Spin & Gold, All-In or Fold |
+| `Esc` | Cancel, close. In a field: the old value comes back and nothing is sent |
+| `1` to `9` | A seat, counted clockwise from you: its menu opens and the next key is for that player. In All-In or Fold, during a hand, the digit alone is that player's all-in (again takes it back) |
+| then `F` `C` `X` `B` `R` `A` | That player folds, calls, checks, bets, raises, moves all-in. `W`: that player won the pot |
+| then `S` `E` `T` `M` | Stack, name, type, note |
+| then `O` `D` `K` `Delete` | Sit out or back in; dealer button here (an empty seat too); bust (the seat is cleared and one player fewer is left); clear the seat (the player left the table) |
+| after `T` | `N` nit, `T` tight, `G` tight-aggressive, `L` loose-aggressive, `O` loose, `S` calling station, `M` maniac, `U` unknown |
+| Cards | `a k s`, `a k o`, `7 7`: your hand as a class. `a h k d`: exact cards (suits `s` `h` `d` `c`, `t` is the ten). The flop is three cards, the turn and river one. Once the flop is out and your hand was typed as a class, only its suits are asked. `Backspace` goes back one step, `Enter` skips the board when the action is not on you, `Esc` leaves the cards |
+
+**With the mouse.** Everything has a button. The tabs in the header change
+the mode; the strip under it has `-` and `+` for the level and for players
+left, and a click on the level, players left or places paid lets you type
+it. At the top right are Undo, Redo and Settings (the three lines); the
+style and moves at the head of the coach's answer open Settings too. A
+click on a seat opens its menu: stack, name, type, note, Sit out, Button,
+Bust, Clear, and Save (a seat's stack, name and note are saved with `Enter`
+or Save, never by clicking elsewhere). Table tools, at the table, has
+Button back and forward, - Seat and + Seat, Every stack, New table (a table
+move: you and the tournament stay), Skip a hand and Discard hand. The
+action bar has six places that never move: Follow (Next hand once you have
+folded or the hand is over), the four moves, and Rest fold. A click on a
+step of the hand line selects it (Amount, Delete); on a fold the app made
+for a player it offers Called and Raised. Under the answer, Why and Range
+show the reasons and the range chart. The hand history has Copy as text,
+and a click on one hand shows its text with Copy this hand.
+
+**Typing amounts.** `1300`, `12.5k`, `1.2m`, `25bb`, `3x` (three times the
+bet being raised), `66%` (of the pot, for bets), `+3k` and `-1500` (a stack).
+`12.500` and `12,500` are twelve thousand five hundred; a bare `12.5` is
+refused with the spellings that work. With numbers in big blinds (`V`) a
+bare number in a stack or bet field is big blinds. All-In or Fold counts
+everything in big blinds, with decimals. What cannot be read stays in its
+field with the reason under it.
+
+**What the table does for you, and what it refuses.**
+
+- An action typed for a player the app had folded for you puts that player
+  back: on the street being played it takes the place of the fold; from an
+  earlier street the fold becomes a call there, and one undo takes it back. A fold you
+  typed yourself is changed on the hand line. Nothing of this ever changes
+  an action of your own.
+- While a street's cards are wanted, a forgotten call or check can still be
+  added to the round just closed. A bet, raise or all-in for such a player
+  is refused: "Type the flop first (K S 7 D 2 C), then record the bet."
+- The dealer button moves by the dead-button rule (Settings, Table): after
+  a bust the big blind still moves on by one player, so the button can
+  stand on an empty seat for a hand. The other choice is a forward-moving
+  button. After a bust in the blinds the page says where the button is;
+  check it against your table, and `[` `]` move it. A dead small blind
+  cannot be entered. Once a hand has an action the button cannot be moved:
+  undo, or discard the hand.
+- A change made in another window is noticed: "The table had changed: look
+  again and repeat."
+
+**The tournament settings** (`I`, `G`, or Settings: the three lines at the
+top right). Players left and places paid tell the coach how far the money
+is; without them it counts chips only and says so. A typed payout list
+(`1:1000 2:600 4-6:200`) replaces the typical prizes. In a very large field
+(more than 1,000 paid places still to reach) the prize maths works on a
+thinned field, so that an answer still comes in about half a second. That
+is an approximation: close to the exact maths for stacks near the average,
+and too careful for a very short stack a few places from the money.
+
+*Styles.* What differs is what happens before the money, when a play would
+put a third or more of your chips at risk. The coach then also looks the
+hand up in the all-in or fold chart, which is built to reach the money.
+
+- *Survive, then win* (the default). If the chart would fold and the play
+  is worth little by the numbers (an all-in worth less than 0.20 big blinds
+  against folding, a call only a few points better than its price), the
+  answer is FOLD and the play by the numbers is the second line. A play with
+  a clear edge is made. A close answer shows the lower-variance side first.
+- *Cash first*. Stricter: such a play is made only when the chart makes it
+  too, and a min-cash counts double until the bubble bursts.
+- *Max EV*. Plain prize maths: no guard, and a close answer is shown as the
+  numbers have it.
+
+Switch to Max EV when you play to win and a min-cash means little, or to
+see what the numbers alone say. Switch to Cash first when reaching the
+money is the aim. In every style a good price is never folded (3 to 1 or
+better), the guard is off in the money and while re-entry is open, and a
+read on a player lifts it only when it makes the play safer.
+
+*Moves.* All moves, or All-in or fold only: one decision a hand, from the
+all-in or fold charts, with the play with all moves as the second line.
+
+**The small line under an answer** says how much of the prize money is
+counted and where the answer comes from. In that line "table" means the
+all-in or fold chart.
+
+| It says | It means |
+|---|---|
+| ICM off · chip EV | Players left or places paid are missing: only chips are counted |
+| ICM estimated | Prizes are the typical ones and the other tables' stacks are guessed: enter the average stack |
+| ICM, ICM exact | Your numbers are in; exact with a prize typed for every paid place |
+| the engine decides | The play by the numbers; the guard had nothing to say |
+| the all-in table agrees | The play risks a third of your chips and the chart makes it too |
+| CLEAR EDGE (engine +0.40bb): played although the all-in table folds | The chart would fold; the edge is big enough to play (Survive, then win) |
+| SURVIVAL FOLD (engine: ALL-IN +0.13bb) | The chart folds and so does the coach; the bracket is the play by the numbers |
+| SURVIVAL RAISE (...), SURVIVAL CALL (...) | The sheet's small raise, or the big blind's sheet call, in place of an all-in |
+| CLOSE: before the money the lower-variance side leads (engine: ...) | Two plays worth about the same: the quieter one is shown first |
+| GUARD OFF (why) | The guard is off or steps aside: in the money, final table, Max EV style, re-entry open, too short to wait, the fold clock says you cannot fold, a good price, a read that makes the play safer |
+| after the flop: equity against an estimated range, a rule-based line | Every answer after the flop |
+
+**When an answer looks wrong.** Open the hand history (`Y`), press Copy as
+text (or click the hand and Copy this hand) and send it with the style and
+moves, players left and places paid, and the small line under the answer.
+After the flop, say whether the players in front of you had acted. NO ADVICE
+means the coach could not read the spot: start the program with `--verbose`
+and send the lines the black window prints after "the coach could not answer
+a spot:".
 
 **Where things are saved.** In `tournament/app/` in this folder, after every
-change: `tournament.json`, `spin.json` and `aof.json` (one per mode: the
-table, the hand, the undo steps, the last 500 hands) and `app.json` (the mode
-on screen, chips or big blinds, the deck). The next start goes on from there;
-delete a file to start that mode from nothing. `--folder <path>` saves
-somewhere else, and so does the `POKER_COACH_APP` variable (`--folder` wins).
-The packaged program saves in `PokerCoach/app` in your home folder.
+change:
+
+- `tournament.json`, `spin.json`, `aof.json`: one per mode (the table, the
+  hand, the undo steps, the last 500 hands);
+- `<mode>.json.bak`: that table one change earlier. It is used, and the page
+  says so, when the main file is damaged or missing;
+- `<mode>.json.unreadable-<date-time>`: a damaged file, set aside;
+- `app.json`: the mode on screen, chips or big blinds, the deck;
+- `app.lock`: there while the program runs, so that a second start finds
+  the first.
+
+The next start goes on from there. To start a mode from nothing use New
+tournament (New game) in Settings, or delete that mode's file and its
+`.bak`. `--folder <path>` saves somewhere else, and so does the
+`POKER_COACH_APP` variable (`--folder` wins). The packaged program saves in
+`PokerCoach/app` in your home folder.
 
 **Changing it.** What a user would want to change is plain data in
 `poker_coach/app/defaults.py`, with a comment on every line:
 
-- the blind ladders (`REGULAR_LEVELS`, `TURBO_LEVELS`, `SPIN_LEVELS`: small
-  blind, big blind and ante of each level) and which ladder a new session
-  starts on. One tournament's own levels need no edit: paste them in Settings;
+- the blind levels (`REGULAR_LEVELS`, `TURBO_LEVELS`, `SPIN_LEVELS`: small
+  blind, big blind and ante of each level) and which a new session starts
+  on. One tournament's own levels need no edit: paste them under Blind
+  levels in Settings and press Use these levels;
 - starting stacks and table sizes (`START_STACK`, `TABLE_SIZE`), the All-In
-  or Fold cap and fee (`AOF_CAP_BB`, `AOF_FEE_BB`), who pays the ante;
+  or Fold cap and fee (`AOF_CAP_BB`, `AOF_FEE_BB`), who pays the ante, the
+  dealer-button rule (`BUTTON_RULE`);
 - the bet and raise sizes offered as buttons (`OPEN_SIZES_BB`,
-  `RERAISE_SIZES`, `BET_SIZES`), the default style and plan;
+  `RERAISE_SIZES`, `BET_SIZES`), the default style and moves (`STYLE`,
+  `PLAN`);
 - the key map (`KEYS_TABLE`, `KEYS_SEAT`, `KEYS_TYPE`): change a key there
   and both the page and its `?` list follow.
 
 Start the program again after an edit (and build `PokerCoach.exe` again: the
 file is inside it). The numbers the coach itself uses (when the guard looks,
-how close "close to the money" is) are at the top of
+what a thin edge is, how close "close to the money" is) are at the top of
 `poker_coach/app/advice.py`.
 
 **The code.** `model.py` holds the table and the rules of a hand (every
 change is one intent, such as `{"op": "deal"}`, and a hand is replayed from
 its list of events), `advice.py` turns the table into the engine's question
-and the engine's answer into the panel, `server.py` serves the page and three
-addresses (`/api/view`, `/api/intent`, `/api/advice`), `static/` is the page.
-The design notes are in `docs/table-app/`.
+and the engine's answer into the panel, `server.py` serves the page and four
+addresses (`/api/view`, `/api/intent`, `/api/advice`, `/api/ping`),
+`static/` is the page. The design notes are in `docs/table-app/`.
 
 ```bash
-python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package
+python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about 450 tests, a minute and a half
 ```
 
-It has been checked in Chromium on Linux. On Windows the .bat files and the
-.exe build have not been run yet: `Build exe.bat` ends with a check that
-starts the program it built and asks it for the page, the fonts and an
-answer in each mode, and says what failed.
+**Limits.**
+
+- It has been checked in headless Chromium on Linux only. It has never been
+  run on Windows: not the .bat files, not a Windows `PokerCoach.exe`, and no
+  other browser. `Build exe.bat` ends with a check that starts the program
+  it built and asks it for the page, the fonts and an answer in each mode,
+  and says what failed. If it does not start, the text in the black window
+  says why; if the page misbehaves, the browser's console (F12) does.
+- Advice after the flop is heuristic: your equity against an estimated
+  range, then rules. It is a baseline, not a solver.
+- A dead small blind cannot be entered.
+- Spin & Gold after the flop uses the tournament's range charts.
+- The PDF sheets printed in earlier sessions are older than the rebuilt
+  tight-aggressive sheet. The text from `tag-sheet` is the current one.
+- Study and play money only. It does not read the screen, click for you or
+  hide from a poker client, and it is not meant to.
 
 ## How to use it
 
@@ -253,7 +415,9 @@ python3 -m poker_coach tag-sheet --players 8      # or 7, or 6
 
 The raise, call and re-raise lists are the engine's own answers for each of
 the 169 hands, far from the money. The all-in lists are the all-in or fold
-tournament tables. The rules are in [PLAYBOOK.md](PLAYBOOK.md).
+tournament tables. The rules are in [PLAYBOOK.md](PLAYBOOK.md). The lists
+were rebuilt after the engine changed: PDF sheets printed before that are
+older, and where they differ this text is right.
 
 ## Spins (3 players, winner takes all)
 
@@ -401,7 +565,7 @@ you play.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests        # about 380 tests, two minutes
+python3 -m unittest discover -s tests        # about 590 tests, four minutes
 ```
 
 The data files in `poker_coach/data/` are generated:

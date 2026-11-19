@@ -76,8 +76,9 @@ WHERE = {"ip": "a later seat (you act after the raiser)", "sb": "the small blind
 REP_SEAT = {"early": None, "middle": 4, "late": 3, "sb": 1}      # the seat a group's rows are solved for
 
 # Big blind against one raise of 2.5bb or less, with 9 to 24bb: the hands that may call instead of
-# folding.  The engine's own list (table()["bb_call"]) is close to any two cards; this is the part
-# of it that makes top pair or a real draw, and it is inside that list for every raiser.
+# folding.  The engine's own list (table()["bb_call"], and the hands that move all-in) is wider in
+# offsuit hands, most against a late raise; this is the part of it that makes top pair or a real
+# draw, and it is inside that list for every raiser.
 BB_CALL_SHORT = "22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 92s+, 82s+, 72s+, 62s+, 52s+, 42s+, 32s, A2o+, K9o+, Q9o+, J9o+, T9o"
 BB_CALL_WORDS = "any pair, any suited hand, any ace, K9o+, Q9o+, J9o+ and T9o"
 BANDS = tuple(reversed(B.BANDS))          # the all-in sizes, biggest first, as every page prints them
@@ -178,7 +179,7 @@ def sheet_text(players: int = 8) -> str:
         out.append(f"  Raise from {group_label(group, players)}, you are in {WHERE[where]}")
         out.append(f"    re-raise: {row['value']}")
         if row["bluff"]:
-            out.append(f"    re-raise as a bluff, 35bb or more, fold to another raise: {row['bluff']}")
+            out.append(f"    re-raise as a bluff, more than 45bb, fold to another raise: {row['bluff']}")
         if row["call"]:
             out.append(f"    call: {row['call']}")
         if row.get("setmine"):
@@ -186,6 +187,10 @@ def sheet_text(players: int = 8) -> str:
         if row.get("button"):
             out.append(f"    call on the button or after a caller, 50bb or more: {row['button']}")
         out.append("    otherwise: fold")
+    out.append("  25 to 45bb: re-raise small only with a hand that calls an all-in over it. The other hands on a "
+               "re-raise list move all-in where that clearly earns; otherwise they call (in the small blind the "
+               "weaker ones fold).")
+    out.append("  More than 45bb: every hand on a re-raise list re-raises small.")
     out.append("")
 
     out.append("4. A RAISE BEFORE YOU, 24BB OR LESS: ALL-IN OR FOLD")
@@ -206,6 +211,8 @@ def sheet_text(players: int = 8) -> str:
     for group, row in t["reraised"].items():
         out.append(f"    you raised from {group_label(group, players)}: 45bb or less all-in with {row['allin']}; "
                    f"more than 45bb re-raise {row['fourbet']}, call {row['call']}; otherwise fold")
+    out.append("    These lists are for a re-raise from the big blind: you act last after the flop, except in the SB row. "
+               "Out of position QQ, AKs and AKo move all-in with 46 to 60bb.")
     out.append("  A player moved all-in over your raise: call with")
     for group, rows in t["shoved_on"].items():
         out.append(f"    you raised from {group_label(group, players)}")

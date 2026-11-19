@@ -244,14 +244,15 @@
 
   add("unit-bb", "The same spot with every number in big blinds", () => ({view: openView({view: {unit: "bb"}}), advice: openAdvice()}));
 
-  add("updating", "An answer for an older table: greyed, Follow off", () => ({view: openView(), advice: openAdvice({rev: 127})}));
+  add("updating", "An answer for an older table: none of it is drawn, the slab says Updating, Follow off", () => ({view: openView(), advice: openAdvice({rev: 127})}));
 
-  add("no-advice", "The engine failed: NO ADVICE", () => ({
+  // (what advice.py no_advice returns, word for word: the Python detail goes to the log, never to the page)
+  add("no-advice", "The coach cannot read the spot: NO ADVICE", () => ({
     view: openView(),
     advice: openAdvice({
       headline: {verb: "NO ADVICE", size_text: "", qualifier: "", tone: "wait", sure: "", follow: null},
-      reason: "The engine stopped on this spot (KeyError: 'UTG+3'). Play it from the sheet; the next spot is advised as usual.",
-      tiles: [], flip: "", also: "", source: "", plans: [], chart: null,
+      reason: "The coach cannot read this spot. Play it from the sheet; the next one is advised as usual.",
+      tiles: [], flip: "", also: "", source: "", plans: [], chart: null, guard: "none",
     }),
   }));
 
@@ -788,7 +789,7 @@
   }));
   add("view-down", "The program does not answer", () => ({
     view: null, advice: null,
-    ui: {viewError: {down: true, message: "The program is not answering.", fix: "Is it still running? Start it again (python -m poker_coach app) and reload this page."}},
+    ui: {viewError: {down: true, message: "The program is not answering.", fix: "Is it still running? Start it again (double-click Start Poker Coach) and reload this page."}},
   }));
   withUi("showdown", ["ui-split", "Three at a showdown: who shares the pot is ticked"], {split: [1]});
   withUi("preflop-open", ["ui-field-error", "A stack the server refused: the reason under the field"],

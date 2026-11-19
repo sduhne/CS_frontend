@@ -369,7 +369,9 @@ python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 
   live question use `advise` (table tracked) or `quick`, as in the speed
   rules, and answer in the usual shape.
 - **Sheet and engine.** The raise, call and re-raise lists are what `advise`
-  answers far from the money. Every all-in list comes from `binary`, which
+  answers far from the money (against a raise: with 30bb; with 26 to 45bb
+  some hands on a re-raise list move all-in or call, and deeper `advise`
+  re-raises a few more). Every all-in list comes from `binary`, which
   is tighter than chip EV. So with 16bb or less, or facing a raise with 24bb
   or less, `advise` can say ALL-IN where the sheet folds. Before the money
   follow the sheet; in the money, or when the fold clock says CANNOT, follow
@@ -383,7 +385,8 @@ python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 
   the seat by the players behind.
 - **Printed sheet.** One PDF per table size, seven pages, with a seat map at
   the top right of every page. Stack columns run from deep to short on
-  every page.
+  every page. The PDFs are older than the rebuilt sheet (40 lists changed):
+  where they differ, `tag-sheet` is right.
 - The sheet is a study aid, like everything else here.
 
 ## Table app (the user's manual tracker)
@@ -391,14 +394,15 @@ python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 
 What the user starts now: a page in their browser where they type or click
 what happens at their table, and the coach answers each of their decisions.
 `poker_coach/app/` is that program; it runs on the user's computer, not in
-this session. Standard library only: nothing to install, no network.
+this session. Standard library only: nothing to install, no network. It
+calls itself Menlo Coach wherever it speaks; file names keep "Poker Coach".
 
 ```bash
 python3 -m poker_coach app                             # 127.0.0.1:8765, opens the browser ("Start Poker Coach.bat" runs this)
 python3 -m poker_coach app --port 9000 --no-browser    # another port; only print the address
 python3 -m poker_coach app --folder <path> --verbose   # sessions saved elsewhere; log every request and the coach's errors
 python tools/build_exe.py --check                      # dist/PokerCoach.exe, then start it and check the page and one answer per mode
-python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about a minute
+python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about 450 tests, a minute and a half
 ```
 
 - **Three modes**, each with its own saved table: tournament (2 to 9 seats,
@@ -416,50 +420,102 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
   `binary`, `spin` or `aof` tables, `advise_postflop` after it) -> the
   panel. `server.py` works the answer out on a copy of the session and
   keeps it for that revision.
-- **Files.** Sessions are in `tournament/app/`: `tournament.json`,
-  `spin.json`, `aof.json` and `app.json`, saved after every change (the
-  .exe: `~/PokerCoach/app/`; `--folder` or `$POKER_COACH_APP` names another
-  folder, `--folder` wins). `docs/table-app/` has the design notes.
+- **Files.** In `tournament/app/` (the .exe: `~/PokerCoach/app/`; `--folder`
+  or `$POKER_COACH_APP` names another folder, `--folder` wins):
+  `<mode>.json`, saved after every change; `<mode>.json.bak`, the table one
+  change earlier, used when the main file is damaged or missing;
+  `<mode>.json.unreadable-<date-time>`, a damaged file set aside;
+  `app.json`; `app.lock` while a copy runs. One copy per folder: a second
+  start opens the running copy's page and ends (it asks `/api/ping`).
+  Intents carry `rev`, and a stale one is refused (409). `docs/table-app/`
+  has the design notes.
+- **Table rules** (`model.py`). Dealer button: `button_rule` is "dead" (the
+  default: the big blind always moves on by one player, so the button may
+  rest on an empty seat) or "forward"; a button move is refused once a hand
+  has a typed action. An action typed for a player whose fold or check was
+  only implied takes its place (from an earlier street: the fold becomes
+  a call there); a fold that was typed is changed on the hand line; the
+  user's own actions are never altered. While a street's cards are wanted
+  such a player can only get a call or a check in the round just closed: a
+  bet, raise or all-in is refused ("Type the flop first ..."). `12.500` is
+  read as thousands and a bare `12.5` is refused; with numbers in big
+  blinds, stack and bet fields are in big blinds.
+- **The page.** The caption row above the action bar says whose action the
+  plain keys record ("YOUR ACTION", or "RECORDING" with position and seat).
+  The bar has six fixed slots: Follow or Next hand, four moves, Rest fold.
+  Esc cancels a field; a seat's fields are saved with Enter or Save only.
+  Words: "chart" for the all-in or fold lookup (only the source line says
+  "table"), "Moves: All moves | All-in or fold only", "Deck: Two colours |
+  Four colours", "Blind levels".
 - **Which file for which problem.**
   - A wrong pot, stack, side pot, seat name or player to act; an action
-    refused or accepted wrongly; undo; saving: `app/model.py` (its docstring
-    lists every intent).
-  - A typed amount read wrongly (`12.5k`, `3x`, `66%`, `300/600/75`):
-    `app/amounts.py`.
+    refused or accepted wrongly; the button after a bust; undo; saving:
+    `app/model.py` (its docstring lists every intent).
+  - A typed amount read wrongly (`12.5k`, `12.500`, `3x`, `66%`,
+    `300/600/75`): `app/amounts.py`.
   - A wrong answer, reason, number, chart or warning: `app/advice.py`
     (its numbers are at the top). If `advise` or `quick` gives the same
     answer for the same spot, the cause is in the engine, not the app.
   - The page does not open, an answer never comes or is out of date, the
-    port: `app/server.py`.
+    port, a second start, `app.lock`: `app/server.py`.
   - The look, a key that does nothing, something that cannot be clicked:
     `app/static/` (`render.js`, `controller.js`, `app.css`).
-  - Blind ladders, starting stacks, bet-size buttons, the key map:
+  - Blind levels, stacks, bet sizes, the button rule, the key map:
     `app/defaults.py`, plain data. The user can change these themselves.
 - **Styles** (tournament). `survive` (the default, "Survive, then win"):
-  goal `balanced` and the survival guard. `cash` ("Cash first"): goal `itm`
-  and the guard. `maxev` ("Max EV"): goal `balanced`, no guard. While
-  re-entry is open, and in Spin & Gold and All-In or Fold, it is chip EV with
-  no guard.
-- **Plans.** `full`: the engine, as `advise`. `allin` ("All-in or fold"):
-  the `binary` tables answer in two words and the engine is the second line.
-- **Survival guard** (tournament, full plan, before the money). When the
-  engine's play puts a third of the stack or more in before the flop, the
-  all-in or fold table is asked too. If the table folds, the headline is
-  FOLD, marked "survival fold", and the engine's play becomes the second
-  line. It is off in the money and at a final table, for a stack too short
-  to wait, when the fold clock says CANNOT, with a type tag on the player
-  the decision depends on, and in the Max EV style. The source line under
-  the answer says which: "the all-in table agrees", "SURVIVAL FOLD (engine:
-  ...)" or "GUARD OFF (why)". It is the same rule as in the tight-aggressive
-  sheet: before the money the table wins, in the money the engine does.
+  goal `balanced`; the guard folds only a thin edge. `cash` ("Cash first"):
+  goal `itm`; the guard is strict. `maxev` ("Max EV"): goal `balanced`, no
+  guard. While re-entry is open, and in Spin & Gold and All-In or Fold, it
+  is chip EV with no guard.
+- **Moves.** `full` ("All moves"): the engine, as `advise`. `allin`
+  ("All-in or fold only"): the `binary` tables answer in two words and the
+  engine is the second line.
+- **Survival guard** (tournament, all moves, before the money). A play
+  that puts a third or more of the user's chips at risk before the flop is
+  also put to the all-in or fold chart. "At risk" is what the user can still lose
+  to players who can match it. The source line under the answer says how
+  that went. "the all-in table agrees": the chart makes the play too.
+  "SURVIVAL FOLD (engine: ...)": the chart folds; `cash` always follows it,
+  `survive` only for a thin edge (an all-in worth under +0.20bb; a call
+  with fewer than 4 points over what it needs, 7 close to the money), and
+  otherwise the play stands as "CLEAR EDGE (...)". "SURVIVAL RAISE (...)":
+  with 17bb or more a survival fold of an all-in becomes the sheet's small
+  raise where there is one ("SURVIVAL CALL (...)": the big blind's sheet
+  call). "GUARD OFF (why)": Max EV, in the money, final table, too short to
+  wait, the fold clock says CANNOT, re-entry open; a good price, which is
+  never folded (3 to 1 or better, or equity 15 points over what is needed);
+  a read, but only one that makes the play safer (nit or tight on the
+  players who can still call; lag, loose or maniac on the raiser). A plan
+  stated under a raise ("If CO (30bb) moves all-in: CALL" or "FOLD") is
+  kept by the next answer.
+- **Close before the money** ("CLOSE: ..."). The lower-variance side is
+  shown first (FOLD, or CHECK when free), the engine's play second. Big
+  blind against one raise: the call stays only for a hand on the sheet's
+  row for that depth and on the short list (any pair, any suited hand, any
+  ace, K9o+, Q9o+, J9o+, T9o).
+- **After the flop.** The main opponent is the bettor; with nothing to
+  call, the last to bet among the players with chips. Chips count as far
+  as they can be matched. The playbook check folds one pair to a raise on
+  the turn or river and to a river bet of 60% of the pot or more, except
+  against lag and maniac and with under 1.5 pots behind when the street
+  began. While players in front have not acted the answer is provisional:
+  the Follow button says "if BB and CO check" and Space records those
+  checks too. Bet sizes are rounded to a chip step (25 at 300/600/75). An
+  all-in that is more than anyone left can match says how much of it can
+  be matched. After a hand the coach's line is the table's own result line.
+- **Very large fields** are thinned above 1,000 reachable paid places, so
+  that an answer still comes in about half a second: an approximation, too
+  careful for a very short stack a few places from the money.
 - **When an answer looks wrong**, ask for the hand from the history sheet
   (`Y`, then Copy as text, and paste it here): it has the blinds, the
   players, the user's seat, cards and stack, and every action. Ask also for
-  the style and plan, players left and places paid, and the source line of
-  the answer. Then run the same spot with `quick` or `advise` (`binary`,
+  the style and moves, players left and places paid, and the source line
+  under the answer ("ICM off" in it means players left or places paid were
+  not entered). Then run the same spot with `quick` or `advise` (`binary`,
   `spin`, `aof` for those tables) and say which of the two is wrong and why
-  in one clause. "ICM off" in the source line means players left or places
-  paid were not entered.
+  in one clause. NO ADVICE shows no error text: have it started with
+  `--verbose` and ask for the black window's lines after "the coach could
+  not answer a spot:".
 - **It knows what was typed.** A stack drawn with `~` was never entered (a
   guess). Opponent ranges move with the type tags the user sets (seat digit,
   `T`). "Players left" that is many hands old gets a warning.
@@ -474,12 +530,17 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
   starts the table app. It has no console: a small window shows the address
   and a Stop button, and a second start opens the running copy's page.
   `PokerCoach.exe live-app` opens the old screen reader's launcher.
-- **Checked in Chromium on Linux only.** The page, the server and a Linux
-  build of the program were run here; the .bat files, the Windows .exe and
-  other browsers were not. Say so, and treat the user's first start as the
-  evidence: when it does not start, ask for the text in the black window;
-  when the page misbehaves, for the browser's name and what its console
-  shows (F12).
+- **Limits.**
+  - Checked in headless Chromium on Linux only: never on Windows, never
+    the .bat files or a Windows .exe, no other browser. Say so. The user's
+    first start is the evidence: if it does not start, ask for the text in
+    the black window; if the page misbehaves, for the browser's name and
+    what its console shows (F12).
+  - Advice after the flop is heuristic: equity against an estimated range,
+    then rules. Spin & Gold uses the tournament's range charts there.
+  - A dead small blind cannot be entered.
+  - The PDF sheets from earlier sessions are older than the rebuilt sheet;
+    `tag-sheet` prints the current one.
 
 ## Live table reader (play money and research)
 
@@ -632,7 +693,8 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   previous tournament. The table app keeps its own sessions beside it, in
   `tournament/app/`; the two do not read each other.
 - After the tournament, if asked for a review, use `log` and `show --log 30`.
-- Tests: `python3 -m unittest discover -s tests` (the live reader's tests need
+- Tests: `python3 -m unittest discover -s tests` (about 590 tests, four
+  minutes; the live reader's tests need
   `pip install -r requirements-live.txt`; without it they are skipped). Rebuild data only if ranges
   or the solver change: `tools/gen_preflop_equity.c` (equity table),
   `python3 -c "from poker_coach.pushfold import build_charts; build_charts()"`,

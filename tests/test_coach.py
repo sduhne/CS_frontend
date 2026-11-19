@@ -603,6 +603,43 @@ class Preflop(unittest.TestCase):
                 self.assertTrue(self.play([30] * 8, 5, hand, away=away).action.startswith("RAISE"), (hand, away))
         self.assertEqual(self.play([30] * 8, 6, "K3s").action, "FOLD")
 
+    def test_a_blind_posted_all_in_is_not_a_caller_who_stops_the_others(self):
+        # The big blind has 0.6bb: all of it is in as his blind.  The solver listed him as a caller who
+        # needs nothing to call, and took the players behind a caller to fold: the raiser "never called",
+        # and 72o over an early raise read +1.45bb for 20bb.
+        from poker_coach import pushfold
+        from poker_coach.preflop import _posted_all_in, solve_open_shove, solve_reshove
+        short_bb = [20.0] * 7 + [0.6]
+        raised = [(0, "raise", 2.2)]
+        for left in (None, 400):
+            adv = self.play(short_bb, 6, "72o", raised, left=left)
+            self.assertEqual(adv.action, "FOLD", left)
+            self.assertLess(adv.data["reshove_ev_bb"], -1.0, left)
+            self.assertFalse(any("everyone folds 0%" in line for line in adv.numbers), adv.numbers)
+            full = self.play([20.0] * 8, 6, "72o", raised, left=left)
+            self.assertLess(abs(adv.data["reshove_ev_bb"] - full.data["reshove_ev_bb"]), 1.0)    # near the usual table
+        self.assertIn("ALL-IN", self.play(short_bb, 6, "QQ", raised, left=400).action)
+        setup = HandSetup(short_bb, 0.5, 1.0, 0.125)
+        self.assertEqual(_posted_all_in(setup, 6), [7])
+        self.assertEqual(_posted_all_in(HandSetup([20.0] * 8, 0.5, 1.0, 0.125), 6), [])
+        self.assertEqual(_posted_all_in(setup, 6, bets={7: 0.475}), [])          # a bet of his own: he is a player
+        # the raiser can call again: the solution names him among the callers, with a real range
+        sol = solve_reshove(setup, 6, 0, 2.2, Prizes(), opener_range=parse_range("77+, ATs+, KQs, AJo+"))
+        self.assertEqual([c.idx for c in sol.callers], [0])
+        self.assertGreater(sol.fold_equity[HAND_INDEX["72o"]], 0.3)
+        # first in with the small blind all-in from posting: the big blind behind him can still call
+        setup = HandSetup([20.0] * 6 + [0.3, 20.0], 0.5, 1.0, 0.125)
+        sol = solve_open_shove(setup, 5, Prizes())
+        self.assertEqual([c.idx for c in sol.callers], [7])
+        self.assertGreater(sum(sol.caller(7).call_range), 5)
+        self.assertEqual(self.play([20.0] * 6 + [0.3, 20.0], 5, "72o").action, "FOLD")
+        # with every stack whole the wrappers give the solver's own numbers
+        whole = HandSetup([12.0] * 8, 0.5, 1.0, 0.125)
+        self.assertEqual(solve_open_shove(whole, 5, Prizes()).ev, pushfold.solve_open_shove(whole, 5, Prizes()).ev)
+        ours = solve_reshove(whole, 6, 4, 2.0, Prizes(), opener_range=parse_range("22+, A2s+, KTs+, ATo+"))
+        theirs = pushfold.solve_reshove(whole, 6, 4, 2.0, Prizes(), opener_range=parse_range("22+, A2s+, KTs+, ATo+"))
+        self.assertEqual(ours.ev, theirs.ev)
+
 
 class Postflop(unittest.TestCase):
     def go(self, hero, board, pot, to_call=0.0, stack=40.0, vs="call:BB", line="", **kw):

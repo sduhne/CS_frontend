@@ -3195,6 +3195,322 @@ class T1ABetWhileCardsAreWanted(unittest.TestCase):
         self.assertEqual((view["hand"]["phase"], state(s).log[-1]["street"]), ("flop", "flop"))
 
 
+def played_again(text: str) -> Session:
+    """Play a hand again from nothing but its text in the hand history (Y, Copy as text) -> the new session.
+
+    Reads the blinds, the seats line and every action as a person would, and types them into a fresh table.
+    """
+    import itertools
+    import re
+
+    def number(words):
+        return float(words.replace(",", "").replace("bb", ""))
+
+    lines = text.split("\n")
+    head = re.match(r"Hand \d+ \| ([\d,.]+)/([\d,.]+)(?: (bb )?ante ([\d,.]+))? \| (\d+) players(?: \| fee [\d.]+bb)?"
+                    r"(?: \| dead button on seat (\d+))?(?: \| you (\S+) (\S+) \()?", lines[0])
+    assert head, lines[0]
+    sb, bb, bb_ante, ante, players, dead_button, hero_pos, hero_cards = head.groups()
+    assert lines[1].startswith("Seats: "), lines[1]
+    seats = {}
+    for part in lines[1][len("Seats: "):].split("; "):
+        m = re.match(r"(\d+) (\S+) ([\d,.]+)(bb)?(?: (.*?))??( \(sitting out\))?$", part)
+        assert m, part
+        seats[int(m.group(1))] = {"pos": m.group(2), "stack": m.group(3).replace(",", ""), "name": m.group(5) or "",
+                                  "away": bool(m.group(6)), "bb": bool(m.group(4))}
+    assert len(seats) == int(players)
+    aof_mode = any(seat["bb"] for seat in seats.values())
+    s = Session(save=False)
+    if aof_mode:
+        s.do("set_mode", mode="aof")
+        s.do("new_session")
+    else:
+        s.do("new_session", size=max(2, max(seats), int(dead_button or 0)), start_stack=10000)
+        if bb_ante:
+            s.do("set_ante_kind", kind="bb")
+            s.do("set_level", text=f"{sb}/{bb}/{ante}".replace(",", ""))
+        else:
+            s.do("set_level", text=f"{sb}/{bb}/{ante or 0}".replace(",", ""))
+    for number_ in range(2, s.view()["table"]["size"] + 1):
+        if number_ not in seats:
+            s.do("clear_seat", seat=number_)
+    for number_, seat in seats.items():
+        s.do("set_stack", seat=number_, text=seat["stack"])
+        if number_ != HERO:
+            s.do("rename", seat=number_, name=seat["name"])
+        if seat["away"]:
+            s.do("set_status", seat=number_, status="away")
+    button = int(dead_button) if dead_button else next(n for n, seat in seats.items() if seat["pos"].startswith("BTN"))
+    s.do("set_button", seat=button)
+    view = s.do("deal", hero_cards=hero_cards if hero_cards and hero_cards != "??" else None)
+    assert {str(n): seat["pos"] for n, seat in seats.items()} == view["hand"]["positions"], (seats, view["hand"]["positions"])
+    who = {(seat["name"] or seat["pos"]): n for n, seat in seats.items()}
+    who.update({"You": HERO} if HERO in seats else {})
+    result = ""
+    for row in lines[2:]:
+        title, _, said = row.partition(": ")
+        if title == "Result":
+            result = said
+        street = title.split(" ")[0].lower()
+        if street not in BETTING:
+            continue
+        cards = "".join(title.split(" ")[1:])
+        if cards:
+            s.do("set_cards", slot=street, text=cards)
+        for step in ([] if said == "no action recorded" else said.split(", ")):
+            name = max((n for n in who if step.startswith(n + " ")), key=len)
+            verb = step[len(name) + 1:]
+            kind = verb.split(" ")[0]
+            amount = None
+            if kind in ("bet", "raise", "all-in") and "(" in verb:        # "raise to 1,320 (2.2bb)": the chips are exact
+                amount = int(number(verb.replace("raise to", "raise").split(" ")[1]))
+            s.do("act", seat=who[name], kind={"all-in": "allin"}.get(kind, kind), amount=None if kind == "all-in" else amount)
+        now = s.view()["hand"]
+        if now["phase"] == street and now["needs"] == "action" and "not recorded" not in text:
+            s.do("close_round")                         # whoever is not mentioned folded (or checked) when his turn came
+    if s.view()["hand"]["needs"] == "result" and result and "you folded" not in result and result != "not recorded":
+        winners = [HERO if w.startswith(("You", "you")) else int(re.match(r"[Ss]eat (\d+)", w).group(1)) for w in result.split(", ")]
+        tiers = [[list(order[:k]), *[[x] for x in order[k:]]] for order in itertools.permutations(winners)
+                 for k in range(1, len(winners) + 1)] + [[[x] for x in order] for order in itertools.permutations(winners)]
+        for ranking in tiers:                           # the result names who won what: find the order of the hands
+            trial = copy.deepcopy(s.data)
+            try:
+                view = s.do("award", ranking=ranking)
+            except ModelError:
+                s.data = trial
+                continue
+            if view["hand"]["result"]["text"] == result:
+                break
+            s.do("undo")
+    return s
+
+
+class TheHistoryTextIsEnoughToPlayTheHandAgain(unittest.TestCase):
+    """The text of a finished hand (Y, Copy as text) carries every seat, position and stack and every bet in chips.
+
+    It used to say "8 players" and round every amount to a tenth of a big blind, so the hand could not
+    be put on a table again from it.
+    """
+
+    def again(self, s):
+        """The newest hand of ``s`` played again from its text: the same text comes out, and the same stacks."""
+        entry = s.view()["history"][0]
+        replayed = played_again(entry["text"])
+        self.assertEqual(replayed.view()["history"][0]["text"].split("\n", 1)[1], entry["text"].split("\n", 1)[1])
+        first, second = s.view()["hand"], replayed.view()["hand"]
+        if first["result"]:
+            self.assertEqual(second["result"]["net"], first["result"]["net"])
+        return entry["text"]
+
+    def test_the_text_names_every_seat_stack_and_bet_in_chips(self):
+        s = tournament(size=6, level="300/600/75", stacks=[12900, 20000, 5425, 20000, 20000, 20000])
+        s.do("rename", seat=2, name="Bob")
+        s.do("set_status", seat=5, status="away")
+        s.do("deal", hero_cards="AhKh")
+        play(s, "4 raise 1320, 1 allin, 3 allin, 4 call")
+        s.do("set_cards", board="Ks7d2c5h9c")
+        s.do("award", ranking=[[3], [1]])
+        text = self.again(s)
+        self.assertEqual(text.split("\n")[:3], [
+            "Hand 1 | 300/600 ante 75 | 6 players | you BTN AhKh (21.5bb)",
+            "Seats: 1 BTN 12,900 You; 2 SB 20,000 Bob; 3 BB 5,425; 4 LJ 20,000; 5 HJ 20,000 (sitting out); 6 CO 20,000",
+            "Preflop: LJ raise to 1,320 (2.2bb), You all-in 12,825 (21.4bb), BB call all-in, LJ call"])
+        self.assertIn("Result: You (BTN) win 14,950, seat 3 (BB) wins 16,800", text)
+        # what you did beside the coach's word is written as on the hand line: "all-in", not the program's "allin"
+        s = tournament(size=6, level="300/600/75", stacks=[12900, 20000, 40000, 20000, 20000, 20000])
+        s.do("deal", hero_cards="AhAd")
+        s.record_advice(s.rev, "RAISE", {"kind": "raise", "to": 1200})
+        play(s, "1 allin")
+        text = s.do("close_round")["history"][0]["text"]
+        self.assertIn("Coach (preflop): RAISE | you: all-in | deviated", text)
+
+    def test_hands_of_every_kind_come_out_the_same_when_played_again(self):
+        # folded round to the big blind; a raise that takes the blinds
+        s = tournament(size=8, level="300/600/75", stacks=[12900, 23400, 18500, 12500, 20000, 20000, 20000, 20000], button=4)
+        s.do("deal", hero_cards="72o")
+        play(s, "1 fold")
+        s.do("close_round")
+        self.again(s)
+        s.do("deal", hero_cards="QQ")
+        s.do("act", seat=1, kind="raise", amount=3900)
+        s.do("close_round")
+        self.assertIn("You raise to 3,900 (6.5bb)", self.again(s))
+        # three streets with bets that are no round number of big blinds, a named player, and a split pot
+        s = tournament(size=6, level="100/200/25", stacks=[20000, 19350, 18775, 20000, 20000, 20000])
+        s.do("rename", seat=3, name="Big Ann")
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 525, 1 call, 3 call")
+        s.do("set_cards", board="Ks7d2c")
+        play(s, "3 check, 6 bet 1175, 1 raise 3325, 3 fold, 6 call")
+        s.do("set_cards", slot="turn", text="5h")
+        play(s, "6 check, 1 check")
+        s.do("set_cards", slot="river", text="9c")
+        play(s, "6 bet 4150, 1 call")
+        s.do("award", ranking=[[1, 6]])
+        text = self.again(s)
+        self.assertIn("Flop Ks 7d 2c: Big Ann check, CO bet 1,175 (5.9bb), You raise to 3,325 (16.6bb), Big Ann fold, CO call", text)
+        # a big-blind ante, a player all-in for less than the big blind, three players at the showdown
+        s = tournament(size=4, level="500/1000", stacks=[20000, 700, 20000, 9000])
+        s.do("set_ante_kind", kind="bb")
+        s.do("set_level", text="500/1000/1000")
+        s.do("deal", hero_cards="AhAd")
+        play(s, "4 allin, 1 call, 2 allin, 3 fold")
+        s.do("award", ranking=[[2], [4], [1]])
+        self.assertIn("bb ante 1,000", self.again(s))
+        # a dead button: the small blind of the hand before went out
+        s = tournament(size=4, level="100/200/25", stacks=[5000, 300, 5000, 5000])
+        s.do("deal", hero_cards="72o")
+        play(s, "4 fold, 1 fold, 2 allin, 3 call")
+        s.do("award", winner=3)                                     # seat 2 is out: the button rests on his seat
+        s.do("deal", hero_cards="AKs")
+        self.assertEqual(s.view()["hand"]["button"], 2)
+        play(s, "1 raise 500")
+        s.do("close_round")
+        self.assertIn("dead button on seat 2", self.again(s))
+        # All-In or Fold counts in big blinds, and takes its fee
+        s = aof({2: "5.5", 3: "5.5", 4: "5.5"})
+        play(s, "4 fold, 1 allin, 2 allin, 3 fold")
+        s.do("award", winner=2)
+        text = self.again(s)
+        self.assertIn("Seats: 1 BTN 8bb You; 2 SB 5.5bb; 3 BB 5.5bb; 4 CO 5.5bb", text)
+        self.assertIn("\nYou: -5.5bb", text)                        # in big blinds, like the result above it
+
+
+class NoButtonToCheckOnceAGameIsOver(unittest.TestCase):
+    """A Spin game ended and the toast still said "Button on seat 1: check it against your table".
+
+    With one player left no hand can be dealt: there is no button to check.
+    """
+
+    def test_a_finished_spin_game_says_how_it_ended_and_nothing_about_the_button(self):
+        s = spin()                                                  # hero on the button, 300 chips each
+        play(s, "1 allin, 2 allin, 3 allin")
+        view = s.do("award", winner=1)                              # you take every chip
+        self.assertEqual(toast_of(view), "You won this game. Press N for a new one.")
+        s = spin()
+        play(s, "1 allin, 2 allin, 3 allin")
+        view = s.do("award", winner=2)                              # seat 2 does
+        self.assertEqual(toast_of(view), "You lost this game. Press N for a new one.")
+        # with two players left there is a next hand: after a blind went out the toast still asks to check the button
+        s = spin()
+        play(s, "1 fold, 2 allin, 3 allin")
+        view = s.do("award", winner=2)                              # the big blind is out: heads-up
+        self.assertIn("check it against your table", toast_of(view))
+
+
+class D9AnAllInForMoreThanAnybodyCanMatch(unittest.TestCase):
+    """D9: hero covers everybody.  The coach names what can be matched (5.5bb), the All-in button the stack (8bb).
+
+    The view carries both (``hand.legal.allin`` and ``hand.allin_matched``) so the page can say both, and
+    an all-in recorded from the coach's button is the whole stack: the part nobody matched comes back.
+    """
+
+    def test_d9_the_view_says_the_stack_and_what_can_be_matched(self):
+        s = aof({2: "5.5", 3: "5.5", 4: "5.5"})                     # hero has the full 8bb, on the button
+        s.do("act", seat=4, kind="fold")
+        hand = s.view()["hand"]
+        self.assertEqual((hand["target"], hand["legal"]["allin"], hand["allin_matched"]), (1, 8, 5.5))
+        # the coach's button sends {"kind": "allin"} (and may send what can be matched as "to"): the whole stack goes in
+        view = s.do("act", seat=1, kind="allin", to=5.5, via="follow")
+        self.assertEqual((view["hand"]["line"][-1]["text"], stack(s, 1), state(s).in_front[1]), ("You all-in 8bb", 0, 8))
+        view = play(s, "2 allin, 3 fold")                           # one caller for his 5.5bb
+        self.assertEqual((view["hand"]["needs"], state(s).returned), ("result", {1: 2.5}))
+        self.assertEqual((stack(s, 1), [(p["amount"], p["eligible"]) for p in view["hand"]["pots"]]), (2.5, [(12, [1, 2])]))
+
+    def test_d9_matched_is_the_all_in_itself_when_somebody_covers_it(self):
+        s = tournament(size=3, level="500/1000/0", stacks=[8000, 5500, 5500])
+        hand = s.do("deal", hero_cards="AhAd")["hand"]
+        self.assertEqual((hand["legal"]["allin"], hand["allin_matched"]), (8000, 5500))
+        s = tournament(size=3, level="500/1000/0", stacks=[8000, 5500, 20000])
+        hand = s.do("deal", hero_cards="AhAd")["hand"]
+        self.assertEqual((hand["legal"]["allin"], hand["allin_matched"]), (8000, 8000))
+        hand = play(s, "1 fold")["hand"]                            # an opponent's all-in, as it is recorded for him:
+        self.assertEqual((hand["target"], hand["legal"]["allin"], hand["allin_matched"]), (2, 5500, 5500))     # the big blind covers him
+        # players who folded do not count: only the big blind is left, with 3,000 in all
+        s = tournament(size=3, level="500/1000/0", stacks=[8000, 20000, 3000])
+        s.do("deal", hero_cards="AhAd")
+        play(s, "1 raise 2000, 2 fold, 3 call")
+        hand = s.do("set_cards", board="Ks7d2c")["hand"]            # on the flop you have 6,000 behind, he has 1,000
+        self.assertEqual((hand["target"], hand["legal"]["allin"], hand["allin_matched"]), (1, 6000, 1000))
+        s.do("act", seat=1, kind="fold")                            # the hand is over: nobody is to act, nothing to say
+        self.assertIsNone(s.view()["hand"]["allin_matched"])
+
+
+class D6AFoldForAnImpliedCheckWhileCardsAreWanted(unittest.TestCase):
+    """D6: a fold typed for a seat whose check in the round just closed was only implied, while the next
+    street's cards are wanted, is refused like a bet typed then: the cards first.  It used to be taken
+    into the closed round, which opened again for the players behind him.
+    """
+
+    def turn_wanted(self):
+        """6 seats, button on hero.  CO raises, hero and the big blind call; the flop is checked through by Enter."""
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call, 3 call")
+        s.do("set_cards", board="Ks7d2c")
+        view = s.do("close_round")
+        self.assertEqual((view["hand"]["phase"], view["hand"]["needs"]), ("turn", "board"))
+        return s
+
+    def test_d6_a_fold_for_an_implied_check_is_refused_with_the_cards_to_type(self):
+        s = self.turn_wanted()
+        before = (marked(s), s.rev)
+        for seat in (3, 6, 1):                                      # the big blind, the cutoff, and your own seat
+            err = refused(s, "act", seat=seat, kind="fold")
+            self.assertEqual(err.message, "Type the turn first (5 H), then record the fold.", seat)
+            he = "you" if seat == 1 else "he"
+            self.assertEqual(err.fix, f"On the record {he} checked on the flop, where a check was free: "
+                                      "a fold now is on the turn.", seat)
+        self.assertEqual((marked(s), s.rev), before)                # nothing changed: the flop round did not open again
+        self.assertEqual((s.view()["hand"]["phase"], s.view()["hand"]["needs"]), ("turn", "board"))
+        self.assertFalse([e for e in state(s).log if e["kind"] == "fold" and e["seat"] in (1, 3, 6)])
+
+    def test_d6_the_cards_first_and_then_the_fold_is_on_the_new_street(self):
+        s = self.turn_wanted()
+        refused(s, "act", seat=3, kind="fold")
+        s.do("set_cards", board="Ks7d2c5h")                         # as the refusal says
+        s.do("act", seat=3, kind="fold")
+        self.assertEqual([(e["street"], e["kind"]) for e in state(s).log if e["seat"] == 3][-2:],
+                         [("flop", "check"), ("turn", "fold")])
+        # the river wanted: the same sentence with the river's card
+        s = self.turn_wanted()
+        s.do("set_cards", board="Ks7d2c5h")
+        s.do("close_round")
+        err = refused(s, "act", seat=6, kind="fold")
+        self.assertEqual((err.message, err.fix), ("Type the river first (9 C), then record the fold.",
+                                                  "On the record he checked on the turn, where a check was free: "
+                                                  "a fold now is on the river."))
+
+    def test_d6_what_stays_as_it_was(self):
+        # before the flop the big blind's free check was implied by Enter: the fold waits for the flop too
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "1 call")
+        s.do("close_round")                                         # the small blind folds, the big blind checks
+        self.assertEqual(s.view()["hand"]["needs"], "board")
+        err = refused(s, "act", seat=3, kind="fold")
+        self.assertEqual(err.message, "Type the flop first (K S 7 D 2 C), then record the fold.")
+        # a check or a call for him is still taken into the closed round (the forgotten caller's rule)
+        view = s.do("act", seat=3, kind="check")
+        self.assertEqual(toast_of(view), "Added to the betting before the flop: BB checks")
+        # at the showdown nothing waits for cards: a fold for an implied check on the river is his fold there
+        s = self.turn_wanted()
+        s.do("set_cards", board="Ks7d2c5h9c")                       # (typing the river checks the turn through)
+        s.do("close_round")                                         # ... and Enter the river
+        self.assertEqual(s.view()["hand"]["needs"], "result")
+        view = s.do("act", seat=3, kind="fold")
+        self.assertEqual(toast_of(view), "Added to the betting on the river: BB folds")
+        # a player whose check was typed acts on the new street, as before
+        s = tournament(size=6, level="100/200/25", stacks=[20000] * 6)
+        s.do("deal", hero_cards="AhKh")
+        play(s, "6 raise 500, 1 call, 3 call")
+        s.do("set_cards", board="Ks7d2c")
+        play(s, "3 check, 6 check, 1 check")
+        self.assertEqual(s.view()["hand"]["needs"], "board")
+        s.do("act", seat=3, kind="fold")
+        self.assertEqual(state(s).log[-1]["street"], "turn")
+
+
 class T2AFoldForAPlayerAlreadyFolded(unittest.TestCase):
     """T2: a fold typed for a player the record has out since an earlier street changes nothing and says so."""
 

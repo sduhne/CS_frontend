@@ -16,6 +16,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -541,6 +542,110 @@ class Advice(ServerCase):
         self.assertEqual([answer["rev"] for answer in answers], [rev] * 3)
         self.assertEqual(self.asked, [rev])
 
+    # ---- D10: an answer still being worked out when the table changes ----------------------------
+
+    def held_coach(self):
+        """A coach that answers a revision only when the test lets it -> (thinking, release): events by revision."""
+        thinking, release = {}, {}
+        guard = threading.Lock()
+
+        def events(rev):
+            with guard:
+                return thinking.setdefault(rev, threading.Event()), release.setdefault(rev, threading.Event())
+
+        def coach(session):
+            self.asked.append(session.rev)
+            started, go = events(session.rev)
+            started.set()
+            go.wait(20)
+            return stand_in_coach(session)
+
+        self.server.app.coach = coach
+        return (lambda rev: events(rev)[0]), (lambda rev: events(rev)[1])
+
+    def ask_in_a_thread(self, rev, answers):
+        thread = threading.Thread(target=lambda: answers.__setitem__(rev, self.advice(rev)), daemon=True)
+        thread.start()
+        return thread
+
+    def test_d10_the_answer_for_the_new_table_does_not_wait_for_the_stale_one(self):
+        thinking, release = self.held_coach()
+        rev = self.deal()
+        answers = {}
+        old = self.ask_in_a_thread(rev, answers)
+        self.assertTrue(thinking(rev).wait(10))             # the answer for this table is being worked out ...
+        self.assertEqual(self.do("set_config", unit="bb")["rev"], rev + 1)     # ... and the table changes
+        release(rev + 1).set()                              # (the new table's answer takes no time)
+        try:
+            new = self.ask_in_a_thread(rev + 1, answers)
+            new.join(10)
+            # the new table has its answer while the old one is still being worked out
+            self.assertEqual((answers.get(rev + 1) or {}).get("rev"), rev + 1)
+            self.assertNotIn(rev, answers)
+            self.assertEqual(self.advice(rev), {"status": "stale"})        # asked again for the old table: sent away at once
+        finally:
+            release(rev).set()
+        old.join(10)
+        self.assertEqual(answers[rev], {"status": "stale"})                # the old answer never reaches the page
+        self.assertEqual(self.advice(rev + 1), answers[rev + 1])           # and it did not replace the kept one
+        self.assertEqual(self.asked, [rev, rev + 1])
+
+    def test_d10_no_work_is_done_or_queued_for_a_table_that_is_gone(self):
+        thinking, release = self.held_coach()
+        rev = self.deal()
+        answers, threads = {}, {}
+        try:
+            threads[rev] = self.ask_in_a_thread(rev, answers)
+            self.assertTrue(thinking(rev).wait(10))
+            self.do("set_config", unit="bb")                                # rev + 1
+            threads[rev + 1] = self.ask_in_a_thread(rev + 1, answers)
+            self.assertTrue(thinking(rev + 1).wait(10))                     # two are being worked out: no more room
+            self.do("set_config", unit="chips")                             # rev + 2
+            threads[rev + 2] = self.ask_in_a_thread(rev + 2, answers)
+            self.assertFalse(thinking(rev + 2).wait(0.3))                   # it waits for room
+            self.do("set_config", unit="bb")                                # rev + 3: the one waiting is for a table that is gone
+            threads[rev + 2].join(10)
+            self.assertEqual(answers[rev + 2], {"status": "stale"})         # sent away at once, though both are still at work
+            threads[rev + 3] = self.ask_in_a_thread(rev + 3, answers)
+            self.assertFalse(thinking(rev + 3).wait(0.3))
+            self.assertEqual(self.view()["rev"], rev + 3)                   # the table itself never waits
+            release(rev).set()                                              # the oldest is done: room for the newest
+            self.assertTrue(thinking(rev + 3).wait(10))
+            release(rev + 3).set()
+            threads[rev + 3].join(10)
+            self.assertEqual(answers[rev + 3]["rev"], rev + 3)
+        finally:
+            for n in range(rev, rev + 4):
+                release(n).set()
+        for thread in threads.values():
+            thread.join(10)
+        self.assertEqual((answers[rev], answers[rev + 1]), ({"status": "stale"}, {"status": "stale"}))
+        self.assertEqual(self.asked, [rev, rev + 1, rev + 3])               # nothing was worked out for rev + 2
+        self.assertEqual(self.server.app._at_work, {})
+
+    def test_d10_the_delay_for_trials_is_off_unless_somebody_sets_it(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop(server.DELAY_VARIABLE, None)
+            self.assertEqual(server.answer_delay(), 0.0)
+            rev = self.deal()
+            started = time.perf_counter()
+            self.assertEqual(self.advice(rev)["rev"], rev)
+            self.assertLess(time.perf_counter() - started, 0.25)
+            os.environ[server.DELAY_VARIABLE] = "0.3"
+            rev = self.do("set_config", unit="bb")["rev"]
+            started = time.perf_counter()
+            self.assertEqual(self.advice(rev)["rev"], rev)
+            self.assertGreaterEqual(time.perf_counter() - started, 0.3)
+            for text, seconds in (("", 0.0), ("soon", 0.0), ("-3", 0.0), ("1e9", 60.0)):
+                os.environ[server.DELAY_VARIABLE] = text
+                self.assertEqual(server.answer_delay(), seconds, text)
+        # nothing the user starts sets it: not the starters, not the command line, not the packaged program
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for name in ("Start Poker Coach.bat", "Build exe.bat", os.path.join("poker_coach", "cli.py"),
+                     os.path.join("tools", "coach_app.py"), os.path.join("tools", "build_exe.py")):
+            with open(os.path.join(repo, name), encoding="utf-8", errors="replace") as fh:
+                self.assertNotIn(server.DELAY_VARIABLE, fh.read(), name)
+
     def test_a_coach_that_fails_is_no_answer_and_the_table_goes_on(self):
         def nothing(session):
             return None
@@ -701,6 +806,35 @@ class ThePageAndTheServer(ServerCase):
 # --------------------------------------------------------------------------
 # Saving
 # --------------------------------------------------------------------------
+
+class D7TheSavedExamplesOfThePage(unittest.TestCase):
+    """D7: static/dev-fixtures.js (index.html?fixture=name) shows the page with answers written out by hand.
+
+    The NO ADVICE example carried an older sentence with a Python error in it; the coach never
+    sends one to the page.
+    """
+
+    def test_d7_the_no_advice_example_is_what_the_coach_really_answers(self):
+        from poker_coach.app import advice
+        with open(os.path.join(server.STATIC_FOLDER, "dev-fixtures.js"), encoding="utf-8") as fh:
+            fixtures = fh.read()
+        answer = advice.no_advice(advice.blank_answer(1), KeyError("UTG+3"))
+        self.assertEqual(answer["reason"],
+                         "The coach cannot read this spot. Play it from the sheet; the next one is advised as usual.")
+        start = fixtures.index('add("no-advice"')
+        example = fixtures[start:fixtures.index("}));", start)]
+        self.assertIn(f'reason: {json.dumps(answer["reason"])},', example)
+        self.assertIn(f'verb: {json.dumps(answer["headline"]["verb"])}', example)
+        self.assertIn('follow: null', example)                      # nothing to follow, as in the coach's answer
+        for word in ("KeyError", "ValueError", "TypeError", "Traceback", "engine stopped"):
+            self.assertNotIn(word, fixtures)                        # no Python text in any example
+        # the example of a program that does not answer says what the page says (controller.js NO_ANSWER)
+        with open(os.path.join(server.STATIC_FOLDER, "controller.js"), encoding="utf-8") as fh:
+            controller = fh.read()
+        said = "Is it still running? Start it again (double-click Start Poker Coach) and reload this page."
+        self.assertIn(said, controller)
+        self.assertIn(said, fixtures)
+
 
 class Saving(ServerCase):
     def test_the_session_survives_a_restart(self):

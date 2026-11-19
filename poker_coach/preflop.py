@@ -11,13 +11,109 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .cards import HANDS, format_range, parse_range, range_combos, range_pct, top_percent
-from .equity import allin_order, eq_vs_range, hand_equity, preflop_equity
+from .equity import all_vs_range, allin_order, eq_vs_range, hand_equity, preflop_equity
 from .icm import Prizes
-from .pushfold import (HandSetup, _call_req, build_shove_spot, solve_open_shove, solve_reshove,
-                       solve_shove, _unit)
+from . import pushfold as _solver
+from .pushfold import HandSetup, _call_req, solve_shove, _unit
 from .ranges import (PLAYER_TYPES, norm_type, open_size_bb, opener_category, position_name,
                      rfi_range, scale_range, threebet_range, villain_limp_range,
                      villain_open_range, vs_open_chart, _ladder, _POSITION_ALIASES)
+
+
+
+# --------------------------------------------------------------------------
+# The all-in solver, with a blind that was posted all-in put right
+# --------------------------------------------------------------------------
+#
+# ``pushfold`` lists every player behind the shover as a caller who calls or folds, and takes the players
+# behind a caller to fold.  A blind who posted his last chips has no decision: he needs nothing to "call",
+# so he always calls, and nobody after him ever could.  With a big blind all-in for half a blind, an all-in
+# over a raise then read as "the raiser never calls" and 7-2 offsuit showed +1.45bb for 20bb.  Here such a
+# player is left out of the callers: his chips are in the pot, and the pot he can win goes to the shover at
+# even odds when everybody else folds.  The three functions below take the solver's place in this file and
+# in the table app.
+
+def _posted_all_in(setup: HandSetup, shover: int, bets: dict | None = None) -> list[int]:
+    """Players whose whole stack went in as a blind: no decision is left to them."""
+    bets = bets or {}
+    return [j for j in range(setup.n) if j != shover and j not in bets
+            and setup.live[j] > 0 and setup.blinds[j] >= setup.live[j] - 1e-9]
+
+
+def _shove_spot(setup: HandSetup, shover: int, prizes: Prizes, *, away=None, bets=None, **more):
+    """(value of folding, value when everybody folds, the callers, swing).
+
+    ``swing`` is what the showdown against a blind who is all-in from posting moves, in the same
+    units: 0 when there is no such player.  The value "when everybody folds" then counts that
+    showdown at even odds.
+    """
+    gone = _posted_all_in(setup, shover, bets)
+    if not gone:
+        return _solver.build_shove_spot(setup, shover, prizes, away=away, bets=bets, **more) + (0.0,)
+    out = list(away or [False] * setup.n)
+    for j in gone:
+        out[j] = True
+    v_fold, v_steal, callers = _solver.build_shove_spot(setup, shover, prizes, away=out, bets=bets, **more)
+    # When everybody else folds the shover still has to show his cards to the biggest of them, for the pot
+    # that player can win (every stake up to his own, and the antes).
+    j = max(gone, key=lambda k: setup.live[k])
+    inv = setup.invested(bets)
+    cap = setup.live[j]
+    main = sum(setup.antes) + sum(min(cap, setup.live[i] if i == shover else inv[i]) for i in range(setup.n))
+    lost = setup.fold_out(shover, bets)
+    lost[shover] -= main
+    lost[j] += main
+    v_lost = prizes.value(lost, shover)
+    return v_fold, 0.5 * (v_steal + v_lost), callers, v_steal - v_lost
+
+
+def build_shove_spot(setup: HandSetup, shover: int, prizes: Prizes, *, away=None, bets=None, **more):
+    """``pushfold.build_shove_spot``, without the players who are all-in from posting a blind among the callers."""
+    return _shove_spot(setup, shover, prizes, away=away, bets=bets, **more)[:3]
+
+
+_VS_ANY_TWO: list = []          # every hand's equity against a random hand, worked out once
+
+
+def _solve(v_fold: float, v_steal: float, callers: list, swing: float, iters: int, unit: float):
+    """``solve_shove``, and then the showdown against the blind who posted all-in, hand by hand: a strong
+    hand wins that small pot more often than a weak one."""
+    sol = solve_shove(v_fold, v_steal, callers, iters=iters, unit=unit)
+    if swing:
+        if not _VS_ANY_TWO:
+            _VS_ANY_TWO.extend(all_vs_range([1.0] * 169)[0])
+        sol.ev = [ev + stay * (eq - 0.5) * swing for ev, stay, eq in zip(sol.ev, sol.fold_equity, _VS_ANY_TWO)]
+        sol.shove_range = [1.0 if ev > 0 else 0.0 for ev in sol.ev]
+    return sol
+
+
+def solve_open_shove(setup: HandSetup, shover: int, prizes: Prizes, *, caller_prizes=None, types=None, away=None,
+                     iters: int = 40, use_types: bool = True):
+    """``pushfold.solve_open_shove`` on ``_shove_spot`` above."""
+    v_fold, v_steal, callers, swing = _shove_spot(setup, shover, prizes, caller_prizes=caller_prizes, types=types,
+                                                  away=away, use_types=use_types)
+    return _solve(v_fold, v_steal, callers, swing, iters, _unit(prizes, setup, shover))
+
+
+def solve_reshove(setup: HandSetup, shover: int, opener: int, raise_to: float, prizes: Prizes, *, opener_range,
+                  flat_callers=None, caller_prizes=None, types=None, away=None, iters: int = 40,
+                  use_types: bool = True):
+    """``pushfold.solve_reshove`` on ``_shove_spot`` above: the players behind act first, then the raiser,
+    then the players who called him."""
+    flat_callers = flat_callers or {}
+    bets = {opener: raise_to}
+    for j in flat_callers:
+        bets[j] = raise_to
+    behind = [j for j in range(shover + 1, setup.n) if j != opener and j not in flat_callers]
+    priors = {opener: opener_range}
+    priors.update(flat_callers)
+    v_fold, v_steal, callers, swing = _shove_spot(
+        setup, shover, prizes, caller_prizes=caller_prizes, types=types, away=away, bets=bets, priors=priors,
+        caller_order=behind + [opener] + list(flat_callers), fold_winner=opener,
+        extra_req={j: 0.02 for j in behind},        # calling a raise and an all-in cold needs a real hand
+        use_types=use_types)
+    return _solve(v_fold, v_steal, callers, swing, iters, _unit(prizes, setup, shover))
+
 
 _PREMIUM = parse_range("QQ+, AKs, AKo")
 _TRAP = parse_range("KK+")

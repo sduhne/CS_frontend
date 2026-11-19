@@ -25,6 +25,11 @@ The rules it keeps:
 - One lock guards the session.  The coach's answer is worked out on a private copy of the
   session, outside that lock, so typing the next action never waits for the engine.
 - An answer belongs to one revision of the table and is kept until the table changes.
+- The answer for the table on screen never waits behind one for a table that is gone.  A request
+  for a revision that is no longer the table's is sent away at once ("stale"), also when it has
+  been waiting; and when the table changes while an answer is being worked out, the answer for
+  the new table is started beside it, not after it.  At most two are worked out at a time
+  (``AT_WORK``): the newest table's, and one that went stale meanwhile and is thrown away.
 - The advice adapter (``advice.py``) is imported when the first answer is asked for.  If it
   cannot be loaded, or it fails, the answer is {"status": "none"} with the error text, and the
   table goes on working.
@@ -98,6 +103,17 @@ STALE = {"status": "stale"}
 # out in the background.  Such an answer is not kept, so asking again gets the real one.
 PROVISIONAL = "charts_loading"
 
+# How many answers are worked out at the same time: the one for the table as it is, and one for a
+# table that changed meanwhile (the engine cannot be stopped half-way; its answer is thrown away).
+# More would only slow each other down: a request beyond that waits for room, and is sent away
+# without any work if its table has changed by then.
+AT_WORK = 2
+
+# For trying out a slow coach, never set in normal use: seconds every answer is held back
+# ($POKER_COACH_ADVICE_DELAY=1.5).  The browser checks use it to see what the page shows while
+# an answer is on its way.
+DELAY_VARIABLE = "POKER_COACH_ADVICE_DELAY"
+
 
 # ==========================================================================
 # 1. The coach's answer
@@ -128,6 +144,22 @@ def snapshot_of(session: Session) -> Session:
     return twin
 
 
+def answer_delay() -> float:
+    """Seconds an answer is held back, from ``$POKER_COACH_ADVICE_DELAY``: 0 unless somebody set it for a trial."""
+    try:
+        return min(60.0, max(0.0, float(os.environ.get(DELAY_VARIABLE) or 0)))
+    except ValueError:
+        return 0.0
+
+
+class _Work:
+    """One answer being worked out.  Other requests for the same revision wait for ``done`` and take ``answer``."""
+
+    def __init__(self):
+        self.done = threading.Event()
+        self.answer = STALE
+
+
 def coach_unavailable(err: Exception) -> dict:
     """What the page gets when the adapter cannot answer: nothing to advise, and (in ``error``) why."""
     text = f"{type(err).__name__}: {err}"
@@ -150,7 +182,8 @@ class TableApp:
     def __init__(self, folder: str | None = None, static: str | None = None, coach=None, verbose: bool = False):
         self.session = Session(folder)          # reads the saved files; a missing one is a fresh table
         self.lock = threading.Lock()            # guards the session; held only for quick work, never for the engine
-        self.advice_lock = threading.Lock()     # one answer is worked out at a time
+        self.room = threading.Condition(self.lock)      # a request for an answer waits here while AT_WORK are worked out
+        self._at_work = {}                      # revision -> _Work: the answers being worked out right now
         self.static = static or STATIC_FOLDER
         self.coach = coach
         self.verbose = verbose
@@ -178,6 +211,7 @@ class TableApp:
             try:
                 view = self.session.apply(intent)
                 self._warm_the_coach(view)
+                self.room.notify_all()          # requests waiting for an answer to the table before this: stale now
                 return {"view": view}
             except ModelError as err:
                 if err.code == "unreadable" and self.verbose and sys.stderr is not None:
@@ -223,6 +257,7 @@ class TableApp:
         except OSError:                         # a file is held right now: the session in memory stays
             print_traceback()
         self._advice_rev = self._advice = None
+        self.room.notify_all()                  # (called with the lock held) whoever waits for an answer looks again
 
     def ping(self, port: int) -> dict:
         """Which program this is and whose tables it holds (no lock: it answers while a change is made)."""
@@ -231,29 +266,47 @@ class TableApp:
     # ---- the coach ---------------------------------------------------------------------
 
     def advice(self, rev: int) -> dict:
-        """The coach's answer for revision ``rev``, or ``{"status": "stale"}`` when the table has moved on."""
+        """The coach's answer for revision ``rev``, or ``{"status": "stale"}`` when the table has moved on.
+
+        One answer is worked out per revision: a second request for it waits for the first and
+        takes the same answer.  A request whose table has changed is sent away at once, also when
+        it has been waiting.  An answer for the table as it is does not wait for one that went
+        stale while the engine was thinking: it is started beside it (``AT_WORK`` at most).
+        """
         with self.lock:
-            known = self._known_answer(rev)
-        if known is not None:
-            return known
-        # One answer is worked out at a time.  A second request for the same revision waits here
-        # and then finds the answer ready; one that went stale while waiting is sent away at once.
-        with self.advice_lock:
-            with self.lock:
+            while True:
                 known = self._known_answer(rev)
-                if known is None:
+                if known is not None:
+                    return known                            # stale, or made before
+                work = self._at_work.get(rev)
+                mine = work is None
+                if not mine:
+                    break                                   # being worked out for another request: wait for that
+                if len(self._at_work) < AT_WORK:
                     snapshot = snapshot_of(self.session)
-            if known is not None:
-                return known
+                    work = self._at_work[rev] = _Work()
+                    break
+                self.room.wait()                            # no room: until an answer is done, or the table changes
+        if not mine:
+            work.done.wait()
+            with self.lock:
+                return STALE if rev != self.session.rev else work.answer
+        try:
             answer = self._ask_the_coach(snapshot)          # the engine runs here: the session is not locked
             answer["rev"] = rev
             with self.lock:
-                if rev != self.session.rev:
-                    return STALE                            # the table changed while the engine was thinking
-                if not is_provisional(answer):
-                    self._advice_rev, self._advice = rev, answer
-                self._keep_for_history(rev, answer)
-            return answer
+                if rev == self.session.rev:
+                    if not is_provisional(answer):
+                        self._advice_rev, self._advice = rev, answer
+                    self._keep_for_history(rev, answer)
+                    work.answer = answer
+                # (else the table changed while the engine was thinking: ``work.answer`` stays stale)
+        finally:
+            with self.lock:
+                self._at_work.pop(rev, None)
+                self.room.notify_all()                      # room for the next one
+            work.done.set()
+        return work.answer
 
     def _known_answer(self, rev: int):
         """Stale, or the answer already made for this revision, or ``None``: it has to be worked out.
@@ -269,6 +322,9 @@ class TableApp:
     def _ask_the_coach(self, session: Session) -> dict:
         """Call the advice adapter.  Never raises: a failure becomes ``{"status": "none"}`` with the error."""
         try:
+            delay = answer_delay()
+            if delay:
+                time.sleep(delay)                           # a trial with a slow coach (see DELAY_VARIABLE)
             coach = self.coach or load_adapter()
             answer = coach(session)
             if not isinstance(answer, dict):

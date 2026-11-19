@@ -407,6 +407,13 @@
 
   function onPageEvent(event) {
     const detail = event.detail;
+    // A pointer click on the action bar while a change is still on its way to the program: the bar under
+    // the pointer is the old one and is about to be replaced, so the click is dropped (keys typed ahead
+    // wait and are read; a click was aimed at what is on screen). The second click of a double-click on
+    // Next hand would otherwise deal two hands and leave the first without a result.
+    const byPointer = !!detail.byPointer;
+    delete detail.byPointer;
+    if (byPointer && busy && detail.op) return;
     if (detail.ui && "seatMenu" in detail.ui) state.ui.menuByKey = false;      // opened or closed by a click
     apply(detail);
   }

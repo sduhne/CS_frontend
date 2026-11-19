@@ -195,10 +195,21 @@ button.value:hover{background:var(--line)}
 .spot{font-size:13px;line-height:19px;font-weight:500;color:var(--soft);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .slab.wait .spot{color:var(--grey)}
 .spot-full{font-size:14px;font-weight:500;color:var(--white)}
+/* Under 1024 a slab that waits (hand over, folded, no chips, whose turn it is) says a sentence, not an
+   answer: its word is smaller and the sentence has two lines, so "... press N for the next hand" and
+   "... or start a new tournament" are read in full at 560. The slab keeps its one height, so nothing
+   below it moves. (An answer keeps the big word and one line for the spot; the Why sheet has it in full.) */
+@media (max-width:1023px){
+  .slab.wait .act{height:28px;margin:-2px 0 2px}
+  .slab.wait .verb,.slab.wait .verb.long,.slab.wait .verb.xlong{font-size:28px;line-height:28px}
+  .slab.wait .spot{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+}
 
 /* Under 1024 the reasons are one line that opens the full panel as a sheet. */
 .whyline{display:flex;align-items:center;gap:12px;min-height:44px;width:100%;padding:0 4px;border-radius:var(--r-in);font-size:13px;color:var(--soft)}
-.whyline .text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* (two lines inside the row's 44px: at 560 the fold-clock sentence is read in full without opening the sheet) */
+.whyline .text{flex:1;min-width:0;line-height:17px;max-height:34px;overflow:hidden;text-align:left;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
 .whyline .more{flex:none;display:inline-flex;align-items:center;gap:2px;font-weight:600;color:var(--white)}
 button.whyline:hover{background:var(--panel)}
 .advice-tabs{display:none;align-self:flex-start}

@@ -503,7 +503,9 @@ class AllInOrFold(unittest.TestCase):
         self.assertEqual(verb(a), "ALL-IN")
         self.assertEqual(a["tiles"][0]["value"], "+0.12bb")
         self.assertIn("outside_tables", codes(a))           # answered for the effective stack: an approximation
-        self.assertEqual(a["headline"]["size_text"], "5.5BB")           # what the big blind can match (POST-11)
+        # the move as the All-in button records it, and what the big blind can match of it (D2)
+        self.assertEqual(a["headline"]["size_text"], "8BB")
+        self.assertEqual(a["headline"]["qualifier"], "5.5bb of your 8bb can be matched")
         self.assertEqual(a["headline"]["follow"], {"kind": "allin"})
 
     def test_A3_the_big_blind_calls(self):
@@ -1238,13 +1240,13 @@ class SurvivalGuardFindings(unittest.TestCase):
                 close = next(w["text"] for w in a["warnings"] if w["code"] == "close")
                 self.assertTrue(close.endswith("The sheet calls this hand in the big blind."), close)
                 self.assertNotIn("lower-variance side leads", close)
-            # with 25bb or more the sheet's own row for the big blind is read (against the button: K3o+ and
-            # Q8o+ since the sheet was rebuilt in L8, not K2o), so one more big blind of stack never turns a
-            # call into a fold; against a bigger raise the fold leads
+            # with 25bb or more the sheet's own row for the big blind is read as well (against the button:
+            # K3o+ and Q8o+), and the call is kept for the hands on that row and on the short list (D1), so
+            # one more big blind of stack never turns a call into a fold; against a bigger raise the fold leads
             self.assertEqual(verb(A.advise(tournament([24] * 8, BB, "T2s", acts=small_raise))), "CALL")
             self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "T2s", acts=small_raise))), "CALL")
             self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "A3s", acts=small_raise))), "CALL")
-            self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "K5o", acts=small_raise))), "CALL")
+            self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "K9o", acts=small_raise))), "CALL")
             deep = A.advise(tournament([30] * 8, BB, "K2o", acts=small_raise))
             self.assertEqual((verb(deep), deep["guard"]), ("FOLD", "close"))
             self.assertIn("25bb or more against a raise from BTN", deep["reason"])
@@ -1715,7 +1717,8 @@ class Words(unittest.TestCase):
                                       "nearly, and this all-in makes money.")
         self.assertNotIn("0bb effective", json.dumps(a))
         self.assertNotIn("1bb effective", json.dumps(a))
-        self.assertEqual(a["headline"]["size_text"], "0.6BB \u00b7 575")      # what can be matched
+        self.assertEqual(a["headline"]["size_text"], "29.9BB \u00b7 29,875")  # the all-in as the button records it
+        self.assertEqual(a["headline"]["qualifier"], "0.6bb of your 29.9bb can be matched")
         ordinary = A.advise(tournament([8] * 8, BTN, "A8o"))
         self.assertIn("8bb effective is all-in or fold territory", ordinary["reason"])
 
@@ -2339,17 +2342,21 @@ class AfterTheFlopFindings(unittest.TestCase):
         with postflop_says("BET ALL-IN"):
             a = A.advise(s)
         self.assertEqual((verb(a), a["headline"]["follow"]), ("ALL-IN", {"kind": "allin"}))
-        self.assertEqual(a["headline"]["size_text"], "20BB · 20,000")     # was 57.7BB, hero's whole stack
+        # hero's whole stack, as the All-in button records it, and beside it what is really at risk (D2)
+        self.assertEqual(a["headline"]["size_text"], "57.7BB · 57,675")
+        self.assertEqual(a["headline"]["qualifier"], "20bb of your 57.7bb can be matched")
         # before the flop: the small blind has 30bb and only the big blind, with 8bb, is left
         s = tournament([30, 30, 30, 30, 30, 30, 30, 8], SB, "AA")
         with engine_says("ALL-IN", data={"shove_ev_bb": 1.0}):
             a = A.advise(s)
         self.assertEqual((verb(a), a["headline"]["follow"]), ("ALL-IN", {"kind": "allin"}))
-        self.assertEqual(a["headline"]["size_text"], "7.9BB · 7,875")     # the big blind's stack after the ante
+        self.assertEqual(a["headline"]["size_text"], "29.9BB · 29,875")
+        self.assertEqual(a["headline"]["qualifier"], "7.9bb of your 29.9bb can be matched")   # the big blind's stack
         # hero is the short one: his own stack, as before
         s = tournament([30, 30, 30, 30, 30, 30, 12, 30], SB, "AA")
         with engine_says("ALL-IN", data={"shove_ev_bb": 1.0}):
-            self.assertEqual(A.advise(s)["headline"]["size_text"], "11.9BB · 11,875")
+            a = A.advise(s)
+        self.assertEqual((a["headline"]["size_text"], a["headline"]["qualifier"]), ("11.9BB · 11,875", ""))
 
     # ---- POST-13 ---------------------------------------------------------------------------------------------
 
@@ -2515,6 +2522,150 @@ class AfterTheFlopFindings(unittest.TestCase):
         self.assertEqual(A.advise(s)["spot"], told)
         s.do("set_stack", seat=1, text="20000")
         self.assertNotIn("no chips", A.advise(s)["spot"])
+
+
+# --------------------------------------------------------------------------
+# The last round of checks: four decisions and what the sweeps found
+# --------------------------------------------------------------------------
+
+class FinalChecks(unittest.TestCase):
+    """One test for each decision (D1 to D4) and each problem found by the last sweeps."""
+
+    def test_d1_the_big_blind_keeps_a_close_call_only_on_the_row_and_the_short_list(self):
+        raised = [(BTN, "raise", 2.2)]
+        short = parse_range(A.TAG.BB_CALL_SHORT)
+        for style in (None, "cash"):
+            with self.subTest(style=style):
+                # K5o is on the sheet's row for 25bb or more against a button raise (K3o+), and not a hand
+                # that makes top pair or a real draw: the fold leads, the call is the second line
+                a = A.advise(tournament([30] * 8, BB, "K5o", acts=raised, style=style))
+                self.assertEqual((verb(a), a["guard"], a["headline"]["sure"]), ("FOLD", "close", "close"))
+                self.assertIn("By the numbers alone: CALL", a["also"])
+                self.assertIn("not a hand that makes top pair or a real draw", a["reason"])
+                self.assertNotIn("The sheet says", [t["label"] for t in a["tiles"]])    # the sheet's row has it
+        # every close call that stays the headline is on the short list, at 25, 30 and 60bb
+        for stack in (25, 30, 60):
+            s = tournament([stack] * 8, BB, "AA", acts=raised)
+            for hand in ("K9o", "Q9o", "T9o", "A2o", "72s", "22", "K8o", "K3o", "Q8o", "J8o", "T8o", "98o"):
+                s.do("set_cards", hero=hand, replace=True)
+                a = A.advise(s)
+                if a["headline"]["sure"] == "close" and verb(a) == "CALL":
+                    self.assertGreaterEqual(short[HANDS.index(hand)], 0.5, (stack, hand, source(a)))
+                if short[HANDS.index(hand)] < 0.5:
+                    self.assertNotEqual(verb(a), "CALL", (stack, hand))
+        # an answer the engine marks standard or clear is not touched, and neither is the money or Max EV
+        self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "ATs", acts=raised))), "CALL")
+        for more in (dict(left=100), dict(style="maxev")):
+            self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "K5o", acts=raised, **more))), "CALL", more)
+
+    def test_d2_an_all_in_nobody_can_match_shows_the_stack_and_what_is_at_risk(self):
+        # All-In or Fold: the small blind has 8bb, the big blind 5.5bb.  The button says 8bb, so the headline
+        # does; the pill says what can be matched.  5.5 is never on the screen as the size of the all-in.
+        a = A.advise(all_in_or_fold([8, 8, 8, 5.5], 2, "AA"))
+        head = a["headline"]
+        self.assertEqual((head["verb"], head["size_text"], head["follow"]), ("ALL-IN", "8BB", {"kind": "allin"}))
+        self.assertEqual(head["qualifier"], "5.5bb of your 8bb can be matched")
+        self.assertEqual(head["size_text"], "8BB")
+        legal = all_in_or_fold([8, 8, 8, 5.5], 2, "AA").view()["hand"]["legal"]
+        self.assertEqual(legal["allin"], 8)                                 # what the All-in button records
+        # the tournament has the same pair of numbers: the small blind with 30bb against a big blind with 8bb
+        with engine_says("ALL-IN", data={"shove_ev_bb": 1.0}):
+            a = A.advise(tournament([30, 30, 30, 30, 30, 30, 30, 8], SB, "AA"))
+        self.assertEqual(a["headline"]["size_text"], "29.9BB \u00b7 29,875")
+        self.assertEqual(a["headline"]["qualifier"], "7.9bb of your 29.9bb can be matched")
+        # a qualifier of the play keeps its place in front
+        with engine_says("RE-RAISE ALL-IN (isolate)", data={"need": 0.4, "equity": 0.6}):
+            a = A.advise(tournament([30, 30, 30, 30, 30, 6, 30, 12], SB, "AA", acts=[(BTN, "allin", None)]))
+        self.assertEqual(a["headline"]["qualifier"], "isolate, 11.9bb of your 29.9bb can be matched")
+        # all of it can be matched: no words
+        self.assertEqual(A.advise(all_in_or_fold([8, 8, 8, 8], 2, "AA"))["headline"]["qualifier"], "")
+
+    def test_d3_the_line_after_a_hand_is_the_models_own_text(self):
+        # All-In or Fold, a pot split after the fee: 7.95bb each, in the hand line and in the coach's line
+        s = all_in_or_fold([8, 8, 8, 8], 3, "AhKd", movers=[2])
+        s.do("act", seat=1, kind="call")
+        s.do("award", ranking=[[1, seat_of(2, 3, 4)]])
+        text = s.view()["hand"]["result"]["text"]
+        self.assertIn("7.95bb", text)
+        self.assertTrue(A.advise(s)["spot"].startswith(text + ". "), A.advise(s)["spot"])
+        self.assertEqual(A.result_line(s.view()), text + ".")
+        # a Spin game that is over: who won the last hand, then the new game
+        for winner, words in ((1, "You (BTN/SB) win 1,000."), (2, "Seat 2 (BB) wins 1,000.")):
+            s = spin([10, 10], 0, "AhAd")
+            s.do("act", seat=1, kind="allin")
+            s.do("act", seat=2, kind="call")
+            s.do("award", winner=winner)
+            self.assertEqual(s.view()["hand"]["result"]["text"] + ".", words)
+            self.assertEqual(A.advise(s)["spot"], words + " The game is over: press N for a new game.")
+
+    def test_d4_the_small_blind_against_a_big_blind_all_in_for_less_says_why_nothing_is_asked(self):
+        # The big blind has 0.6bb: after the ante he posts 475, less than hero's small blind of 500.  If
+        # everybody folds hero has nothing to decide, so the table waits for the first player; the line says so.
+        for n in (3, 6, 8):
+            with self.subTest(players=n):
+                stacks = [20] * n
+                stacks[-1] = 0.6
+                s = tournament(stacks, n - 2, "A8o")
+                a = A.advise(s)
+                self.assertEqual(a["status"], "none")
+                self.assertNotIn("Waiting for", a["spot"])
+                self.assertEqual(a["spot"], "Nobody has entered yet, and the big blind is all-in for no more than "
+                                            "you have posted: if everybody folds there is nothing to decide. "
+                                            "Enter the first call or raise.")
+                # a player enters: hero is asked, and the answer is a legal move
+                s.do("act", seat=seat_of(0, n - 2, n), kind="raise", amount=2200)
+                a = A.advise(s)
+                self.assertEqual(a["status"], "ready")
+                self.assertNotEqual(verb(a), "NO ADVICE")
+                s.do("act", seat=1, **a["headline"]["follow"])
+        # heads-up the hand is over at once; and a big blind with a little more leaves hero a call
+        self.assertEqual(A.advise(tournament([20, 0.6], 0, "A8o"))["spot"], "The betting is over: say who won.")
+        # in a later round a player in front of hero is still "waited for" in the usual words
+        s = tournament([30] * 8, BTN, "AhKd", acts=[(BTN, "raise", 2.2), (BB, "call", None)])
+        s.do("set_cards", slot="flop", text="Ks7d2c")
+        s.do("act", seat=seat_of(BB, BTN, 8), kind="bet", amount=2000)
+        s.do("act", seat=1, kind="call")
+        s.do("set_cards", slot="turn", text="3h")
+        self.assertNotIn("nothing to decide", A.advise(s)["spot"])
+
+    def test_an_all_in_that_can_only_be_a_call_is_a_call(self):
+        # heads-up and three-handed: the big blind (1bb) posted 875 and is all-in; hero in the small blind
+        # may fold or call 375.  The engine's "all-in" is that call: the headline and Follow say CALL.
+        for stacks, hero in (([20, 1.0], 0), ([20, 20, 1.0], 1), ([20] * 7 + [1.0], 6)):
+            with self.subTest(players=len(stacks)):
+                s = tournament(stacks, hero, "A8o")
+                legal = s.view()["hand"]["legal"]
+                self.assertEqual((legal["call"], legal["raise"]), (375, None))
+                a = A.advise(s)
+                head = a["headline"]
+                self.assertEqual((head["verb"], head["size_text"], head["follow"]),
+                                 ("CALL", "0.4BB \u00b7 375", {"kind": "call"}))
+                self.assertNotIn("can be matched", head["qualifier"])
+                self.assertIn("the all-in is that call", a["reason"])
+                s.do("act", seat=1, **head["follow"])                   # and the table takes it
+        # All-In or Fold, first in: no call is offered beside the all-in, so it stays ALL-IN
+        self.assertEqual(verb(A.advise(all_in_or_fold([8, 8, 8, 5.5], 2, "AA"))), "ALL-IN")
+
+    def test_a_blind_posted_all_in_does_not_turn_seven_deuce_into_an_all_in(self):
+        # The big blind has 0.6bb and is all-in from posting.  The solver took him for a caller who always
+        # calls, after whom nobody else could: 72o over an early raise showed +1.45bb for 20bb.
+        for style in (None, "maxev"):
+            for n, raiser in ((8, UTG), (3, 0)):
+                with self.subTest(style=style, players=n):
+                    stacks = [20] * n
+                    stacks[-1] = 0.6
+                    a = A.advise(tournament(stacks, n - 2, "72o", acts=[(raiser, "raise", 2.2)], style=style))
+                    self.assertEqual(verb(a), "FOLD", a["source"])
+                    value = next(t["value"] for t in a["tiles"] if t["label"] == "All-in against folding")
+                    self.assertTrue(value.startswith("\u2212"), value)             # a loss, as with a full big blind
+        # the same hand and table with a small blind who is all-in from posting, first in on the button
+        stacks = [20] * 8
+        stacks[SB] = 0.3
+        self.assertEqual(verb(A.advise(tournament(stacks, BTN, "72o", style="maxev"))), "FOLD")
+        # a strong hand still plays there
+        stacks = [20] * 8
+        stacks[BB] = 0.6
+        self.assertEqual(verb(A.advise(tournament(stacks, SB, "QQ", acts=[(UTG, "raise", 2.2)], style="maxev"))), "ALL-IN")
 
 
 if __name__ == "__main__":

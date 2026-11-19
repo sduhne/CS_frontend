@@ -60,7 +60,8 @@ need: ``first_run``, ``hero_out`` (hero has no chips and no hand of his is runni
 (why the files do not hold the last change, else ""), ``settings`` (ladders, the levels, the
 notice flag, the key map, ``button_rule``), ``strip.name``, ``strip.payouts``,
 ``strip.prizes_typed``, ``strip.pace``, ``strip.button_rule``, ``strip.game`` (Spin),
-``hand.street_bet``, ``hand.shown``, ``hand.before_target``, ``hand.positions`` and ``hand.button``
+``hand.street_bet``, ``hand.shown``, ``hand.before_target``, ``hand.allin_matched`` (the part of
+the target's all-in, ``legal.allin``, that a player still in can match), ``hand.positions`` and ``hand.button``
 (the seat names and the button of the hand on screen, also after its result, when the table's own
 are the next hand's), ``hand.want_suits`` (``{"hand": "AKs", "options": [["Ah", "Kh"], ...]}`` while
 the exact cards of a class hand are wanted), on a hand-line item ``street``, ``event``, ``allin``,
@@ -97,7 +98,8 @@ Choices worth knowing:
   ``_late_action``.  While the hand waits for a street's cards or a result,
   such an action reopens the betting round that just closed; while it waits
   for a street's cards only a call or a check does, and a bet, raise or
-  all-in is refused ("Type the flop first ..., then record the bet").
+  all-in is refused ("Type the flop first ..., then record the bet"); so is a
+  fold for a player whose check in that round was only implied.
 - Hero with no chips keeps his seat.  After a bust, a stack typed there is a
   re-entry: players left and entrants go up by one.
 - Files: every accepted change is saved (the file before it is kept as
@@ -2358,7 +2360,9 @@ class Session:
     #
     # While the hand waits for a street's cards the round just closed is reopened only for a call
     # or a check (the forgotten caller).  A bet, a raise or an all-in typed then could be meant for
-    # either street, so it is refused: the cards first, then the bet.
+    # either street, so it is refused: the cards first, then the bet.  So is a fold for a player
+    # whose check there was only implied: nobody folds where a check is free, so the fold is the
+    # next street's ("Type the turn first (5 H), then record the fold.").
     #
     # In no case is a typed action read on another street than the one it was typed for, and none
     # of this may drop, change or imply an action of hero: then it is refused and nothing changes.
@@ -2381,6 +2385,10 @@ class Session:
                 and kind in ("bet", "raise", "allin") \
                 and not (kind == "allin" and implied_here and self._all_in_is_a_call(hand, mine[-1], seat)):
             raise self._cards_first(state, seat, kind, now, his_fold=implied_here and last["kind"] == "fold")
+        if kind == "fold" and implied_here and last["kind"] == "check" and state.phase in BETTING and now != state.phase:
+            # his check in the round just closed was free, so nobody folds there: the fold is the next
+            # street's (he gave up to a bet the user has still to type).  It must not reopen the closed round
+            raise self._cards_first(state, seat, kind, now, his_fold=False)
         if implied_here:
             self._replace_implied(hand, state, seat, mine[-1], kind, amount, force, now)
         elif implied_fold:
@@ -2417,10 +2425,15 @@ class Session:
                              "Select the earlier action on the hand line to change it.")
 
     def _cards_first(self, state: HandState, seat: int, kind: str, now: str, his_fold: bool) -> ModelError:
-        """The refusal of a bet, raise or all-in typed for a seat while the hand waits for a street's cards."""
+        """The refusal of a bet, raise, all-in or fold typed for a seat while the hand waits for a street's cards."""
         street = state.phase                            # the street whose cards are wanted
-        word = {"bet": "bet", "raise": "raise", "allin": "all-in"}[kind]
+        word = {"bet": "bet", "raise": "raise", "allin": "all-in", "fold": "fold"}[kind]
         he, his = ("you", "your") if seat == HERO else ("he", "his")
+        if kind == "fold":
+            # (the seat's check in the round just closed was only implied, and it was free)
+            return ModelError(f"Type the {street} first ({BOARD_EXAMPLE[street]}), then record the fold.",
+                              f"On the record {he} checked {STREET_WORDS[now]}, where a check was free: "
+                              f"a fold now is {STREET_WORDS[street]}.")
         if his_fold:
             way = f"select {his} fold on the hand line, then Raised."
         else:
@@ -2810,7 +2823,9 @@ class Session:
         table["button"] = seat = next_button(last["button"], last["sb"], last["bb"], dealt, rule)
         keys = f"{key_for('button_back')} and {key_for('button_on')} move it"
         news = ""
-        if seat not in dealt:
+        if len(dealt) < 2:
+            pass                                        # one player left: no hand can be dealt, so there is no button to check
+        elif seat not in dealt:
             news = f"Dead button on seat {seat}: its player is out. {keys}"
         elif last["sb"] not in dealt or last["bb"] not in dealt:
             # a blind went out: sites differ here, and a hand without a small blind cannot be entered
@@ -2932,7 +2947,12 @@ class Session:
             self.data["hands_base"] += extra
 
     def _hand_text(self, hand: dict, state: HandState, skipped: bool) -> str:
-        """The hand as a few lines of text, for copying."""
+        """The hand as a few lines of text, for copying.
+
+        Enough to play it again exactly: the blinds, every player's seat, position and stack
+        before the hand, and every bet in chips.  (Players who are not mentioned in a betting
+        round folded when the action passed them.)
+        """
         level, bb = hand["level"], hand["level"]["bb"]
         ante = ""
         if level["ante"]:
@@ -2940,9 +2960,13 @@ class Session:
         elif level["bb_ante"]:
             ante = f" bb ante {fmt(level['bb_ante'])}"
         head = f"Hand {hand['no']} | {fmt(level['sb'])}/{fmt(level['bb'])}{ante} | {state.n} players"
+        if state.fee:
+            head += f" | fee {fmt(state.fee)}bb"
+        if hand["button"] not in state.order:
+            head += f" | dead button on seat {hand['button']}"      # its player is out: the seat before it acts as the button
         if HERO in state.order:
             head += f" | you {state.labels[HERO]} {hand['hero_cards'] or '??'} ({fmt_bb(state.start[HERO], bb)})"
-        lines = [head]
+        lines = [head, "Seats: " + "; ".join(self._seat_text(seat, hand, state) for seat in sorted(state.order))]
         for street in BETTING:
             # players who were only passed by (implied folds) are left out; hero's own fold is not
             acts = [e for e in state.log if e["street"] == street
@@ -2951,8 +2975,10 @@ class Session:
             if not acts and not cards:
                 continue
             title = street.capitalize() + (f" {cards}" if cards else "")
-            said = ", ".join(self._act_text(e, state, bb) for e in acts) or "no action recorded"
+            said = ", ".join(self._act_text(e, state, bb, exact=True) for e in acts) or "no action recorded"
             lines.append(f"{title}: {said}")
+        if hand["shown"]:
+            lines.append("Shown: " + ", ".join(f"seat {seat} {cards}" for seat, cards in sorted(hand["shown"].items())))
         if skipped and HERO in state.folded:
             lines.append(f"Result: you folded ({fmt(state.net(HERO))}); who won the pot was not recorded")
         elif skipped:
@@ -2960,10 +2986,12 @@ class Session:
         elif state.result:
             lines.append("Result: " + self._result_text([(s, w) for s, w in state.result["won"].items() if w > 0], state))
             if HERO in state.order:
-                lines.append(f"You: {'+' if state.net(HERO) > 0 else ''}{fmt(state.net(HERO))}")
+                unit = "bb" if self.mode == "aof" else ""   # All-In or Fold counts in big blinds, as the line above says
+                lines.append(f"You: {'+' if state.net(HERO) > 0 else ''}{fmt(state.net(HERO))}{unit}")
         for d in self._decisions(hand, state):
             if d["advice"]:
-                lines.append(f"Coach ({d['street']}): {d['advice']} | you: {d['did']}"
+                did = "all-in" if d["did"] == "allin" else d["did"]     # (the word as it is written everywhere else)
+                lines.append(f"Coach ({d['street']}): {d['advice']} | you: {did}"
                              + (" | deviated" if d["deviated"] else ""))
         return "\n".join(lines)
 
@@ -2984,11 +3012,22 @@ class Session:
         """Every winner of the hand in one line: "You (CO) win 2,825, seat 5 (BB) wins 2,825"."""
         return ", ".join(self._wins_text(seat, amount, state, first=k == 0) for k, (seat, amount) in enumerate(winners))
 
-    def _act_text(self, entry: dict, state: HandState, bb) -> str:
+    def _seat_text(self, seat: int, hand: dict, state: HandState) -> str:
+        """One player of a finished hand: "3 LJ 18,425 Ann" (seat, position, stack before the hand, name)."""
+        stack = fmt(state.start[seat]) + ("bb" if self.mode == "aof" else "")
+        name = self._seat_name(seat)
+        away = " (sitting out)" if seat in hand.get("away", ()) else ""
+        return f"{seat} {state.labels.get(seat, '?')} {stack}{' ' + name if name else ''}{away}"
+
+    def _act_text(self, entry: dict, state: HandState, bb, exact: bool = False) -> str:
+        """``CO raise 2.5bb``; ``exact`` (the hand history): the chips too, ``CO raise to 1,500 (2.5bb)``."""
         who = self._who(entry["seat"], state.labels)
         kind = entry["kind"]
         if kind in ("bet", "raise"):
             word = "all-in" if entry["allin"] else kind
+            if exact and self.mode != "aof":            # (All-In or Fold counts in big blinds: 8bb is exact)
+                to = " to" if word == "raise" else ""
+                return f"{who} {word}{to} {fmt(entry['to'])} ({fmt_bb(entry['to'], bb)})"
             return f"{who} {word} {fmt_bb(entry['to'], bb)}"
         if kind == "call" and entry["allin"]:
             return f"{who} call all-in"
@@ -3156,6 +3195,17 @@ class Session:
             legal["bet" if state.bet_to == 0 else "raise"] = box
         return legal
 
+    @staticmethod
+    def _allin_matched(state: HandState, seat: int):
+        """How much of this player's all-in a player still in can match (a street total, like ``legal.allin``).
+
+        ``legal.allin`` is his whole stack: that is what an all-in puts in front of him.  When
+        nobody left has as much, the part above this comes back to him when the round closes.
+        """
+        top = state.max_to(seat)
+        reach = [state.in_front[other] + state.stack[other] for other in state.live() if other != seat]
+        return _n(min(top, max(reach))) if reach else top
+
     def _presets(self, state: HandState, seat: int) -> list[dict]:
         """Sizes offered as buttons, smallest first, ending with all-in."""
         top = state.max_to(seat)
@@ -3233,6 +3283,9 @@ class Session:
             "to_call": to_call, "to_call_bb": round(to_call / bb, 1),
             "target": target, "target_is_hero": target == HERO,
             "legal": self._legal(at_target, target) if target is not None else None,
+            # the target's all-in is his whole stack (legal.allin); this much of it can be matched by a
+            # player still in.  The coach names this number, the All-in button the stack: the page says both
+            "allin_matched": self._allin_matched(at_target, target) if target is not None else None,
             "presets": self._presets(at_target, target) if target is not None else [],
             "line": self._line(hand, state),
             "pots": [{"amount": p["amount"], "eligible": p["eligible"]} for p in

@@ -7,6 +7,7 @@ TO START (Windows)
   No Python yet: get it from https://www.python.org/downloads/ and tick
   "Add python.exe to PATH" in the installer.
   If Windows asks whether to run the file, choose Run.
+  Not yet tried on a Windows computer: if it does not start, the black window says why.
 
 WHAT OPENS
   A black window, which must stay open, and a page in your browser called Menlo Coach.
@@ -20,6 +21,7 @@ WHERE YOUR TABLES ARE SAVED
 TO STOP
   Close the black window. Closing only the page leaves the coach running: the page comes
   back at the address the black window shows (usually http://127.0.0.1:8765/).
+  Starting it a second time opens the page of the copy that is already running.
 
 STUDY AND PLAY MONEY ONLY
   Real-money sites ban real-time help. Using this during a real-money game can close an account.

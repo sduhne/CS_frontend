@@ -103,7 +103,8 @@ try:                                            # the engine's plan against an a
     from ..preflop import hero_open_range, reshove_plan as engine_reshove_plan      # opening range it is priced with
 except ImportError:                             # renamed there: the sheet's small raise then shows no plan lines
     engine_reshove_plan = hero_open_range = None
-from ..pushfold import HandSetup, nash_push_range, solve_open_shove, solve_reshove
+from ..preflop import solve_open_shove, solve_reshove      # the solver, with a blind posted all-in put right
+from ..pushfold import HandSetup, nash_push_range
 from ..ranges import (PLAYER_TYPES, norm_type, parse, play_order, rfi_range, scale_range, threebet_range,
                       top_percent, villain_limp_range, villain_open_range, vs_open_chart)
 from .amounts import tidy
@@ -128,7 +129,8 @@ SHEET_RAISE_BB = 17             # first in from this stack up, the guard's fold 
 PLAN_COMMITS_BB = 45            # up to this stack a re-raise the engine will not fold is judged as the whole stack
 SMALL_RAISE_BB = 2.5            # "a small raise": the big blind's sheet calls, and the spin tables' raise rows
 BB_CALL_BB = (9, 24)            # the stacks of the sheet's short list of big blind calls against a small raise
-                                # (any pair, any suited hand, ...); deeper, the sheet's own row for 25bb or more is read
+                                # (any pair, any suited hand, ...); deeper, the sheet's own row for 25bb or more is
+                                # read, and a close call must be on that row and on the short list as well
 ENGINE_CLOSE_POINTS = 2         # the engine calls a call "close" within this many points (plan lines use it)
 # Players left per paid place from which the money is "close", and from which it is the bubble:
 CLOSE_TO_MONEY = {"regular": (1.5, 1.2)}    # on the regular blind ladder ...
@@ -362,7 +364,9 @@ def what_is_awaited(session, view: dict) -> str | None:
     data, hand = session.data, view["hand"]
     over = hand is None or hand["needs"] == "next"
     if data["mode"] == "spin" and data["game"]["over"] and over:
-        return "The game is over: press N for a new game."
+        # who won the last hand, then the game: the page shows this one line
+        won = result_line(view) if hand is not None and (hand.get("result") or {}).get("text") else ""
+        return " ".join(part for part in (won, "The game is over: press N for a new game.") if part)
     # no chips on hero's seat, and no hand of his running: what he can do stays on screen
     out = no_chips_line(data) if over or str(HERO) not in (hand.get("positions") or {}) else ""
     if hand is None:
@@ -391,6 +395,10 @@ def what_is_awaited(session, view: dict) -> str | None:
             if data["mode"] == "aof":
                 return "Nobody has moved all-in yet: in the big blind you act last."
             return "Nobody has entered yet: in the big blind you act last. Enter the first call or raise."
+        if state.phase == "preflop" and nothing_to_decide_if_they_fold(data["hand"], state):
+            # the small blind against a big blind who posted his last chips, and no more than the small blind
+            return "Nobody has entered yet, and the big blind is all-in for no more than you have posted: " \
+                   "if everybody folds there is nothing to decide. Enter the first call or raise."
         target = hand["target"]
         if target is None:
             return "The betting round is over."
@@ -398,6 +406,22 @@ def what_is_awaited(session, view: dict) -> str | None:
         label = state.labels.get(target, f"seat {target}")
         return f"Waiting for {name + ' (' + label + ')' if name else label}: it is not your turn."
     return None
+
+
+def nothing_to_decide_if_they_fold(hand: dict, state) -> bool:
+    """Hero has not acted in this round, and it closes without him when every player in front does the passive
+    thing: the only players left are all-in for no more than he has in front of him already.  (The table then
+    waits for the first player, not for hero: there is no "if they fold" answer to give.)"""
+    if HERO not in state.live() or state.stack[HERO] <= 0 or state.to_act() in (None, HERO):
+        return False
+    if any(entry["seat"] == HERO for entry in state.log if entry["street"] == state.phase):
+        return False
+    ahead = replay(hand)
+    try:
+        imply_until(ahead, HERO)
+    except Exception:                           # model._NoTurn: the round closed before his turn
+        return True
+    return False
 
 
 def no_chips_line(data: dict) -> str:
@@ -411,22 +435,17 @@ def no_chips_line(data: dict) -> str:
 
 
 def result_line(view: dict) -> str:
-    """Who won the hand on screen, named by seat and by the position of that hand: "Seat 5 (BB) wins 26,475"."""
-    hand = view["hand"]
-    result = hand.get("result")
-    if not result or not result.get("winners"):
+    """Who won the hand on screen: the model's own line (``view.hand.result.text``) and a full stop.
+
+    "Seat 5 (BB) wins 26,475." or "You (CO) win 3.98bb, seat 3 (BB) wins 3.97bb."  One source, so an
+    amount never differs between the hand line and the coach by a rounding (an All-In or Fold pot split
+    after the fee is 7.95bb, not 8).
+    """
+    result = view["hand"].get("result") or {}
+    text = str(result.get("text") or "").strip()
+    if not text:
         return "The hand is over."
-    positions = hand.get("positions") or {}
-    parts = []
-    for winner in result["winners"]:
-        amount = bb_number(winner["amount"]) + "bb" if view["mode"] == "aof" else chips_text(winner["amount"])
-        position = positions.get(str(winner["seat"])) or winner.get("pos") or ""
-        if winner["seat"] == HERO:
-            parts.append(f"{'you' if parts else 'You'}{' (' + position + ')' if position else ''} win {amount}")
-        else:
-            parts.append(f"{'seat' if parts else 'Seat'} {winner['seat']}{' (' + position + ')' if position else ''} "
-                         f"wins {amount}")
-    return ", ".join(parts) + "."
+    return text if text[-1] in ".!?" else text + "."
 
 
 def next_hand_line(view: dict) -> str:
@@ -1732,15 +1751,29 @@ def big_blind_sheet_list(seen: Seen, before: Before) -> tuple[str, str] | None:
     return None
 
 
+def big_blind_kept_calls(rows: tuple | None) -> list:
+    """The hands of the sheet's big blind list that keep their call before the money, as 169 weights.
+
+    A hand must be on the sheet's row for that depth AND on the short list
+    of hands that make top pair or a real draw (``tag.BB_CALL_SHORT``: any
+    pair, any suited hand, any ace, K9o+, Q9o+, J9o+, T9o).  With 9 to 24bb
+    the row is that short list; with 25bb or more the row is wider (K3o+
+    against a button raise), and K5o is not a hand to call out of position
+    with before the money.
+    """
+    if rows is None:
+        return [0.0] * 169
+    return [min(a, b) for a, b in zip(parse_range(rows[0]), parse_range(TAG.BB_CALL_SHORT))]
+
+
 def big_blind_sheet_call(seen: Seen, before: Before) -> bool:
-    """Is the hand one the sheet lets the big blind call a small raise with?"""
-    rows = big_blind_sheet_list(seen, before)
-    return rows is not None and in_range(rows[0], seen.hand_class)
+    """Is the hand one the big blind keeps calling a raise with before the money?"""
+    return big_blind_kept_calls(big_blind_sheet_list(seen, before))[seen.hand_class] >= 0.5
 
 
 def big_blind_call_chart(seen: Seen, before: Before) -> dict:
     rows = big_blind_sheet_list(seen, before) or (TAG.BB_CALL_SHORT, "")
-    return range_chart("Sheet: the big blind against a raise", seen.hand_name, {"c": parse_range(rows[0])},
+    return range_chart("Sheet: the big blind against a raise", seen.hand_name, {"c": big_blind_kept_calls(rows)},
                        legend=(("c", "Play"), ("f", "Fold")))
 
 
@@ -1749,11 +1782,12 @@ def lower_variance_side(seen: Seen, before: Before, adv, play: Play) -> None:
 
     The headline is FOLD (CHECK when it is free) and the engine's play the
     second line.  Two exceptions.  The big blind keeps the call for the
-    hands on the sheet's list (``big_blind_sheet_list``: the short list
-    against a small raise with 9 to 24bb, the sheet's own row with 25bb or
-    more), and a close re-raise there gives way to that call, not to a fold:
-    a stronger hand never folds where a weaker one calls.  And a call of an
-    all-in at a good price is never folded.
+    hands that are on the sheet's list (``big_blind_sheet_list``: the short
+    list against a small raise with 9 to 24bb, the sheet's own row with 25bb
+    or more) and on the short list as well (``big_blind_kept_calls``), and a
+    close re-raise there gives way to that call, not to a fold: a stronger
+    hand never folds where a weaker one calls.  And a call of an all-in at a
+    good price is never folded.
     """
     if adv.confidence != "close" or play.kind not in ("call", "raise", "allin"):
         return
@@ -1761,7 +1795,8 @@ def lower_variance_side(seen: Seen, before: Before, adv, play: Play) -> None:
         return
     sheet = None
     rows = big_blind_sheet_list(seen, before)
-    if play.kind == "raise" and rows is not None and in_range(rows[0], seen.hand_class):
+    kept = big_blind_sheet_call(seen, before)
+    if play.kind == "raise" and kept:
         # A close re-raise in the big blind (a bluff with a small suited ace): the quieter play is the call the
         # big blind makes with weaker hands of the sheet's list, not a fold.
         engine = engine_summary(play)
@@ -1779,13 +1814,19 @@ def lower_variance_side(seen: Seen, before: Before, adv, play: Play) -> None:
         play.chart = hero_cell_as_played(play.chart, seen.hand_class, play.kind)
         return
     if play.kind == "call" and rows is not None:
-        if in_range(rows[0], seen.hand_class):
+        if kept:
             play.source = "the engine's close call is on the sheet's big blind list"
             return
         short_list = rows[0] == TAG.BB_CALL_SHORT
-        sheet = tile("The sheet says", "FOLD", ("it calls " if short_list else "not on ") + rows[1])
-        reason = f"Close, and not a hand the sheet calls a {'small ' if short_list else ''}raise with in the big " \
-                 f"blind ({rows[1]}): before the money, fold."
+        if not short_list and in_range(rows[0], seen.hand_class):
+            # on the sheet's row for 25bb or more, but not a hand that makes top pair or a real draw
+            sheet = tile("Before the money", "FOLD", "the call is kept for " + TAG.BB_CALL_WORDS)
+            reason = f"Close, and not a hand that makes top pair or a real draw ({TAG.BB_CALL_WORDS}): before " \
+                     "the money, fold."
+        else:
+            sheet = tile("The sheet says", "FOLD", ("it calls " if short_list else "not on ") + rows[1])
+            reason = f"Close, and not a hand the sheet calls a {'small ' if short_list else ''}raise with in the " \
+                     f"big blind ({rows[1]}): before the money, fold."
     else:
         what = {"call": "call", "allin": "all-in"}.get(play.kind, "raise")
         quiet = "check" if seen.to_call <= 0 else "fold"
@@ -3379,6 +3420,10 @@ def finished_answer(answer: dict, seen: Seen, money: Money | None, play: Play, s
         # players in front of hero have not acted: the answer holds if they do the passive thing, and says so
         head["qualifier"] = f"{head['qualifier']}, {assumed}" if head["qualifier"] else assumed
         answer["provisional"] = assumption(seen)
+    if play.kind == "allin" and head["follow"] == {"kind": "call"}:
+        # the all-in came out as a call (``all_in_is_a_call``): the reason speaks of an all-in, so say why
+        play.reason = (play.reason + " " if play.reason else "") + \
+            "Nobody left can match more than the call, so the all-in is that call."
     answer.update(status="ready", headline=head, reason=play.reason, tiles=play.tiles,
                   flip=play.flip, also=play.also, plans=play.plans, chart=play.chart, guard=play.guard,
                   source=source_line(money, play),
@@ -3388,7 +3433,7 @@ def finished_answer(answer: dict, seen: Seen, money: Money | None, play: Play, s
 
 def headline(seen: Seen, play: Play) -> dict:
     """The verb, its size in big blinds and chips, the tone, and the intent that carries the advice out."""
-    verb, kind, to = play.verb, play.kind, play.to
+    verb, kind, to, qualifier = play.verb, play.kind, play.to, play.qualifier
     legal, to_call = seen.legal, seen.to_call
     all_in = legal.get("allin")
     # Make the play one the table accepts: nothing to call is a check, a raise is kept inside its limits.
@@ -3410,20 +3455,28 @@ def headline(seen: Seen, play: Play) -> dict:
                 verb, kind = "ALL-IN", "allin"
             else:
                 kind = "bet" if legal.get("bet") else "raise"
+    if kind == "allin" and all_in_is_a_call(seen, all_in):
+        # Nobody still in the hand can match more than the call: the all-in is that call, and is said so
+        # (the big blind is all-in from posting, and hero in the small blind only has to complete).
+        verb, kind, qualifier = "CALL", "call", "all they can match"    # (the play's own pill was about the all-in)
     if kind == "wait":
-        return {"verb": verb, "size_text": "", "qualifier": play.qualifier, "tone": "wait", "sure": "", "follow": None}
+        return {"verb": verb, "size_text": "", "qualifier": qualifier, "tone": "wait", "sure": "", "follow": None}
     if kind == "call":
         size_text, follow = size_words(seen, to_call), {"kind": "call"}
     elif kind in ("raise", "bet"):
         size_text = ("TO " if kind == "raise" else "") + size_words(seen, to)
         follow = {"kind": kind, "to": to}
     elif kind == "allin":
-        # the amount that can be matched; the intent is hero's all-in, and what nobody matches comes back
-        size_text, follow = (size_words(seen, matched_all_in(seen, all_in)) if all_in else ""), {"kind": "allin"}
+        # The move as the All-in button records it: hero's whole stack.  When nobody still in the hand can
+        # match all of it, the pill says what is really at risk; the rest comes back.
+        size_text, follow = (size_words(seen, all_in) if all_in else ""), {"kind": "allin"}
+        at_risk = matched_words(seen, all_in) if all_in else ""
+        if at_risk:
+            qualifier = f"{qualifier}, {at_risk}" if qualifier else at_risk
     else:
         size_text, follow = "", {"kind": kind}
     tone = "passive" if verb in ("CALL", "CHECK") else "fold" if kind == "fold" else "attack"
-    return {"verb": verb, "size_text": size_text, "qualifier": play.qualifier, "tone": tone, "sure": play.sure,
+    return {"verb": verb, "size_text": size_text, "qualifier": qualifier, "tone": tone, "sure": play.sure,
             "follow": follow}
 
 
@@ -3460,6 +3513,24 @@ def matched_all_in(seen: Seen, all_in):
         return all_in
     reach = max(state.in_front[seat] + state.stack[seat] for seat in rivals)
     return min(all_in, max(reach, state.in_front[HERO] + seen.to_call))
+
+
+def matched_words(seen: Seen, all_in) -> str:
+    """ "5.5bb of your 8bb can be matched" when hero's all-in is for more than any player still in the hand can
+    match, else "".  The headline shows the all-in as the button records it (the whole stack), so the smaller
+    number never stands on the screen without these words."""
+    matched = matched_all_in(seen, all_in)
+    if matched >= all_in - 1e-9:
+        return ""
+    return f"{bb_number(matched / seen.bb)}bb of your {bb_number(all_in / seen.bb)}bb can be matched"
+
+
+def all_in_is_a_call(seen: Seen, all_in) -> bool:
+    """Hero faces a bet, may not raise, and nobody still in the hand can match more than the call: his all-in
+    would be recorded as that call.  (Not in All-In or Fold, where the first all-in has no call beside it.)"""
+    if not all_in or seen.to_call <= 0 or seen.legal.get("call") is None or seen.legal.get("raise") or seen.legal.get("bet"):
+        return False
+    return matched_all_in(seen, all_in) <= seen.state.in_front[HERO] + seen.to_call + 1e-9
 
 
 def size_words(seen: Seen, chips) -> str:
