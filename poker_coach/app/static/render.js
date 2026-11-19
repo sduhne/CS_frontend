@@ -1496,14 +1496,14 @@
       ? `<div class="row"><button class="menu-btn"${emit({op: "award", ranking: (ui.awardTiers || []).concat([[n]]), ui: closed})}>Won the pot ${keycap("W")}</button></div>`
       : "";
     if (seat.is_hero) {
-      return `<div class="pop" role="dialog" aria-label="Your seat"${popFocus}>
+      return `<div class="pop seat" role="dialog" aria-label="Your seat"${popFocus}>
         ${popHead(seat.pos || "", `seat ${n}`, closed, "You")}${won}
         ${stack}${refused}
         <div class="row">${sit}${button}${save}</div>
       </div>`;
     }
     const types = list(CHOICES.type, (type) => `<option value="${type}"${type === (seat.type || "unknown") ? " selected" : ""}>${type}</option>`);
-    return `<div class="pop" role="dialog" aria-label="Seat ${n}"${popFocus}>
+    return `<div class="pop seat" role="dialog" aria-label="Seat ${n}"${popFocus}>
       ${popHead(seat.pos || "", `seat ${n}`, closed, seat.name)}${won}
       <div class="two">${stack}
         ${field({label: "Name", value: seat.name, words: true, name: "name", fk: "seat-name", send: {op: "rename", seat: n}})}
@@ -2218,7 +2218,12 @@
     const strip = header.querySelector(".strip");
     GIVE_WAY.forEach((name) => header.classList.remove(name));
     if (!strip) return;
-    for (let i = 0; i < GIVE_WAY.length && strip.scrollWidth > strip.clientWidth; i++) header.classList.add(GIVE_WAY[i]);
+    // Too short: the last part reaches beyond the strip's own room.
+    const tooShort = () => {
+      const room = strip.getBoundingClientRect().right - (parseFloat(getComputedStyle(strip).paddingRight) || 0);
+      return Array.prototype.some.call(strip.children, (kid) => kid.getClientRects().length && kid.getBoundingClientRect().right > room + 0.5);
+    };
+    for (let i = 0; i < GIVE_WAY.length && tooShort(); i++) header.classList.add(GIVE_WAY[i]);
   }
 
   // What is typed and not sent yet, in every field on the page: a menu or a sheet that is drawn anew
