@@ -31,6 +31,8 @@ class Villain:
     ptype: str = "unknown"
     line: list[tuple[str, str, float | None]] = field(default_factory=list)  # (street, action, size)
     label: str = ""
+    # was this player the last raiser before the flop?  None = not known
+    pfr: bool | None = None
 
 
 def range_from_spec(spec: str, n_players: int = 9, ptype: str = "unknown",
@@ -225,8 +227,10 @@ def _villain_combos(v: Villain, hero, board, pot_frac_now: float | None, facing:
         n = {"flop": 3, "turn": 4, "river": 5}[street]
         if n > len(board):
             continue
-        weights = narrow(combos, weights, board[:n], action, size, v.ptype,
-                         pfr_cbet=(action == "bet" and street == "flop" and not hero_pfr))
+        # a flop bet is a continuation bet only from the player who raised last
+        # before the flop; v.pfr False says this bet is not one
+        pfr_cbet = action == "bet" and street == "flop" and not hero_pfr and v.pfr is not False
+        weights = narrow(combos, weights, board[:n], action, size, v.ptype, pfr_cbet=pfr_cbet)
     return combos, weights, line
 
 
