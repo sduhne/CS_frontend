@@ -334,6 +334,10 @@ class Preflop(unittest.TestCase):
         self.assertEqual(bb_call_points("suited"), bb_call_points("suited_conn"))
         self.assertGreater(bb_call_points("suited", 0.08), bb_call_points("suited"))       # ICM asks for more
         self.assertEqual(max(bb_call_points(kind, 0.5, 2) for kind in ("pair", "suited", "broadway_off", "off")), 0.15)
+        # against a small blind's raise the big blind acts last after the flop: fewer points
+        self.assertLess(bb_call_points("suited", in_position=True), bb_call_points("suited"))
+        for hand in ("64s", "54s", "K7o", "A5o"):
+            self.assertEqual(self.play([30] * 8, 7, hand, [(6, "raise", 3.0)]).action, "CALL", hand)
         # 25bb or less is the same test: no stronger hand folds where a weaker one calls
         got = {hand: self.play([20] * 8, 7, hand, [(5, "raise", 2.0)], left=400).action for hand in strong + weak}
         self.assertFalse(any(got[hand] == "FOLD" for hand in strong), got)
@@ -491,9 +495,16 @@ class Preflop(unittest.TestCase):
         # the review's hands on the button at 30bb: no re-raise of a fifth of the stack that then folds
         for hand in ("KQs", "AJs", "AQo", "TT"):
             self.assertNotIn("3-BET to", self.play(stacks, 5, hand, [(4, "raise", 2.2)], left=400).action, hand)
-        # the small blind has no call to fall back on: all-in when that clearly earns, else fold
+        # the small blind has no call in its chart against a late raise: all-in when that clearly
+        # earns, else fold; but TT+, AQs+ and AK are never folded there, they call
         self.assertEqual(self.play([40] * 8, 6, "AQo", [(5, "raise", 2.2)], left=400).action, "ALL-IN")
         self.assertEqual(self.play([40] * 8, 6, "KQs", [(5, "raise", 2.2)], left=400).action, "FOLD")
+        for stack in (30, 40):                                                   # ten places from the money
+            for hand in ("JJ", "TT", "AQs", "AKo"):
+                adv = self.play([stack] * 8, 6, hand, [(4, "raise", 2.2)], left=160)
+                self.assertNotEqual(adv.action, "FOLD", (stack, hand))
+                self.assertNotIn("3-BET to", adv.action, (stack, hand))
+        self.assertEqual(self.play([40] * 8, 6, "TT", [(4, "raise", 2.2)], left=160).action, "CALL")
 
     def test_pre_18_a_blind_sitting_out_never_tightens_the_opening_range(self):
         for players in (8, 6):

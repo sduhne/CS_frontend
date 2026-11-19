@@ -2365,7 +2365,7 @@ def after_the_flop(seen: Seen, money: Money | None) -> Play:
     playbook_check(play, made, told)
     close_after_the_flop(seen, money, adv, play, told)
     if seen.mode == "tournament" and seen.data["config"].get("plan") == "allin":
-        return free_flop_rule(seen, play, made, pot, can_lose)
+        return free_flop_rule(seen, play, made, pot, can_lose, told)
     return play
 
 
@@ -2838,29 +2838,36 @@ def playbook_check(play: Play, made: dict, told: Told) -> None:
     One pair and no draw, facing a big river bet or a raise on the turn or
     the river: fold.  And top pair with a medium or weak kicker folds to a
     raise over its own bet on any street: the plan the coach gave with that
-    bet.  The engine's play stays against a player tagged lag or maniac, with
-    fewer than 1.5 pots behind when the street began (the hand is committed),
-    and at a tiny price.
+    bet.  (Weaker hands are folded with them, so that a stronger hand never
+    folds where a weaker one plays on.)  The engine's play stays against a
+    player tagged lag or maniac, with fewer than 1.5 pots behind when the
+    street began (the hand is committed), with a draw of 8 outs or more, and
+    at a tiny price.
     """
     if play.kind not in ("call", "raise", "allin") or has_a_draw(made, told):
         return
     if told.ptype in AGGRESSIVE_TYPES or told.pots_behind < PLAYBOOK_POTS_BEHIND or told.bet_share <= TINY_CALL:
         return
-    one_pair = made["category"] == "pair" or "paired board" in made["made"]
+    # one pair, or less: a hand without a draw that is weaker than one pair never plays on where one pair folds
+    one_pair = made["category"] in ("high card", "pair") or \
+        (made["category"] == "two pair" and made["made"] not in ("two pair", "top two pair"))
     big_river_bet = told.street == "river" and told.bet_share >= PLAYBOOK_BIG_BET
     raised = told.street in ("turn", "river") and told.raised
-    thin_bet_raised = made["strength"] == 4 and told.raised and told.hero_bet
+    thin_bet_raised = made["strength"] <= 4 and told.raised and told.hero_bet
     if not (one_pair and (big_river_bet or raised)) and not thin_bet_raised:
         return
     engine = engine_alone(play)
     passive = told.ptype in PASSIVE_TYPES
     whose = f"{told.who}, {'tagged' if told.tagged else 'read as'} {told.ptype}" if passive else told.who
+    holding = "One pair" if made["category"] != "high card" else "No pair"
     if one_pair and (big_river_bet or raised):
         what = "a raise" if raised else "a big river bet"
         why = "such players rarely bluff there" if passive else "that is rarely a bluff"
-        reason = f"One pair facing {what} from {whose}: {why}, so the playbook folds"
-    else:
+        reason = f"{holding} facing {what} from {whose}: {why}, so the playbook folds"
+    elif made["strength"] == 4:
         reason = f"You bet top pair without a strong kicker and {whose} raised: fold, as planned with the bet"
+    else:
+        reason = f"You bet a hand weaker than top pair and {whose} raised: fold"
     play.verb, play.kind, play.to = "FOLD", "fold", None
     play.qualifier, play.sure = "playbook check", "standard"
     play.reason = sentence(reason)
@@ -2900,20 +2907,24 @@ def close_after_the_flop(seen: Seen, money: Money | None, adv, play: Play, told:
     play.source = f"CLOSE: before the money the lower-variance side leads (engine: {engine})"
 
 
-def free_flop_rule(seen: Seen, engine: Play, made: dict, pot: float, can_lose: float) -> Play:
+def free_flop_rule(seen: Seen, engine: Play, made: dict, pot: float, can_lose: float, told: Told) -> Play:
     """The all-in plan after a free flop: all-in with top pair or better, or 12 outs, at 4 pots or less.
 
     "Behind" is what an opponent can still call, not hero's whole stack.  A
     hand that passes the strength test is never checked or folded by this
     rule: with more than 4 pots behind the full engine's play is the answer.
     When all the chips that can go in are in the bet hero faces, the all-in
-    is a call and the headline says so.
+    is a call and the headline says so.  And a weak hand is not folded at a
+    tiny price (a tenth of the pot or less) when the engine calls.
     """
     strong = made["strength"] >= 4 or (made["outs"] >= FREE_FLOP_OUTS and seen.state.phase != "river")
     second = f"The full engine: {engine_summary(engine)}."
     holds = tile("You hold", made["made"].split(" (")[0], made["texture"]["label"])
     source = "all-in plan: the playbook's rule"
     if not strong:
+        if 0 < told.bet_share <= TINY_CALL and engine.kind == "call":
+            engine.source = "all-in plan: a tiny price, the full engine's play"
+            return engine
         verb, kind = ("CHECK", "check") if seen.to_call <= 0 else ("FOLD", "fold")
         return Play(verb=verb, kind=kind, sure="standard", also=second, source=source, tiles=[holds],
                     reason="No top pair and no 12-out draw: check, and fold to a bet.")

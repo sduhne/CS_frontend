@@ -1470,5 +1470,534 @@ class PlanAndTableFindings(unittest.TestCase):
         self.assertTrue(known["context"]["stage"].startswith("Middle:"), known["context"]["stage"])
 
 
+# --------------------------------------------------------------------------
+# The review's findings after the flop (POST-...) and the sentences of OPS-6, OPS-15, OPS-16
+# --------------------------------------------------------------------------
+
+class postflop_says:
+    """For the length of a ``with`` block the engine after the flop gives this one answer (``None``: its own),
+    and the spot it was asked about is kept in ``spot``."""
+
+    def __init__(self, action=None, confidence="standard", why=("the engine's reason",), numbers=(), warnings=(),
+                 data=None):
+        self.spot = None
+        self.advice = None if action is None else Advice(
+            action, confidence, "", list(why), list(numbers), [], list(warnings),
+            dict(data or {"equity": 0.5, "spr": 5.0}))
+
+    def __enter__(self):
+        self.real, A.advise_postflop = A.advise_postflop, self.answer
+        return self
+
+    def answer(self, spot):
+        self.spot = spot
+        return self.advice if self.advice is not None else self.real(spot)
+
+    def __exit__(self, *exc):
+        A.advise_postflop = self.real
+
+
+CALL_58_56 = ["to call 3,000 (3.0bb, 60% pot): pot odds need 27% -> need 56%, have 58%"]
+
+
+def flop(s, cards, *acts):
+    """Type the flop (or the next card) and the actions after it: ``(seat, kind)`` or ``(seat, kind, chips)``."""
+    s.do("set_cards", slot={6: "flop", 2: "turn"}[len(cards)] if len(cards) != 2 or not s.view()["hand"]["board"][3:]
+         else "river", text=cards)
+    for seat, kind, *amount in acts:
+        s.do("act", seat=seat, kind=kind, amount=amount[0] if amount else None)
+    return s
+
+
+def labels(spot) -> dict:
+    """{"CO": "raised first", ...} from the opponents handed to the engine."""
+    return dict(v.label.split(": ") for v in spot.villains)
+
+
+def pct(weights) -> float:
+    return sum(w * n for w, n in zip(weights, A.COMBO_COUNT)) / 13.26
+
+
+class AfterTheFlopFindings(unittest.TestCase):
+    """Eight players at 500/1,000 with an ante of 125 unless said; seats are named by their place in the order."""
+
+    def three_way(self, cards, stacks, acts, hero=BTN, **more):
+        s = tournament(stacks, hero, cards, acts=acts, **more)
+        return s, lambda index: seat_of(index, hero, 8)
+
+    # ---- POST-1 --------------------------------------------------------------------------------------------
+
+    def test_post_1_three_players_the_stack_that_matters_is_the_deepest_that_can_call(self):
+        deep = [30, 30, 30, 30, 10, 60, 30, 60]             # the cutoff has 10bb; hero (button) and the big blind 60bb
+        # (1) the short cutoff raises, hero and the big blind call; checked to hero with top pair, top kicker
+        s, seat = self.three_way("AhKd", deep, [(CO, "raise", 2.2)])
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(BB), kind="call")
+        flop(s, "Ks7d2c", (seat(BB), "check"), (seat(CO), "check"))
+        with postflop_says() as engine:
+            a = A.advise(s)
+        self.assertGreater(engine.spot.villain_stack, 50000)            # the big blind's chips, not the cutoff's 7,675
+        self.assertEqual(a["headline"]["follow"]["kind"], "bet")        # a value bet, not 57bb into 8bb
+        self.assertLess(a["headline"]["follow"]["to"], s.view()["hand"]["pot"])
+        # (2) a short player bets, a deep one is still behind hero: calling does not "commit" hero
+        s, seat = self.three_way("AhKd", [10, 30, 30, 30, 60, 60, 30, 30], [(UTG, "raise", 2.2)], hero=CO)
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(BTN), kind="call")
+        flop(s, "Ks7d2c", (seat(UTG), "bet", 2500))
+        with postflop_says() as engine:
+            a = A.advise(s)
+        self.assertGreater(engine.spot.villain_stack, 50000)
+        self.assertNotEqual(verb(a), "ALL-IN")
+        # (3) a player is all-in before the flop: the player bet into is the one who still has chips
+        s, seat = self.three_way("7h7s", [5, 30, 30, 30, 30, 60, 30, 60], [(UTG, "allin", None)])
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(BB), kind="call")
+        flop(s, "Ks7d2c", (seat(BB), "check"))
+        with postflop_says() as engine:
+            a = A.advise(s)
+        self.assertTrue(engine.spot.villains[0].label.startswith("BB"), engine.spot.villains[0].label)
+        self.assertGreater(engine.spot.villain_stack, 50000)            # was 0: "0.0bb behind", and ALL-IN 55bb
+        self.assertEqual(a["headline"]["follow"]["kind"], "bet")
+
+    def test_post_1_an_all_in_meant_for_a_smaller_stack_is_a_bet_while_a_deeper_player_is_in(self):
+        s, seat = self.three_way("AhKd", [30, 30, 30, 30, 10, 60, 30, 60], [(CO, "raise", 2.2)])
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(BB), kind="call")
+        flop(s, "Ks7d2c", (seat(BB), "check"), (seat(CO), "check"))
+        real = A.matchable
+        A.matchable = lambda seen, opponents: 7675          # as if only the cutoff's chips could be won
+        try:
+            with postflop_says("BET ALL-IN"):
+                a = A.advise(s)
+        finally:
+            A.matchable = real
+        self.assertEqual((verb(a), a["headline"]["follow"]), ("BET", {"kind": "bet", "to": 7675}))
+
+    # ---- POST-2 --------------------------------------------------------------------------------------------
+
+    def test_post_2_all_in_plan_a_strong_hand_is_never_folded_by_the_free_flop_rule(self):
+        # (a) the small blind completes with 3bb left and moves all-in on the flop; hero has 29bb and top pair
+        stacks = [30, 30, 30, 30, 30, 30, 4.125, 30]
+        s = tournament(stacks, BB, "AhKd", acts=[(SB, "call", None)], plan="allin")
+        s.do("act", seat=1, kind="check")
+        flop(s, "Ks7d2c", (seat_of(SB, BB, 8), "allin"))
+        a = A.advise(s)
+        self.assertEqual((verb(a), a["headline"]["follow"]), ("CALL", {"kind": "call"}))
+        self.assertEqual(a["headline"]["size_text"], "3BB · 3,000")
+        self.assertEqual(a["tiles"][1]["label"], "Pots behind")        # measured on the 3bb that can be lost
+        self.assertLess(float(a["tiles"][1]["value"]), 1.0)
+        # (b) a full house facing a bet with 29bb behind: more than 4 pots, so the full engine's play
+        s = tournament([30] * 8, BB, "7h7s", acts=[(UTG, "call", None), (BTN, "call", None)], plan="allin")
+        s.do("act", seat=1, kind="check")
+        flop(s, "7d2c2s", (1, "check"), (seat_of(UTG, BB, 8), "bet", 2500), (seat_of(BTN, BB, 8), "fold"))
+        with postflop_says("RAISE to 8,850 (8.9bb, 126% pot)", "clear"):
+            a = A.advise(s)
+        self.assertEqual(verb(a), "RAISE")
+        self.assertIn("more than 4 pots behind", source(a))
+        # ... and whatever the engine says, the rule's own answer for that hand is never CHECK or FOLD
+        with postflop_says("CALL", "clear"):
+            self.assertEqual(verb(A.advise(s)), "CALL")
+        # (c) a hand that fails the strength test still folds to the bet
+        s = tournament([30] * 8, BB, "Qh3d", acts=[(UTG, "call", None), (BTN, "call", None)], plan="allin")
+        s.do("act", seat=1, kind="check")
+        flop(s, "7d2c2s", (1, "check"), (seat_of(UTG, BB, 8), "bet", 2500), (seat_of(BTN, BB, 8), "fold"))
+        a = A.advise(s)
+        self.assertEqual(verb(a), "FOLD")
+        self.assertEqual(a["reason"], "No top pair and no 12-out draw: check, and fold to a bet.")
+        # (d) top pair with 4 pots or less behind against a player who covers: all-in, as before
+        s = tournament([30, 30, 30, 30, 30, 30, 30, 10], BB, "AhKd", acts=[(UTG, "call", None)], plan="allin")
+        s.do("act", seat=1, kind="check")
+        flop(s, "Ks7d2c")
+        a = A.advise(s)
+        self.assertEqual((verb(a), a["headline"]["follow"]), ("ALL-IN", {"kind": "allin"}))
+
+    # ---- POST-4, POST-5 --------------------------------------------------------------------------------------
+
+    def test_post_4_a_short_all_in_is_not_the_first_raise(self):
+        def cutoff_raises_and_bets(utg_stack, utg_does):
+            stacks = [utg_stack, 30, 30, 30, 30, 50, 30, 50]
+            s, seat = self.three_way("KhQd", stacks, [(UTG, utg_does, None), (CO, "raise", 2.5)])
+            s.do("act", seat=1, kind="call")
+            s.do("act", seat=seat(SB), kind="fold")
+            s.do("act", seat=seat(BB), kind="fold")
+            flop(s, "Ks7d2c", (seat(CO), "bet", 3000))
+            with postflop_says() as engine:
+                A.advise(s)
+            return engine.spot
+
+        opening = A.villain_open_range(3, "unknown")                    # the cutoff's opening range
+        short = cutoff_raises_and_bets(1.5, "allin")                    # all-in for 1.4bb: less than a full raise
+        self.assertEqual(labels(short), {"CO": "raised over a short all-in", "UTG": "moved all-in"})
+        self.assertEqual(short.villains[0].weights, opening)            # was "re-raised": JJ+, AQs+, AKo
+        self.assertGreater(pct(short.villains[1].weights), 60)          # a 1.4bb stack moves in with most hands
+        self.assertEqual(labels(cutoff_raises_and_bets(30, "fold")), {"CO": "raised first"})
+        # an open all-in is a push range for its stack, not the seat's opening range; a raise over a real
+        # all-in is read by the hands that call that all-in
+        real = cutoff_raises_and_bets(6, "allin")
+        self.assertEqual(labels(real), {"CO": "raised over an all-in", "UTG": "moved all-in"})
+        self.assertNotEqual(real.villains[1].weights, A.villain_open_range(7, "unknown"))
+        self.assertGreater(pct(real.villains[1].weights), pct(A.villain_open_range(7, "unknown")))
+        self.assertGreater(pct(real.villains[0].weights), 5)            # far more than the 3% of a re-raise
+
+    def test_post_5_four_ways_into_the_pot_get_their_own_range(self):
+        queens, junk = HANDS.index("QQ"), [HANDS.index(h) for h in ("65s", "JTo", "72o")]
+        # (1) the big blind raises over two players who only called
+        s, seat = self.three_way("KhTh", [40] * 8, [(UTG, "call", None)])
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(SB), kind="fold")
+        s.do("act", seat=seat(BB), kind="raise", amount=6000)
+        s.do("act", seat=seat(UTG), kind="fold")
+        s.do("act", seat=1, kind="call")
+        flop(s, "Ks7d2c", (seat(BB), "bet", 8000))
+        with postflop_says() as engine:
+            A.advise(s)
+        self.assertEqual(labels(engine.spot), {"BB": "raised over the callers"})
+        self.assertEqual(engine.spot.villains[0].weights, A.isolation_range(0, "unknown", 2))
+        self.assertLess(pct(engine.spot.villains[0].weights), 20)       # was the small blind's 36% opening range
+        # (2) the big blind calls hero's re-raise cold; (3) the cutoff opens and calls it
+        for caller, acts in ((BB, [(CO, "raise", 2.2)]), (CO, [(CO, "raise", 2.2)])):
+            s, seat = self.three_way("QhQd", [60] * 8, acts)
+            s.do("act", seat=1, kind="raise", amount=7000)
+            if caller == BB:
+                s.do("act", seat=seat(SB), kind="fold")
+                s.do("act", seat=seat(BB), kind="call")
+                s.do("act", seat=seat(CO), kind="fold")
+            else:
+                s.do("act", seat=seat(SB), kind="fold")
+                s.do("act", seat=seat(BB), kind="fold")
+                s.do("act", seat=seat(CO), kind="call")
+            flop(s, "Js7d2c", (seat(caller), "check"))
+            with postflop_says() as engine:
+                A.advise(s)
+            weights = engine.spot.villains[0].weights
+            self.assertEqual(list(labels(engine.spot).values()), ["called a re-raise"])
+            self.assertLess(pct(weights), 8)                            # was 33% and 26%
+            self.assertEqual(weights[queens], 1.0)
+            self.assertFalse(any(weights[h] for h in junk))
+        usual, loose = (pct(parse_range(A.CONTINUE_VS_RERAISE[k])) for k in ("usual", "loose"))
+        self.assertGreater(loose, usual)                                # wider for players who call too much
+        # (4) the button moves all-in for 12bb, the small blind calls, hero calls in the big blind
+        s = tournament([30, 30, 30, 30, 30, 12, 50, 50], BB, "AhQd", acts=[(BTN, "allin", None), (SB, "call", None)])
+        s.do("act", seat=1, kind="call")
+        flop(s, "Qs7d2c", (seat_of(SB, BB, 8), "bet", 6000))
+        with postflop_says() as engine:
+            A.advise(s)
+        self.assertEqual(labels(engine.spot), {"SB": "called an all-in", "BTN": "moved all-in"})
+        caller, pusher = (v.weights for v in engine.spot.villains)
+        for hand in ("AA", "TT", "AKs", "AQs", "AKo"):                  # the hands that do call an all-in ...
+            self.assertEqual(caller[HANDS.index(hand)], 1.0, hand)      # ... were missing from the old range
+        self.assertFalse(caller[HANDS.index("76s")])
+        self.assertNotEqual(pusher, A.villain_open_range(2, "unknown"))
+
+    # ---- POST-7, POST-8 --------------------------------------------------------------------------------------
+
+    def raised_on_the_turn(self, tag, hero_cards="AhKd"):
+        """Hero raises the cutoff, bets flop and turn, and the big blind check-raises the turn."""
+        s, seat = six_handed([100] * 6, 2, hero_cards, types={5: tag} if tag else None)
+        villain = seat(5)
+        s.do("act", seat=1, kind="raise", amount=2200)
+        s.do("act", seat=villain, kind="call")
+        flop(s, "Ks7d2c", (villain, "check"), (1, "bet", 2000), (villain, "call"))
+        flop(s, "9s", (villain, "check"), (1, "bet", 6000), (villain, "raise", 20000))
+        with postflop_says("CALL", "clear", numbers=["to call 14,000: need 31%, have 63%"]):
+            return A.advise(s)
+
+    def test_post_7_one_pair_folds_to_a_turn_raise_from_a_player_without_a_tag(self):
+        a = self.raised_on_the_turn(None)
+        self.assertEqual((verb(a), a["headline"]["qualifier"]), ("FOLD", "playbook check"))
+        self.assertEqual(a["reason"], "One pair facing a raise from BB: that is rarely a bluff, so the playbook folds.")
+        self.assertEqual(a["also"], "The engine alone: CALL, 63% against 31%.")
+        self.assertEqual(a["tiles"][1]["note"], "the engine alone")     # the numbers beside the fold are the engine's
+        self.assertIn("tagged tight", self.raised_on_the_turn("tight")["reason"])
+        for aggressive in ("lag", "maniac"):                            # only against these the engine's call stays
+            self.assertEqual(verb(self.raised_on_the_turn(aggressive)), "CALL")
+        # two pair is not one pair
+        self.assertEqual(verb(self.raised_on_the_turn(None, "Kh7h")), "CALL")
+
+    def thin_bet_then_raised(self, tag=None, stack=60):
+        """Top pair, weak kicker: (the answer to the flop checked to hero, the answer after his bet is raised)."""
+        s, seat = six_handed([stack] * 6, 2, "Kh4h", types={5: tag} if tag else None)
+        villain = seat(5)
+        s.do("act", seat=1, kind="raise", amount=2200)
+        s.do("act", seat=villain, kind="call")
+        flop(s, "Ks7d2c", (villain, "check"))
+        with postflop_says("BET 1,900 (1.9bb, 33% pot)", warnings=["fold to a raise unless this player is aggressive"]):
+            first = A.advise(s)
+        s.do("act", seat=1, **first["headline"]["follow"])
+        s.do("act", seat=villain, kind="raise", amount=6000)
+        with postflop_says("CALL", numbers=["to call 4,100: need 31%, have 34%"]):
+            return first, A.advise(s)
+
+    def test_post_8_the_answer_to_a_raise_keeps_what_the_bet_announced(self):
+        announced = "Fold to a raise unless this player is aggressive."
+        first, second = self.thin_bet_then_raised()
+        self.assertIn(announced, [w["text"] for w in first["warnings"]])
+        self.assertEqual((verb(second), second["headline"]["qualifier"]), ("FOLD", "playbook check"))
+        self.assertIn("fold, as planned with the bet", second["reason"])
+        self.assertEqual(second["also"], "The engine alone: CALL, 34% against 31%.")
+        # against a player tagged aggressive, or with the stack committed, the engine's call stays: then the
+        # bet does not announce a fold either
+        for more in ({"tag": "lag"}, {"tag": "maniac"}, {"stack": 9}):
+            first, second = self.thin_bet_then_raised(**more)
+            self.assertNotIn(announced, [w["text"] for w in first["warnings"]], more)
+            self.assertEqual(verb(second), "CALL", more)
+
+    # ---- POST-9 ----------------------------------------------------------------------------------------------
+
+    def test_post_9_only_the_raisers_flop_bet_is_a_continuation_bet(self):
+        # the engine is told who raised last before the flop
+        s, seat = self.three_way("QhJh", [40] * 8, [(CO, "raise", 2.2)])
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(BB), kind="call")
+        flop(s, "As7h4d", (seat(BB), "bet", 3000), (seat(CO), "call"))
+        with postflop_says() as engine:
+            A.advise(s)
+        self.assertEqual({v.label.split(":")[0]: v.pfr for v in engine.spot.villains}, {"BB": False, "CO": True})
+        self.assertFalse(engine.spot.hero_pfr)
+
+        def limped_pot(cards, bet, style=None):
+            s = tournament([40] * 8, BB, cards, acts=[(SB, "call", None)], style=style)
+            s.do("act", seat=1, kind="check")
+            flop(s, "As7h4d", (seat_of(SB, BB, 8), "bet", bet))
+            with postflop_says("CALL", numbers=["to call: need 33%, have 34%"]) as engine:
+                return A.advise(s), engine.spot
+
+        # no pair, no draw, a pot-sized bet from a player who only called before the flop: fold, whatever the engine says
+        a, spot = limped_pot("QhTd", 2125)
+        self.assertEqual([v.pfr for v in spot.villains], [False])       # nobody raised: no continuation bet
+        self.assertEqual(verb(a), "FOLD")
+        self.assertIn("did not raise before the flop", a["reason"])
+        self.assertEqual(a["also"], "The engine alone: CALL, 34% against 33%.")
+        self.assertEqual(verb(limped_pot("QhTd", 500)[0]), "CALL")      # a small bet: the engine's answer
+        self.assertEqual(verb(limped_pot("Qh7d", 2125)[0]), "CALL")     # a pair
+        self.assertEqual(verb(limped_pot("6h5h", 2125)[0]), "CALL")     # a draw of 8 outs or more
+        # the raiser's own bet is left to the engine
+        s, seat = six_handed([40] * 6, 5, "QhTd", acts=[(3, "raise", 2.2)])
+        s.do("act", seat=1, kind="call")
+        flop(s, "As7h4d", (1, "check"), (seat(3), "bet", 4000))
+        with postflop_says("CALL", numbers=["to call: need 33%, have 34%"]) as engine:
+            self.assertEqual(verb(A.advise(s)), "CALL")
+        self.assertEqual([v.pfr for v in engine.spot.villains], [True])
+
+    # ---- POST-10, POST-12 ------------------------------------------------------------------------------------
+
+    def test_post_10_players_in_front_who_have_not_acted_are_named_as_an_assumption(self):
+        s, seat = self.three_way("QhJh", [40] * 8, [(UTG, "raise", 2.2)])
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(BB), kind="call")
+        flop(s, "Th9h2c")                                               # nobody has acted on the flop yet
+        self.assertEqual(s.view()["hand"]["before_target"], [seat(BB), seat(UTG)])
+        with postflop_says("CHECK") as engine:
+            a = A.advise(s)
+        self.assertEqual(a["spot"], "QhJh on Th9h2c, if BB and UTG check, pot 8.1bb")
+        self.assertEqual(a["provisional"], "if BB and UTG check")
+        self.assertEqual(a["headline"]["qualifier"], "if BB and UTG check")
+        self.assertEqual([v.line for v in engine.spot.villains], [[], []])     # no check narrows a range yet
+        # one of them checks for real: he is no longer assumed, and his check is on his line
+        s.do("act", seat=seat(BB), kind="check")
+        with postflop_says("BET 2,700 (2.7bb, 33% pot) (semi-bluff)") as engine:
+            a = A.advise(s)
+        self.assertEqual(a["spot"], "QhJh on Th9h2c, if UTG checks, pot 8.1bb")
+        self.assertEqual(a["headline"]["qualifier"], "semi-bluff, if UTG checks")
+        self.assertEqual({v.label.split(":")[0]: len(v.line) for v in engine.spot.villains}, {"UTG": 0, "BB": 1})
+        s.do("act", seat=seat(UTG), kind="check")
+        a = A.advise(s)
+        self.assertEqual((a["spot"], a["provisional"]), ("QhJh on Th9h2c, checked to you, pot 8.1bb", ""))
+        # a bet in front of hero and a player between them who has not acted: he is assumed to fold
+        s = tournament([40] * 8, BB, "AhKd", acts=[(UTG, "call", None), (BTN, "call", None)])
+        s.do("act", seat=1, kind="check")
+        flop(s, "Ks7d2c", (1, "check"), (seat_of(UTG, BB, 8), "bet", 2500))
+        a = A.advise(s)
+        self.assertEqual(a["spot"], "AhKd on Ks7d2c, UTG bets 2.5bb into 4.5bb, if BTN folds")
+        self.assertEqual(a["provisional"], "if BTN folds")
+        # before the flop "folded to you" stays as it is
+        self.assertEqual(A.advise(tournament(STACKS_A, BTN, "A8o"))["provisional"], "")
+
+    def test_post_12_the_spot_line_names_who_bet_and_who_called(self):
+        s, seat = self.three_way("8h7h", [40] * 8, [(UTG, "call", None)])
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(SB), kind="fold")
+        s.do("act", seat=seat(BB), kind="raise", amount=6000)
+        s.do("act", seat=seat(UTG), kind="call")
+        s.do("act", seat=1, kind="call")
+        flop(s, "9s6d2c", (seat(BB), "bet", 4000), (seat(UTG), "call"))
+        self.assertEqual(A.advise(s)["spot"], "8h7h on 9s6d2c, BB bets 4bb into 19.5bb, UTG calls")   # was "UTG bets"
+        # a bet and a raise in front of hero: the raiser is named
+        s, seat = self.three_way("7h7s", [90] * 8, [(UTG, "raise", 2.2)])
+        s.do("act", seat=1, kind="call")
+        s.do("act", seat=seat(BB), kind="call")
+        flop(s, "Ks7d6d", (seat(BB), "bet", 3000), (seat(UTG), "raise", 9000))
+        self.assertEqual(A.advise(s)["spot"], "7h7s on Ks7d6d, UTG raises to 9bb into 8.1bb")
+
+    # ---- POST-11 ---------------------------------------------------------------------------------------------
+
+    def test_post_11_the_all_in_headline_shows_what_can_be_matched(self):
+        # after the flop: hero has 59bb, the only opponent 20bb
+        s, seat = six_handed([60, 60, 60, 60, 60, 22.325], 2, "7h7s")
+        s.do("act", seat=1, kind="raise", amount=2200)
+        s.do("act", seat=seat(5), kind="call")
+        flop(s, "Ks7d6d", (seat(5), "check"))
+        with postflop_says("BET ALL-IN"):
+            a = A.advise(s)
+        self.assertEqual((verb(a), a["headline"]["follow"]), ("ALL-IN", {"kind": "allin"}))
+        self.assertEqual(a["headline"]["size_text"], "20BB · 20,000")     # was 57.7BB, hero's whole stack
+        # before the flop: the small blind has 30bb and only the big blind, with 8bb, is left
+        s = tournament([30, 30, 30, 30, 30, 30, 30, 8], SB, "AA")
+        with engine_says("ALL-IN", data={"shove_ev_bb": 1.0}):
+            a = A.advise(s)
+        self.assertEqual((verb(a), a["headline"]["follow"]), ("ALL-IN", {"kind": "allin"}))
+        self.assertEqual(a["headline"]["size_text"], "7.9BB · 7,875")     # the big blind's stack after the ante
+        # hero is the short one: his own stack, as before
+        s = tournament([30, 30, 30, 30, 30, 30, 12, 30], SB, "AA")
+        with engine_says("ALL-IN", data={"shove_ev_bb": 1.0}):
+            self.assertEqual(A.advise(s)["headline"]["size_text"], "11.9BB · 11,875")
+
+    # ---- POST-13 ---------------------------------------------------------------------------------------------
+
+    def test_post_13_a_player_sitting_out_has_no_hand_after_the_flop(self):
+        # heads-up against a big blind who is sitting out: the smallest bet takes the pot
+        s = Session(save=False)
+        s.do("new_session", mode="tournament", size=8, start_stack=30000, button=8)
+        s.do("set_level", text="300/600/75")
+        s.do("set_status", seat=2, status="away")                       # hero is the small blind, seat 2 the big blind
+        s.do("deal", hero_cards="9h4d")
+        s.do("act", seat=1, kind="call")
+        flop(s, "As6d2c")
+        a = A.advise(s)
+        self.assertEqual((verb(a), a["headline"]["follow"]), ("BET", {"kind": "bet", "to": 600}))
+        self.assertIn("sitting out", a["reason"])
+        # three-way with the absent big blind: the engine is asked about the player who is there, alone
+        s = Session(save=False)
+        s.do("new_session", mode="tournament", size=8, start_stack=30000, button=1)
+        s.do("set_level", text="300/600/75")
+        s.do("set_status", seat=3, status="away")                       # hero on the button, seat 3 the big blind
+        s.do("deal", hero_cards="QhJh")
+        s.do("act", seat=4, kind="call")
+        s.do("act", seat=1, kind="call")
+        flop(s, "As6d2c", (4, "check"))
+        with postflop_says() as engine:
+            A.advise(s)
+        self.assertEqual(list(labels(engine.spot)), ["UTG"])            # was UTG and "BB: any two cards"
+
+    # ---- POST-14 ---------------------------------------------------------------------------------------------
+
+    def test_post_14_bets_after_the_flop_are_amounts_the_chips_can_make(self):
+        s, seat = six_handed([90] * 6, 2, "7h7s")
+        s.do("act", seat=1, kind="raise", amount=2200)
+        s.do("act", seat=seat(5), kind="call")
+        flop(s, "Ks7d6d", (seat(5), "check"))
+        seen = A.read_table(s, s.view())
+        self.assertEqual(A.chip_step(seen), 25)                         # 500/1,000 with an ante of 125
+        with postflop_says("BET 1,897 (1.9bb, 33% pot)"):
+            a = A.advise(s)
+        self.assertEqual(a["headline"]["follow"], {"kind": "bet", "to": 1900})
+        self.assertEqual(a["headline"]["size_text"], "1.9BB · 1,900")
+        with postflop_says("BET 311 (0.3bb, 5% pot)"):                  # under the smallest bet: lifted to it
+            self.assertEqual(A.advise(s)["headline"]["follow"], {"kind": "bet", "to": 1000})
+        s.do("act", seat=1, kind="bet", amount=1900)
+        s.do("act", seat=seat(5), kind="raise", amount=5433)            # an odd raise: the smallest re-raise is odd too
+        low = s.view()["hand"]["legal"]["raise"]["min"]
+        with postflop_says("RAISE to 16,788 (16.8bb, 120% pot)"):
+            a = A.advise(s)
+        self.assertEqual(a["headline"]["follow"], {"kind": "raise", "to": 18700})      # 1,900 in front + 16,788
+        self.assertEqual(low, 8966)
+        with postflop_says(f"RAISE to {low - 1900 - 10:,} (7bb, 50% pot)"):            # 8,956 would round to 8,950
+            self.assertEqual(A.advise(s)["headline"]["follow"]["to"], low)             # never under the minimum
+        s.do("act", seat=1, **a["headline"]["follow"])                  # and the table takes it
+        for level, step in (("300/600/75", 25), ("100/200/25", 25), ("1000/2000/250", 250), ("10/20", 10),
+                            ("15/30", 5), ("300/600", 100), ("1/2", 1)):
+            sb, bb, *ante = (int(x) for x in level.split("/"))
+            seen.hand["level"].update(sb=sb, bb=bb, ante=ante[0] if ante else 0)
+            self.assertEqual(A.chip_step(seen), step, level)
+
+    # ---- close spots after the flop --------------------------------------------------------------------------
+
+    def close_call(self, left=400, style=None, tag=None, numbers=CALL_58_56, why=("you have the equity",)):
+        s, seat = six_handed([60] * 6, 5, "AhQd", acts=[(2, "raise", 2.2)], left=left, style=style,
+                             types={2: tag} if tag else None)
+        s.do("act", seat=1, kind="call")
+        flop(s, "Qs8d3c", (1, "check"), (seat(2), "bet", 3000))
+        with postflop_says("CALL", "close", why=why, numbers=numbers):
+            return A.advise(s)
+
+    def test_close_after_the_flop_the_lower_variance_side_leads_before_the_money(self):
+        a = self.close_call()
+        self.assertEqual((verb(a), a["headline"]["qualifier"], a["headline"]["sure"], a["guard"]),
+                         ("FOLD", "close: lower variance", "close", "close"))
+        self.assertEqual(a["reason"], "Close: the call and the fold are worth about the same. Before the money the "
+                                      "lower-variance side leads: fold.")
+        self.assertEqual(a["also"], "The engine alone: CALL, 58% against 56%. The Max EV style plays it.")
+        self.assertTrue(source(a).endswith("CLOSE: before the money the lower-variance side leads "
+                                           "(engine: CALL, 58% against 56%)"), source(a))
+        self.assertNotIn("close", codes(a))                             # the reason says it
+        self.assertEqual(verb(self.close_call(style="cash")), "FOLD")
+        # the engine's play: Max EV, in the money, a final table, against a player tagged aggressive, a hand
+        # the engine calls committed
+        for more in ({"style": "maxev"}, {"left": 140}, {"left": 6}, {"tag": "maniac"},
+                     {"why": ("with a strong one-pair hand and less than 1.5x the pot behind you are committed",)}):
+            a = self.close_call(**more)
+            self.assertEqual((verb(a), a["guard"]), ("CALL", "none"), more)
+            self.assertIn("close", codes(a), more)
+        # a close bluff becomes a check; a close value bet does not exist, and a standard bluff stays
+        s, seat = six_handed([60] * 6, 2, "JhTh")
+        s.do("act", seat=1, kind="raise", amount=2200)
+        s.do("act", seat=seat(5), kind="call")
+        flop(s, "Ks7d2c", (seat(5), "check"))
+        with postflop_says("BET 1,900 (1.9bb, 33% pot) (c-bet)", "close"):
+            a = A.advise(s)
+        self.assertEqual((verb(a), a["guard"], a["headline"]["follow"]), ("CHECK", "close", {"kind": "check"}))
+        self.assertIn("the bet and the check are worth about the same", a["reason"])
+        with postflop_says("BET 1,900 (1.9bb, 33% pot) (c-bet)"):
+            self.assertEqual(verb(A.advise(s)), "BET")
+        # Spin: chips are money, the engine's play
+        s = spin([15, 15, 15], 2, "AhQd", acts=[(0, "fold", None), (1, "call", None)])
+        s.do("act", seat=1, kind="check")
+        flop(s, "Qs8d3c", (seat_of(1, 2, 3), "bet", 100))
+        with postflop_says("CALL", "close", numbers=CALL_58_56):
+            self.assertEqual(verb(A.advise(s)), "CALL")
+
+    # ---- OPS-6, OPS-15, OPS-16: the sentences --------------------------------------------------------------
+
+    def test_ops_6_after_a_fold_the_line_says_press_n(self):
+        s = tournament(STACKS_A, BTN, "72o")
+        s.do("act", seat=1, kind="fold")                                # the blinds still have to act
+        self.assertEqual(A.advise(s)["spot"], "You have folded: nothing left to decide. Press N for the next hand.")
+
+    def lost_all_in(self, hero_stack):
+        """Hero raises the cutoff, the big blind (40bb) moves all-in, hero calls and loses."""
+        s, seat = six_handed([40, 40, hero_stack, 40, 40, 40], 2, "AhKd")
+        s.do("act", seat=1, kind="raise", amount=2200)
+        s.do("act", seat=seat(5), kind="allin")
+        s.do("act", seat=1, kind="call")
+        for cards in ("Qs7d2c", "3h", "9s"):
+            flop(s, cards)
+        s.do("award", winner=seat(5))
+        return s, seat(5)
+
+    def test_ops_15_the_result_names_the_winner_by_seat_and_the_next_hand(self):
+        s, winner = self.lost_all_in(50)
+        a = A.advise(s)
+        self.assertEqual(a["status"], "none")
+        # the seat names on the table are already the next hand's: the line gives the finished hand's
+        self.assertEqual(a["spot"], f"Seat {winner} (BB) wins 81,000. The button moves to seat {winner - 1} and you "
+                                    "are in the hijack: press N for the next hand.")
+        self.assertEqual(s.view()["table"]["seats"][winner - 1]["pos"], "SB")
+        # hero wins: "You (CO) win"
+        s, seat = six_handed([40] * 6, 2, "AhKd")
+        s.do("act", seat=1, kind="raise", amount=2200)
+        s.do("act", seat=seat(5), kind="call")
+        flop(s, "Ks7d2c", (seat(5), "check"), (1, "bet", 2000), (seat(5), "fold"))
+        self.assertTrue(A.advise(s)["spot"].startswith("You (CO) win 5,650. The button moves to seat"))
+
+    def test_ops_16_without_chips_the_line_says_what_to_do_and_stays(self):
+        s, winner = self.lost_all_in(30)
+        told = "You have no chips left: type a new stack on your seat to re-enter, or start a new tournament."
+        self.assertEqual(A.advise(s)["spot"], f"Seat {winner} (BB) wins 61,000. {told}")
+        s.do("deal")                                                    # a hand dealt without hero: still there
+        self.assertEqual(A.advise(s)["spot"], told)
+        s.do("set_stack", seat=1, text="20000")
+        self.assertNotIn("no chips", A.advise(s)["spot"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -134,7 +134,7 @@
     6: [["B", 50], ["L", 66], ["L", 34], ["T", 50], ["R", 34], ["R", 66]],
     7: [["B", 50], ["L", 66], ["L", 35], ["T", 35], ["T", 65], ["R", 35], ["R", 66]],
     8: [["B", 50], ["B", 11], ["L", 52], ["T", 22], ["T", 50], ["T", 78], ["R", 52], ["B", 89]],
-    9: [["B", 50], ["B", 11], ["L", 60], ["L", 34], ["T", 35], ["T", 65], ["R", 34], ["R", 60], ["B", 89]],
+    9: [["B", 50], ["B", 11], ["L", 57], ["L", 34], ["T", 35], ["T", 65], ["R", 34], ["R", 57], ["B", 89]],
   };
 
   const MODES = [
@@ -657,7 +657,7 @@
     const text = String(size);
     const at = text.indexOf(" \u00b7 ");
     if (at < 0) return `<span class="size">${esc(text)}</span>`;
-    return `<span class="size">${esc(text.slice(0, at))}<span class="more">${esc(text.slice(at))}</span></span>`;
+    return `<span class="size">${esc(text.slice(0, at))}<span class="also">${esc(text.slice(at))}</span></span>`;
   }
 
   // How sure: three bars filled is clear, two standard, one close.
@@ -876,10 +876,12 @@
     return {ui: only({seatMenu: seat.seat, target: aim})};
   }
 
-  // The stack line of a pod: the amount in the chosen unit, then the other unit where there is room.
-  function stackHtml(view, seat) {
-    if (seat.all_in) return '<span class="stack"><span class="num">ALL-IN</span></span>';
-    // A player sitting out, or one with no chips left, shows the word; the stack keeps its place where there is room.
+  /* The stack of a pod: the amount in the chosen unit, and what stands with it: the same stack in the
+     other unit, or the word of a player who is sitting out or has no chips left. That second part is
+     drawn twice and the width shows one of the two: beside the stack from 1280, on the row under it
+     in a narrower pod (see app.css). */
+  function stackParts(view, seat) {
+    if (seat.all_in) return {stack: '<span class="stack"><span class="num">ALL-IN</span></span>', second: ""};
     const word = {away: "Away", busted: "Out"}[seat.status];
     let number, unit = "";
     if (showsBb(view)) {
@@ -889,9 +891,9 @@
       number = fmtStack(seat.stack);
     }
     if (seat.stale) number = "~" + number;      // a stack nobody has confirmed since a hand that was not recorded
-    const other = word ? `<span class="tag">${word}</span>`
-      : `<span class="other">${otherText(view, seat.stack, seat.stack_bb)}</span>`;
-    return `<span class="stack"><span class="num">${number}</span>${unit}${other}</span>`;
+    const other = otherText(view, seat.stack, seat.stack_bb);
+    const second = word ? `<span class="tag">${word}</span>` : other ? `<span class="other">${other}</span>` : "";
+    return {stack: `<span class="stack"><span class="num">${number}</span>${unit}${second}</span>`, second: second};
   }
 
   function podWords(view, seat, state) {
@@ -940,11 +942,13 @@
     const words = podWords(view, seat, state);
     const title = seat.note ? ` title="${esc(seatName(seat) + ": " + seat.note)}"` : "";
     if (seat.is_hero) return heroPodHtml(view, ui, seat, place, state, words);
-    const type = seat.type && seat.type !== "unknown" ? ` \u00b7 ${esc(seat.type)}` : "";
+    // The type is a tag of its own, before the name: it is what changes the advice, so it is never cut.
+    const type = seat.type && seat.type !== "unknown" ? `<span class="type">${esc(seat.type)}</span>` : "";
+    const parts = stackParts(view, seat);
     return `<button class="${state.cls}" style="${place}" data-seat="${seat.seat}" data-arrow tabindex="-1" aria-label="${esc(words)}"${title}${emit(seatClick(view, seat))}>
       <span class="top"><span class="pos">${esc(seat.pos || "\u2013")}</span><span class="key">${seat.seat}</span></span>
-      ${stackHtml(view, seat)}
-      <span class="name">${esc(seat.name || `Seat ${seat.seat}`)}${type}</span>
+      ${parts.stack}
+      <span class="more">${parts.second}${type}<span class="name">${esc(seat.name || `Seat ${seat.seat}`)}</span></span>
     </button>`;
   }
 
@@ -964,12 +968,14 @@
 
   function heroPodHtml(view, ui, seat, place, state, words) {
     const cards = heroCardsHtml(view);
+    const parts = stackParts(view, seat);
     const pick = view.hand ? emit({ui: only({picker: freshPicker("hero", true)})}) : emit(seatClick(view, seat));
     return `<div class="${state.cls}" style="${place}" data-seat="${seat.seat}">
       <button class="hand" data-arrow tabindex="0" data-fk="hero-cards" aria-label="Your cards: ${esc(cards.words)}. Change"${pick}>${cards.html}</button>
       <button class="info" data-arrow tabindex="-1" data-fk="hero-info" aria-label="${esc(words)}"${emit(seatClick(view, seat))}>
-        <span class="top"><span class="pos">${esc(seat.pos || "\u2013")}</span><span class="pill you">You</span></span>
-        ${stackHtml(view, seat)}
+        <span class="top"><span class="pos">${esc(seat.pos || "\u2013")}</span></span>
+        ${parts.stack}
+        <span class="more">${parts.second}<span class="pill you">You</span></span>
       </button>
     </div>`;
   }
@@ -1126,9 +1132,11 @@
            `<span class="label">${esc(opts.label)}${key}</span>${sub}</button>`;
   }
   // The first row: a word in small capitals, who or what, and a note.
-  function whoseHtml(eyebrow, text, note) {
-    // (the note is cut with an ellipsis where the bar is narrow: the full sentence is its tooltip)
-    return `<span class="eyebrow">${esc(eyebrow)}</span>${text ? `<b>${esc(text)}</b>` : ""}${note ? `<span class="note" title="${esc(note)}">${esc(note)}</span>` : ""}`;
+  function whoseHtml(eyebrow, text, note, name) {
+    // (the note is cut with an ellipsis where the bar is narrow: the full sentence is its tooltip;
+    //  `name`: a player's name, written as it was typed, not in capitals)
+    const who = name ? `<span class="who"> \u00b7 ${esc(name)}</span>` : "";
+    return `<span class="eyebrow">${esc(eyebrow)}</span>${text ? `<b>${esc(text)}${who}</b>` : ""}${note ? `<span class="note" title="${esc(note)}">${esc(note)}</span>` : ""}`;
   }
   function barHtml(whose, buttons, slots) {
     return `<div class="whose" data-fk="whose">${whose}</div><div class="${slots ? "slots" : "row"}">${buttons}</div>`;
@@ -1277,9 +1285,9 @@
     return `${kind} ${chipsOnlyText(view, follow.to)}`;
   }
 
-  // "HJ · Seat 4", with the name when the player has one.
+  // "HJ · Seat 4" (the name, when the player has one, follows in its own letters).
   function seatWords(seat) {
-    return [seat.pos, `Seat ${seat.seat}`, seat.name].filter(Boolean).join(" · ");
+    return [seat.pos, `Seat ${seat.seat}`].filter(Boolean).join(" \u00b7 ");
   }
 
   // The bar while a player has to act.
@@ -1308,7 +1316,7 @@
         : "";
       whose = whoseHtml("Your action", "", note);
     } else {
-      whose = whoseHtml("Recording", player ? seatWords(player) : `Seat ${seat}`, !plain ? "this action only" : "");
+      whose = whoseHtml("Recording", player ? seatWords(player) : `Seat ${seat}`, !plain ? "this action only" : "", player && player.name);
     }
 
     // Slot 1: the coach's button.
@@ -1433,8 +1441,10 @@
     </div>`;
   }
 
-  function popHead(title, small, closePatch) {
-    return `<div class="pop-head"><h2>${esc(title)}${small ? `<small>${esc(small)}</small>` : ""}</h2>
+  // `name`: a player's name after the title, in its own letters (a heading is otherwise in capitals).
+  function popHead(title, small, closePatch, name) {
+    const who = name ? `<span class="who">${title ? " \u00b7 " : ""}${esc(name)}</span>` : "";
+    return `<div class="pop-head"><h2>${esc(title)}${who}${small ? ` <small>${esc(small)}</small>` : ""}</h2>
       <button type="button" class="tool" aria-label="Close" title="Close"${emit({ui: closePatch})}>${icon("close")}</button></div>`;
   }
 
@@ -1474,14 +1484,14 @@
       : "";
     if (seat.is_hero) {
       return `<div class="pop" role="dialog" aria-label="Your seat"${popFocus}>
-        ${popHead(seatTitle(seat), `seat ${n}`, closed)}${won}
+        ${popHead(seat.pos || "", `seat ${n}`, closed, "You")}${won}
         ${stack}${refused}
         <div class="row">${sit}${button}${save}</div>
       </div>`;
     }
     const types = list(CHOICES.type, (type) => `<option value="${type}"${type === (seat.type || "unknown") ? " selected" : ""}>${type}</option>`);
     return `<div class="pop" role="dialog" aria-label="Seat ${n}"${popFocus}>
-      ${popHead(seatTitle(seat), `seat ${n}`, closed)}${won}
+      ${popHead(seat.pos || "", `seat ${n}`, closed, seat.name)}${won}
       <div class="two">${stack}
         ${field({label: "Name", value: seat.name, words: true, name: "name", fk: "seat-name", send: {op: "rename", seat: n}})}
         <label class="field"><span class="eyebrow">Type</span><select data-name="type" data-fk="seat-type"${emit({op: "set_type", seat: n})}>${types}</select></label>
@@ -1924,14 +1934,18 @@
   // Every stack at once, clockwise from hero. Blank keeps the stack.
   function stacksBody(view) {
     const seats = (view.table.seats || []).filter((seat) => !seat.empty);
+    // Who it is stands on a line of its own over the field (seat number, position, the name as it was typed),
+    // so a long name never takes the room of the number.
     const fields = list(seats, (seat, at) =>
-      `<label class="field"><span class="eyebrow">${esc(seat.seat + " " + seatTitle(seat))}</span>
-        ${amountInput(view, {name: String(seat.seat), chips: seat.stack, fk: "sweep-" + seat.seat, focus: at === 0})}</label>`);
+      `<label class="sweep"><span class="who"><span class="key">${seat.seat}</span>${seat.pos ? `<b>${esc(seat.pos)}</b>` : ""}` +
+        `<span class="name" title="${esc(seatName(seat))}">${esc(seatName(seat))}</span></span>
+        <span class="field">${amountInput(view, {name: String(seat.seat), chips: seat.stack, fk: "sweep-" + seat.seat, focus: at === 0,
+                                                   label: `Stack of seat ${seat.seat}, ${seatTitle(seat)}`})}</span></label>`);
     const how = typesBb(view) ? "Type what you see, in big blinds: 25, 33.5. Chips need their sign: 12.5k, 12,500 chips is 12.5k."
       : "Type what you see: 12.5k, 25bb, +3k.";
     return `<form class="stacked"${emit({op: "set_stacks", ui: {sheet: null}})} data-into="stacks" data-changed-only data-hold>
       <p class="hint">${how} A stack you leave as it is stays as it is (a ~ stays unsure); a minus sign empties the seat. Enter goes to the next seat and saves after the last.</p>
-      <div class="cols">${fields}</div>
+      <div class="cols sweeps">${fields}</div>
       <div class="buttons"><button type="submit" class="btn compact">Save ${keycap("Enter")}</button></div>
     </form>`;
   }
