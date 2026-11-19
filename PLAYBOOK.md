@@ -91,10 +91,12 @@ Sizes: 2x under 25bb, 2.2x to 40bb, 2.3-2.5x deeper, 3x from the small blind.
   and AK. Never just call.
 - **An all-in and a raise over it:** the player who raises over a short
   all-in does it with many more hands than a re-raise over a full raise.
-  With 45bb or less a hand that is ahead of those hands (55% or more
-  against them) moves all-in when the all-in's number clears +1bb: against
-  a 5bb all-in and a raise to 11bb about 88+ and AJ+; against a 12bb all-in
-  and a raise to 26bb still JJ+ and AK only.
+  With 45bb or less a hand moves all-in when it is ahead of those hands
+  (55% or more against all of them, and at least even against the better
+  half) and the all-in's number clears +1bb: against a 5bb all-in and a
+  raise to 11bb about 99+ and AQ; against a 12bb all-in and a raise to 26bb
+  still JJ+ and AK only. Against a raiser tagged nit or tight only JJ+ and
+  AK play.
 - **You opened and got 3-bet:** with 45bb or less the all-in goes by the
   seat you raised from: KK+ and AKs from UTG or UTG+1; QQ+ and AK from LJ
   or HJ; TT+, AQs+ and AKo from CO, BTN or SB. TT+, AQs+ and AKo are not
@@ -827,6 +829,38 @@ strong hands, use the all-in tables. A raise of a third of the raiser's stack
 or more is an all-in in practice. After a free flop in the big blind: all-in
 with top pair or better or a draw with 12 outs, otherwise check and fold to a
 bet.
+
+### Six players (6-Max)
+
+GGPoker also runs Spin & Gold with six players. Six buy-ins pay back 5.58 on
+average (the same 7% fee), so an even player wins 16.7% of games and
+break-even is 17.9%.
+
+| Multiplier | Share of games | Paid | Starting stack | Blinds go up |
+|---|---|---|---|---|
+| x4 | 47.9% | winner only | 300 chips (15bb) | every minute |
+| x6 | 44.6% | winner only | 300 chips (15bb) | every 2 minutes |
+| x8 | 2.65% | winner only | 500 chips (25bb) | every 2 minutes |
+| x10 | 2.5% | two places | 500 chips (25bb) | every 3 minutes |
+| x20 | 2.35% | two places | 500 chips (25bb) | every 10 hands |
+| x100, x200 | 0.012% | four places | 800 chips (40bb) | every 15 hands |
+
+- **One prize in 95% of the games**, so chips are money there as well, and
+  the game starts like a six-handed push/fold tournament without antes:
+  tight from the first seats, wide from the button and the small blind. The
+  table app answers with the engine on chips (the push/fold solver on the
+  real stacks, the opening chart of the seat above 16bb) while four to six
+  players are in, and with the tables above once three are left.
+- **Two prizes (x10, x20):** type them in the table app and it counts them
+  by ICM. Three players left is then a real bubble: call all-ins tighter,
+  and keep moving in on the players who can still go out before the money.
+  Heads-up both have the second prize, and it is chips again.
+- **Not measured.** No simulation of whole six-player games was run, so
+  there is no win rate to quote for these answers. The prize split of the
+  x10 and x20 games was not found in print (one guide says two places, an
+  older article says three): read the prizes in the lobby. Stacks, level
+  lengths and the shares above come from one 2026 guide; the big blinds
+  assume the 10/20 first level of the three-player game.
 
 ### Limits
 

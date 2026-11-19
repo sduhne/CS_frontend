@@ -53,7 +53,7 @@ Alt+1, Alt+2, Alt+3):
 | Mode | The table | What answers |
 |---|---|---|
 | Tournament | 2 to 9 seats, blind levels, players left, places paid, payouts | The engine with ICM, as `advise` does, and before the money the survival guard (see the styles below) |
-| Spin & Gold | 3 seats, heads-up after a bust, winner takes all, a tally of games and wins | The spin tables on chips; the engine above 16 big blinds (20 from the small blind and heads-up) |
+| Spin & Gold | 3 seats or 6 (6-Max), down to heads-up as players go out, winner takes all unless you type the prizes, a tally of games and wins | Three players or two: the spin tables on chips; the engine above 16 big blinds (20 from the small blind and heads-up). Four to six players: the engine with all moves, on chips. With two prizes or more typed: the engine by ICM |
 | All-In or Fold | 4 seats, stacks cut to 8 big blinds at the deal, the fee, the session's result in big blinds | The solved All-In or Fold tables |
 
 You are always seat 1, and seats count clockwise from you.
@@ -101,6 +101,11 @@ table of the session.
 | then `O` `D` `K` `Delete` | Sit out or back in; dealer button here (an empty seat too); bust (the seat is cleared and one player fewer is left); clear the seat (the player left the table) |
 | after `T` | `N` nit, `T` tight, `G` tight-aggressive, `L` loose-aggressive, `O` loose, `S` calling station, `M` maniac, `U` unknown |
 | Cards | `a k s`, `a k o`, `7 7`: your hand as a class. `a h k d`: exact cards (suits `s` `h` `d` `c`, `t` is the ten). The flop is three cards, the turn and river one. Once the flop is out and your hand was typed as a class, only its suits are asked. `Backspace` goes back one step, `Enter` skips the board when the action is not on you, `Esc` leaves the cards |
+
+**The seat that is up is yellow.** The player the next action is recorded
+for, you or anybody else, has the Menlo yellow frame, and the line above the
+action bar names that seat in yellow. A white frame is a seat that is only
+selected (its menu is open).
 
 **With the mouse.** Everything has a button. The tabs in the header change
 the mode; the strip under it has `-` and `+` for the level and for players
@@ -480,7 +485,7 @@ tournament tables. The rules are in [PLAYBOOK.md](PLAYBOOK.md). The lists
 were rebuilt after the engine changed: PDF sheets printed before that are
 older, and where they differ this text is right.
 
-## Spins (3 players, winner takes all)
+## Spins (3 players, or 6; winner takes all)
 
 GGPoker Spin & Gold and games like it: three players, a random multiplier,
 and in almost every game one prize. With one prize chips are money, so the
@@ -503,6 +508,19 @@ whole games the tables won 33.1% against players who call correctly and
 36.4% at best against players who call far too much. Winning regulars
 report 38% to 39%, and get there with small raises and play after the flop,
 which all-in or fold leaves out. The details are in [PLAYBOOK.md](PLAYBOOK.md).
+
+**Six players (GGPoker's 6-Max Spin & Gold).** In the table app, choose
+"6 players (6-Max)" when you start a Spin & Gold session, or Table tools,
+"New game: 6 players". The winner takes all at x4, x6 and x8, which is 95%
+of the games; an x10 or x20 game pays two places. Type the prizes of such a
+game where the strip says "Prizes" (first place first, `8 2`; in a narrow
+window in Settings, `I`), and the coach counts them by ICM until two players
+are left. With four to six players the answers come from the engine on chips
+with all moves; from three players on, with one prize, from the spin tables.
+Break-even is 17.9% of games (an even player wins 16.7%). The command line
+has no six-player spin chart: `quick --players 6 --goal chips` answers a
+spot. Prize splits and stacks come from one 2026 guide: read the prizes in
+the lobby.
 
 ## Live table reader (play money and research)
 

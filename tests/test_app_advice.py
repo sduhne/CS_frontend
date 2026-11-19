@@ -3435,5 +3435,110 @@ class LastCorrections(unittest.TestCase):
                 self.assertNotIn("Their range", [tile["label"] for tile in a["tiles"]])
 
 
+def spin_six(stacks_bb, hero, cards, acts=(), bb=20, prizes=None, size=6):
+    """A six-seat Spin hand: players in acting order, first to act first (the last three are BTN, SB, BB)."""
+    n = len(stacks_bb)
+    s = Session(save=False)
+    s.do("new_session", mode="spin", size=size, start_stack=300)
+    s.do("set_level", text=f"{bb // 2}/{bb}")
+    for seat in range(n + 1, size + 1):
+        s.do("clear_seat", seat=seat)
+    s.do("set_button", seat=seat_of(max(0, n - 3), hero, n))
+    for index, stack in enumerate(stacks_bb):
+        s.do("set_stack", seat=seat_of(index, hero, n), text=str(int(stack * bb)))
+    if prizes:
+        s.do("set_tournament", field="payouts", text=prizes)
+    s.do("deal", hero_cards=cards)
+    for index, kind, amount in acts:
+        s.do("act", seat=seat_of(index, hero, n), kind=kind, amount=None if amount is None else amount * bb)
+    return s
+
+
+class SpinSixPlayers(unittest.TestCase):
+    """Spin & Gold with six players (GGPoker's 6-Max): the table, the prizes, and who answers."""
+
+    def test_the_table_has_three_seats_or_six(self):
+        from poker_coach.app.model import ModelError
+        s = Session(save=False)
+        s.do("new_session", mode="spin", size=6)
+        view = s.view()
+        self.assertEqual((view["table"]["size"], view["settings"]["size_choices"]), (6, [3, 6]))
+        s.do("deal", hero_cards="AhKd")
+        self.assertEqual([seat["pos"] for seat in s.view()["table"]["seats"]], ["BTN", "SB", "BB", "LJ", "HJ", "CO"])
+        s.do("discard_hand")
+        for op, more in (("new_game", {"size": 5}), ("set_size", {"size": 4}), ("new_session", {"mode": "spin", "size": 4})):
+            with self.assertRaises(ModelError) as refused:
+                s.do(op, **more)
+            self.assertIn("3 or 6 seats", str(refused.exception))
+        s.do("new_game", size=3)                                    # the other size is a new game
+        self.assertEqual(s.view()["table"]["size"], 3)
+        self.assertEqual(Session(save=False).view()["settings"]["size_choices"], None)      # a tournament: any size
+
+    def test_prizes_are_typed_for_one_game(self):
+        s = Session(save=False)
+        s.do("new_session", mode="spin", size=6)
+        self.assertEqual(s.view()["strip"]["payouts"], None)        # one prize: the winner takes all
+        s.do("set_tournament", field="payouts", text="8 2")
+        self.assertEqual(s.view()["strip"]["payouts"], [8.0, 2.0])
+        for seat in (3, 4, 5, 6):                                   # four players are out; the user goes out second
+            s.do("set_stack", seat=seat, text="0")
+        s.do("set_stack", seat=1, text="0")
+        self.assertIn("You are out in place 2: a paid place.", " ".join(s._toast))
+        view = s.view()
+        self.assertEqual((view["strip"]["game"]["over"], view["strip"]["tally"]), ("lost", {"games": 1, "wins": 0}))
+        s.do("new_game")                                            # the next game has its own multiplier
+        self.assertEqual(s.view()["strip"]["payouts"], None)
+
+    def test_four_to_six_players_are_answered_by_the_engine_on_chips(self):
+        lj, hj, co, btn, sb, bb = range(6)
+        a = A.advise(spin_six([15] * 6, lj, "As9d"))
+        self.assertIn("Chip-EV engine: 6 players, one prize", a["source"])
+        self.assertIn(a["headline"]["verb"], ("FOLD", "RAISE", "ALL-IN"))
+        a = A.advise(spin_six([10] * 6, btn, "AsKd", [(lj, "fold", None), (hj, "fold", None), (co, "fold", None)]))
+        self.assertIn(a["headline"]["verb"], ("ALL-IN", "RAISE"))
+        a = A.advise(spin_six([15] * 6, bb, "AsAd", [(lj, "fold", None), (hj, "fold", None), (co, "allin", None),
+                                                      (btn, "fold", None), (sb, "fold", None)]))
+        self.assertEqual(a["headline"]["verb"], "CALL")
+        self.assertIn("Four players or more: the engine with all moves, on chips", a["context"]["gear"])
+        for left in (5, 4):                                         # after the first players are out
+            a = A.advise(spin_six([12] * left, 0, "AsKd"))
+            self.assertIn(f"Chip-EV engine: {left} players, one prize", a["source"])
+        # three left with one prize: the solved chart, as in the three-player game
+        a = A.advise(spin_six([20, 20, 8], 2, "As5d", [(0, "fold", None), (1, "allin", None)]))
+        self.assertIn("Spin table", a["source"])
+
+    def test_two_prizes_are_counted_by_icm_until_two_players_are_left(self):
+        lj = 0
+        a = A.advise(spin_six([15] * 6, lj, "As9d", prizes="8 2"))
+        self.assertIn("ICM for the prizes typed (8 / 2): 6 players", a["source"])
+        self.assertIn("by ICM for the prizes typed", a["context"]["gear"])
+        a = A.advise(spin_six([10] * 3, 0, "Ks7s", prizes="8 2"))   # three left: the bubble of the two prizes
+        self.assertIn("ICM for the prizes typed (8 / 2): 3 players", a["source"])
+        a = A.advise(spin_six([12, 12], 0, "Qs8d", prizes="8 2"))   # heads-up both have the second prize: chips
+        self.assertIn("Spin table", a["source"])
+        # the same three-player bubble: a short stack's all-in is called tighter by ICM than on chips
+        spot = ([20, 8, 20], 2, "Ks9d", [(0, "fold", None), (1, "allin", None)])
+        on_chips, by_icm = A.advise(spin_six(*spot)), A.advise(spin_six(*spot, prizes="8 2"))
+        self.assertIn("Spin table", on_chips["source"])
+        self.assertIn("ICM for the prizes typed", by_icm["source"])
+        self.assertEqual(on_chips["headline"]["verb"], "CALL")
+
+    def test_the_page_offers_six_players_and_marks_the_seat_that_is_up(self):
+        import os
+        static = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "poker_coach", "app", "static")
+        with open(os.path.join(static, "render.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        with open(os.path.join(static, "app.css"), encoding="utf-8") as fh:
+            css = fh.read()
+        self.assertIn('{value: "6", label: "6 players (6-Max)"}', js)              # the first-run form
+        self.assertIn('emit({op: "new_game", size: n, ui: closed})', js)             # the table menu
+        self.assertIn('send: {op: "set_tournament", field: "payouts", ui: {edit: null}}', js)   # the strip's prizes
+        # the seat that is up is yellow for every player, not only the user
+        self.assertIn("const turn = acting != null && seat.seat === acting;", js)
+        self.assertIn(".pod.turn{border:2px solid var(--yellow)", css)
+        self.assertIn("button.pod.turn:hover{border-color:var(--yellow)}", css)
+        self.assertIn(".actions .whose .eyebrow.up,.actions .whose .eyebrow.up+b{color:var(--yellow)}", css)
+
+
 if __name__ == "__main__":
     unittest.main()

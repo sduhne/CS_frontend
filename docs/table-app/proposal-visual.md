@@ -4,8 +4,8 @@ Lens: how the table coach looks in the menlo.bet brand at 1440, 1024 and 560 px.
 
 ## 1. Five rules
 
-1. **Yellow means "do this now"**: the coach's answer and its range cells, the one button that carries it out (Follow, or Next hand), hero's seat while the decision is his. Two alerts borrow it: a blind level that is due, and the bubble.
-2. **A white ring means "your next key lands here"**: keyboard focus, the seat being recorded, the active card slot.
+1. **Yellow means "do this now"**: the coach's answer and its range cells, the one button that carries it out (Follow, or Next hand), the seat that is up (the user's while the decision is theirs, another player's while that player's action is recorded). Two alerts borrow it: a blind level that is due, and the bubble.
+2. **A white ring means a selection**: keyboard focus, a seat whose menu is open, the active card slot.
 3. **Green and red appear only on chips or big blinds won or lost**: EV, stack changes after a hand, session net, the IN THE MONEY pill.
 4. **Brightness carries state, never opacity**: live seats white, folded seats grey, so contrast never drops.
 5. **Four neutrals, no new ones**: Ink, Panel, Line, Line strong. No gradients, no blurred shadows, no emoji.
@@ -163,7 +163,7 @@ Spin & Go                                     All-In or Fold
 | Pill | 22 high, padding 0 10, Inter 700 12 uppercase. Neutral: Line with Soft. Near the money: 1px White outline, White text. Bubble: yellow fill, Ink. In the money: win tint, Win. YOU: White fill, Ink |
 | Felt | Inset half a pod from each edge of the table box. Panel, 1px Line, radius 999 |
 | Seat pod | A `<button>`. Ink, 1px Line strong, radius 14, padding 7 9 (9 12 from 1280). Row 1: position name Barlow 800 uppercase, and an 18×18 keycap (Inter 700 11 Grey, 1px Line strong, radius 5). Row 2: stack `.num`, "bb" Inter 700 11 Grey; from 1024 the chips, Inter 500 12 Grey. Row 3 from 1280: name, Inter 500 12 Soft |
-| Hero pod | His two cards, then position, YOU pill and stack. His turn: 2px yellow border, yellow wash, position name yellow |
+| Hero pod | His two cards, then position, YOU pill and stack. His turn: 2px yellow border, yellow wash, position name yellow (every pod wears this while it is the seat that is up) |
 | Pod states | Target: 2px White border. Folded: 1px Line, all text Grey. All-in: the stack reads ALL-IN in italic and the bet chip turns White with Ink text. Away: dashed border, Grey text, "Away". Empty: 1px dashed Grey, "+ Seat". Unsure stack: "~" before it, Grey. After a result: "+3,200" Win or "−1,500" Loss for two seconds |
 | Bet chip | Pill 6px outside the pod on the felt side. Line fill, White `.num`, padding 0 8 |
 | Dealer button | White circle, Ink "D", 2px Ink halo, centred on the pod corner nearest the table centre. It can be dragged |

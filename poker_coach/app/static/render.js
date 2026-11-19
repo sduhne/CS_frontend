@@ -427,7 +427,7 @@
 
   function stripHtml(view, ui) {
     let parts;
-    if (view.mode === "spin") parts = [levelStat(view, ui), opponentsStat(view), spinTally(view)];
+    if (view.mode === "spin") parts = [levelStat(view, ui), prizesStat(view, ui), opponentsStat(view), spinTally(view)];
     else if (view.mode === "aof") parts = [aofBlinds(view), opponentsStat(view), aofTally(view)];
     // (the style stands at the head of the slab, at every width: it is not repeated here)
     else parts = [levelStat(view, ui), leftStat(view, ui), paidStat(view, ui), stagePill(view), averageStat(view, ui)];
@@ -561,16 +561,35 @@
     return `<div class="stat ${extra || ""}"><div class="value"><span class="eyebrow">${esc(eyebrow)}</span>${shown}</div></div>`;
   }
 
+  // Spin: what the game being played pays. Nothing typed is one prize, and chips are money; a six-player
+  // x10 or x20 game pays two places, and with its prizes typed ("8 2", first place first) the coach counts them.
+  function prizesStat(view, ui) {
+    const prizes = view.strip.payouts || [];
+    const text = prizes.map((p) => String(+p)).join(" / ");
+    // (`plain`: nothing typed and not being typed: where the strip is too short this part leaves first, and the
+    //  prizes are typed in Settings; with prizes typed it stays and the count of games leaves)
+    const plain = !prizes.length && ui.edit !== "payouts" ? " plain" : "";
+    return `<div class="stat prizes${plain}">` + stripValue(ui, "payouts", {
+      eyebrow: "Prizes",
+      shown: prizes.length ? `<span class="num v">${esc(text)}</span>` : `<span class="text">Winner takes all</span>`,
+      label: prizes.length ? `Prizes ${text}` : "Prizes: the winner takes all",
+      typed: prizes.map((p) => String(+p)).join(" "),
+      fieldLabel: "Prizes, first place first (8 2). Empty: the winner takes all",
+      send: {op: "set_tournament", field: "payouts", ui: {edit: null}},
+    }) + `</div>`;
+  }
+
   function spinTally(view) {
     const tally = view.strip.tally;
     if (!tally) return "";
     const games = tally.games || 0;
     const wins = tally.wins || 0;
-    // A spin breaks even at 35.9% of games won.
-    const rate = games ? `<span class="row"><span class="num v">${(100 * wins / games).toFixed(1)}%</span><small>35.9% breaks even</small></span>` : "";
-    return plainStat("Games", `<span class="num v">${fmtChips(games)}</span>`) +
-           plainStat("Won", `<span class="num v">${fmtChips(wins)}</span>`) +
-           (rate ? plainStat("Win rate", rate, "from-style") : "");
+    // A three-player spin breaks even at 35.9% of games won, a six-player one at 17.9%.
+    const even = view.table && view.table.size > 3 ? "17.9" : "35.9";
+    const rate = games ? `<span class="row"><span class="num v">${(100 * wins / games).toFixed(1)}%</span><small>${even}% breaks even</small></span>` : "";
+    return plainStat("Games", `<span class="num v">${fmtChips(games)}</span>`, "tally") +
+           plainStat("Won", `<span class="num v">${fmtChips(wins)}</span>`, "tally") +
+           (rate ? plainStat("Win rate", rate, "tally from-style") : "");
   }
 
   function aofBlinds(view) {
@@ -1608,7 +1627,11 @@
     const closed = {menu: null};
     // Spin and All-In or Fold have a fixed number of seats; a tournament table has 2 to 9.
     const limits = (view.settings && view.settings.size_limits) || (view.mode === "tournament" ? [2, 9] : [size, size]);
-    const sizeRow = limits[0] < limits[1]
+    // Spin & Gold is played by three or by six: the other size starts a new game (the count of games stays).
+    const choices = view.settings && view.settings.size_choices;
+    const sizeRow = choices
+      ? `<div class="row">` + list(choices, (n) => `<button class="menu-btn" data-fk="game-size-${n}"${n === size ? " disabled" : ""}${emit({op: "new_game", size: n, ui: closed})}>${n === size ? `${n} players now` : `New game: ${n} players`}</button>`) + `</div>`
+      : limits[0] < limits[1]
       ? `<div class="row">
           <button class="menu-btn" aria-label="One seat fewer"${size <= limits[0] ? " disabled" : ""}${emit({op: "set_size", size: size - 1})}>${MINUS} Seat ${keycap("{")}</button>
           <span class="menu-count"><span class="num">${size}</span> seats</span>
@@ -1952,6 +1975,13 @@
         choiceRow("Moves", CHOICES.plan, strip.plan, config("plan")) +
         choiceRow("Opponents", CHOICES.opponents.tournament, strip.opponents, config("opponents")));
     } else {
+      if (view.mode === "spin") {
+        const prizes = (strip.payouts || []).map((p) => String(+p)).join(" ");
+        html += section("Game",
+          tourney("Prizes", "payouts", prizes, {words: true, placeholder: "winner takes all, or 8 2"}) +
+          `<p class="hint">One prize unless you type the prizes the lobby shows, first place first. A six-player x10 or x20
+             game pays two places. Every new game is one prize again.</p>`);
+      }
       html += section("Coach", choiceRow("Opponents", CHOICES.opponents[view.mode], strip.opponents, config("opponents")));
     }
 
@@ -2067,7 +2097,7 @@
   const SETUP_DEFAULTS = {
     // (the level as it will be played: the first level of the blind levels has an ante of 12)
     tournament: {size: "8", start_stack: "10000", level: "50/100/12", hero_stack: "", entrants: "", remaining: "", paid: "", buyin: ""},
-    spin: {start_stack: "300", level: "10/20"},
+    spin: {size: "3", start_stack: "300", level: "10/20", payouts: ""},
     aof: {},
   };
 
@@ -2088,10 +2118,14 @@
     let fields;
     if (mode === "spin") {
       fields = `<div class="cols">
-          ${setupSelect("Stacks", "start_stack", d.start_stack, [{value: "300", label: "300 chips (x2, x3)"}, {value: "500", label: "500 chips (x4 and up)"}])}
+          ${setupSelect("Table", "size", d.size, [{value: "3", label: "3 players"}, {value: "6", label: "6 players (6-Max)"}])}
+          ${setupSelect("Stacks", "start_stack", d.start_stack, [{value: "300", label: "300 chips (x2, x3; 6-Max x4, x6)"}, {value: "500", label: "500 chips (the multipliers above)"},
+                                                                 {value: "800", label: "800 chips (6-Max x100, x200)"}])}
           ${setupField("Blinds", "level", d.level)}
+          ${setupField("Prizes", "payouts", d.payouts, {placeholder: "winner takes all"})}
         </div>
-        <p class="hint">Three players, winner takes all. You are seat 1.</p>`;
+        <p class="hint">Three players or six; you are seat 1. One prize, unless you type the prizes the lobby shows,
+          first place first: a six-player x10 game pays two places (such as 8 2).</p>`;
     } else if (mode === "aof") {
       fields = `<p class="hint">Four seats, 8 big blinds each, blinds 0.5 and 1. Everything is counted in big blinds.
         Clear a seat at the table when fewer than four play.</p>`;
@@ -2322,10 +2356,11 @@
   /* The strip never cuts a value in half. Its widths are chosen so the usual numbers fit (app.css); when
      a row is too short all the same (six-digit blinds, five-digit fields), the parts that can be read
      elsewhere leave it one after the other, until the rest fits: the average stack (settings), the
-     wordmark, the ante (the tooltip of the blinds), the places paid (settings; the pill counts from them).
+     wordmark, the ante (the tooltip of the blinds), in Spin & Gold "winner takes all" (the prizes are typed
+     in Settings too) and then the count of games, the places paid (settings; the pill counts from them).
      A value that is being typed in the strip stays: while the places paid or the average stack have their
      field open, the pill that says how far the money is leaves first, and their own turn is passed over. */
-  const GIVE_WAY = ["no-avg", "no-word", "no-ante", "no-paid"];
+  const GIVE_WAY = ["no-avg", "no-word", "no-ante", "no-prizes", "no-tally", "no-paid"];
   // The header's rules run across the whole window, also where the page is a column narrower than it.
   function bleed() {
     const app = document.getElementById("app");

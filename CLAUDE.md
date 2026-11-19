@@ -417,7 +417,7 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
 ```
 
 - **Three modes**, each with its own saved table: tournament (2 to 9 seats,
-  ICM), Spin & Gold (3 seats, chips are money) and All-In or Fold (4 seats,
+  ICM), Spin & Gold (3 or 6 seats, chips are money unless prizes are typed) and All-In or Fold (4 seats,
   8bb cap, the fee). The user is always seat 1; seats count clockwise.
 - **Pipeline.** The page (`static/`) holds no poker rules. A key or a click
   is one intent, `POST /api/intent {"op": "act", ...}` -> `model.py`
@@ -451,6 +451,8 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
   fold where their check was only implied ("Type the turn first ...").
 - **The page.** The caption row above the action bar says whose action the
   plain keys record ("YOUR ACTION", or "RECORDING" with position and seat).
+  That seat is Menlo yellow on the table, the user's or another player's; a
+  white frame is a seat that is only selected.
   The bar has six fixed slots: Follow or Next hand, four moves, Rest fold. A
   pointer click on it is dropped while a change is on its way, and for 400 ms
   after a move button changed its player (the button is drawn dimmer
@@ -711,6 +713,16 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
 - **Which games.** The x2 and x3 games (92.5%) start at 15 big blinds with 1
   and 2 minute levels and last about 10 to 12 hands. The x4, x5 and x10
   games start at 25 big blinds: all-in or fold gives the most away there.
+- **Six players (6-Max).** The table app's Spin & Gold has 3 seats or 6
+  (the first-run form, or Table tools, "New game: 6 players"). x4, x6 and x8
+  pay the winner only (95% of games); x10 and x20 pay two places, and the
+  user types those prizes in the strip ("Prizes", `8 2`): the app then
+  answers by ICM until two players are left. With four to six players the
+  engine answers on chips with all moves; the solved tables take over at
+  three players with one prize. Break-even is 17.9% of games. There is no
+  six-player spin chart on the command line: use `quick --players 6 --goal
+  chips`. The splits and stacks come from one 2026 guide, not from GGPoker:
+  have the user read the prizes in the lobby.
 - **Teach it, do not play it.** Drill with `spin` and the sheet, review a
   session's hands afterwards and report the mistakes by size. No
   picture-by-picture loop at a real-money table: the act timer is 10

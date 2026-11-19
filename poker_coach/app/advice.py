@@ -954,8 +954,13 @@ def players_left_age(data: dict, now: float) -> int | None:
 def context_lines(data: dict, money: Money | None) -> dict:
     """Where the tournament stands: the stage, the gear for this stack, the fold clock."""
     if data["mode"] == "spin":
-        return {"stage": "", "fold_clock": "",
-                "gear": f"{SPIN_TABLE_BB}bb or less: all-in or fold from the solved chart. Deeper: small raises."}
+        gear = f"{SPIN_TABLE_BB}bb or less: all-in or fold from the solved chart. Deeper: small raises."
+        if data["table"]["size"] > 3:
+            paid = [p for p in (data["tournament"].get("payouts") or []) if p]
+            gear = ("Four players or more: the engine with all moves, " +
+                    ("by ICM for the prizes typed. " if len(paid) > 1 else "on chips (one prize). ") +
+                    "Three or two left with one prize: " + gear[0].lower() + gear[1:])
+        return {"stage": "", "fold_clock": "", "gear": gear}
     if money is None:
         return {"stage": "", "gear": "", "fold_clock": ""}
     stage = money.stage
@@ -2663,14 +2668,39 @@ def outside_tables(text: str) -> dict:
 
 
 # ==========================================================================
-# 7. Spin: three players, one prize
+# 7. Spin: three players or six, one prize (or the prizes typed)
 # ==========================================================================
 
+def spin_prizes(seen: Seen) -> Prizes:
+    """What the game being played pays: chip EV unless prizes for two places or more were typed.
+
+    One prize makes a chip won worth a chip lost.  A six-player x10 or x20 game pays two places (the prizes
+    are typed in the strip): then the stacks at the table are valued by ICM.  Heads-up both players have the
+    second prize already and play for the difference, which is chip EV again.
+    """
+    payouts = [p for p in (seen.data["tournament"].get("payouts") or []) if p and p > 0]
+    if len(payouts) < 2 or seen.n <= 2:
+        return Prizes()
+    return Prizes(payouts=payouts, label="the prizes typed")
+
+
 def spin_play(seen: Seen) -> Play:
-    """Chips are money: the solved all-in or fold tables when short, the engine on chip EV when deep."""
-    if seen.n not in (2, 3):
-        raise ValueError("the spin tables are for 2 or 3 players")
+    """Chips are money: the solved all-in or fold tables when short, the engine on chip EV when deep.
+
+    The solved tables are for three players and for two.  With four to six players (the six-handed game)
+    and wherever two prizes or more are paid, the engine answers with all moves: on chips for one prize,
+    by ICM for the prizes typed.
+    """
     before = what_happened(seen)
+    prizes = spin_prizes(seen)
+    if seen.n > 3 or not prizes.chip_ev:
+        play = spin_engine_play(seen, prizes)
+        if prizes.chip_ev:
+            play.source = f"chip-EV engine: {seen.n} players, one prize (the solved charts start at three players)"
+        else:
+            paid = " / ".join(bb_number(p) for p in prizes.raw_payouts)
+            play.source = f"ICM for the prizes typed ({paid}): {seen.n} players"
+        return cheap_call_after_calling(seen, before, play)
     eff = spin_effective_bb(seen, before)
     row = spin_row(seen, before)
     seat = seen.label(seen.hero)
@@ -2786,12 +2816,16 @@ def callers_profile(seen: Seen, moved_in: tuple = ()) -> str:
     return "very-loose" if all(p == "very-loose" for p in profiles) else "loose"
 
 
-def spin_engine_play(seen: Seen) -> Play:
-    """The tight-aggressive engine on chip EV: one prize means a chip won is worth a chip lost."""
+def spin_engine_play(seen: Seen, prizes: Prizes | None = None) -> Play:
+    """The tight-aggressive engine on chip EV: one prize means a chip won is worth a chip lost.
+
+    ``prizes``: the prizes of a game that pays two places or more (``spin_prizes``); then by ICM.
+    """
     before = what_happened(seen)
-    spot = engine_spot(seen, Prizes(), Prizes(), {}, False)
+    prizes = prizes if prizes is not None else Prizes()
+    spot = engine_spot(seen, prizes, prizes, {}, False)
     adv = engine_advise(spot)
-    play = play_from_engine(seen, adv, "chip EV", before)
+    play = play_from_engine(seen, adv, "chip EV" if prizes.chip_ev else "ICM counted", before)
     play.chart = hero_cell_as_played(engine_chart(seen, spot, adv, before), seen.hand_class, play.kind)
     if adv.confidence == "close":
         play.warnings.append(close_warning(seen, engine_facts(adv), before, None, play))

@@ -18,12 +18,18 @@ HERO_NAME = "You"                       # hero always sits in seat 1
 # --------------------------------------------------------------------------
 
 TABLE_SIZE = {"tournament": 8, "spin": 3, "aof": 4}                 # seats at a new table
-SIZE_LIMITS = {"tournament": (2, 9), "spin": (3, 3), "aof": (4, 4)}  # smallest and biggest table
+SIZE_LIMITS = {"tournament": (2, 9), "spin": (3, 6), "aof": (4, 4)}  # smallest and biggest table
 START_STACK = {"tournament": 10000, "spin": 300, "aof": 8}
 
-# Spin & Gold: the multiplier sets the starting stack (tools/spin_sim.py, from two 2026 guides)
+# Spin & Gold is played three-handed, or six-handed (GGPoker's 6-Max): no other table size
+SPIN_SIZES = (3, 6)
+# The multiplier sets the starting stack (tools/spin_sim.py, from two 2026 guides)
 SPIN_START_STACKS = {"x2": 300, "x3": 300, "x4": 500, "x5": 500, "x10": 500}
 SPIN_BREAK_EVEN = 0.359                 # share of games a player must win to break even
+# Six players (one 2026 guide): x4 and x6 are 92.5% of the games and pay the winner only, like x8;
+# x10 and x20 pay two places, x100 and x200 four.  The prizes of such a game are typed (strip, "Prizes").
+SPIN6_START_STACKS = {"x4": 300, "x6": 300, "x8": 500, "x10": 500, "x20": 500, "x100": 800, "x200": 800}
+SPIN6_BREAK_EVEN = 0.179                # six buy-ins pay back 5.58 on average: one game in 5.58
 
 # All-In or Fold (GGPoker): 4 seats, fixed blinds, stacks cut to 8bb at the deal
 AOF_SMALL_BLIND = 0.5

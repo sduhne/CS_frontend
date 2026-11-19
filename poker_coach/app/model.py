@@ -738,7 +738,7 @@ def blank_session(mode: str, size=None, start_stack=None, ladder=None) -> dict:
         "config": {"style": D.STYLE, "plan": D.PLAN, "opponents": D.OPPONENTS[mode][0], "pace": D.PACE},
         "structure": {"ladder": ladder, "levels": ladder_levels(ladder), "index": 0, "custom": None},
         "table": {"size": size, "button": HERO, "seats": seats},
-        "game": {"start_stack": stack, "over": None, "hands": 0},   # Spin: one game of three players
+        "game": {"start_stack": stack, "over": None, "hands": 0},   # Spin: one game of three or six players
         "hand": None, "hand_no": 0,
         "hands": [], "hands_base": 0,
         "tally": tally,
@@ -1689,6 +1689,8 @@ class Session:
     def _size_arg(self, size) -> int:
         low, high = D.SIZE_LIMITS[self.mode]
         size = _whole(size, "size")
+        if self.mode == "spin" and size not in D.SPIN_SIZES:
+            raise ModelError("A Spin & Gold table has 3 or 6 seats.", "Start a new game with 3 or with 6 players.")
         if not low <= size <= high:
             seats = f"{low} to {high} seats" if low != high else f"{low} seats"
             raise ModelError(f"A {D.MODE_LABELS[self.mode]} table has {seats}.", "")
@@ -2902,6 +2904,13 @@ class Session:
         self.data["tally"]["games"] += 1
         self.data["tally"]["wins"] += 1 if won else 0
         again = f"Press {key_for('deal').upper()} for a new one."
+        # With prizes typed for more than one place (a six-player x10 game pays two), going out with few enough
+        # players left is a paid place.  Players who go out in the same hand are not told apart.
+        place = len(alive) + 1
+        paid = len(self.data["tournament"].get("payouts") or [])
+        if not won and 1 < place <= paid:
+            self._say(f"You are out in place {place}: a paid place. {again}")
+            return
         self._say(f"You won this game. {again}" if won else f"You lost this game. {again}")
 
     def _op_new_game(self, a) -> None:
@@ -2914,10 +2923,14 @@ class Session:
             self.data["tally"]["wins"] += 1 if result == "won" else 0
         elif not game["over"] and game["hands"]:
             self._say("The game before was not finished: it is not counted")
+        if a.get("size") not in (None, ""):             # the next game is three-handed, or six-handed
+            size = self._size_arg(a["size"])
+            self.data["table"]["size"] = size
+            self.data["table"]["button"] = min(self.data["table"]["button"], size)
         self._new_game(parse_amount(stack) if stack not in (None, "") else None)
 
     def _new_game(self, stack) -> None:
-        """Three fresh stacks and the first blind level; the tally stays."""
+        """Fresh stacks for every seat and the first blind level; the tally stays."""
         data = self.data
         if self._open_hand():
             self._forget_hand()
@@ -2925,6 +2938,7 @@ class Session:
         data["hand"] = None
         data["game"] = {"start_stack": stack, "over": None, "hands": 0}
         data["tournament"]["start_stack"] = stack
+        data["tournament"]["payouts"] = None            # each game has its own multiplier: one prize until typed
         hero = self._seats()[str(HERO)]
         hero["stack"] = stack
         size = data["table"]["size"]
@@ -3076,6 +3090,7 @@ class Session:
                          "notice_seen": self.app["notice_seen"], "modes": list(D.MODES),
                          "button_rule": data["rules"].get("button_rule", D.BUTTON_RULE),
                          "size_limits": list(D.SIZE_LIMITS[data["mode"]]),
+                         "size_choices": list(D.SPIN_SIZES) if data["mode"] == "spin" else None,
                          "keys": KEYS_FOR_THE_PAGE},
         }
 
