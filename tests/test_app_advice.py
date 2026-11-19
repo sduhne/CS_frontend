@@ -3404,6 +3404,36 @@ class LastCorrections(unittest.TestCase):
         a = A.advise(tournament(stacks, BTN, "AsTd", acts))                       # not ahead of the raiser's hands
         self.assertEqual(a["headline"]["verb"], "FOLD")
 
+    def test_a_close_all_in_over_an_all_in_and_a_raise_names_the_bar_it_was_measured_against(self):
+        # an all-in the rule makes must earn +1.00bb (twice the +0.50bb of JJ+ and ace-king).  When it is close, the
+        # note names that bar: it said "after a raise and a re-raise it takes +0.50bb"
+        stacks, acts = [6] + [40] * 7, [(UTG, "allin", 6), (CO, "raise", 15)]
+        s = tournament(stacks, BTN, "TsTd", acts, style="maxev")
+        seen = A.read_table(s, s.view())
+        self.assertEqual(A.engine_line(seen, {"allin_bar_bb": 1.0, "ev": 1.2}, A.what_happened(seen)),
+                         (1.0, "over an all-in and a raise"))
+        a = A.advise(s)
+        self.assertEqual(a["headline"]["verb"], "ALL-IN")
+        # ace-queen is ahead of every hand that might raise there, but not of the better half of them: a fold
+        a = A.advise(tournament(stacks, BTN, "AsQd", acts, style="maxev"))
+        self.assertEqual(a["headline"]["verb"], "FOLD")
+        self.assertIn("against the better half of them this hand has only", a["reason"])
+        # queens in the same spot are on the list: their bar is the usual one, and nothing is close
+        a = A.advise(tournament(stacks, BTN, "QsQd", acts, style="maxev"))
+        self.assertEqual((a["headline"]["verb"], a["headline"]["sure"]), ("ALL-IN", "clear"))
+
+    def test_a_raiser_tagged_tight_keeps_the_all_in_over_an_all_in_and_a_raise_to_the_list(self):
+        # the user tagged the cutoff nit: tens are no all-in against that player's raise over an all-in, in any style
+        stacks, acts = [6] + [40] * 7, [(UTG, "allin", 6), (CO, "raise", 15)]
+        for style in ("survive", "maxev"):
+            with self.subTest(style=style):
+                a = A.advise(tournament(stacks, BTN, "TsTd", acts, style=style, types={CO: "nit"}))
+                self.assertEqual(a["headline"]["verb"], "FOLD")
+                self.assertIn("CO is nit: from this player a raise over an all-in is a strong hand", a["reason"])
+                self.assertNotIn("raised over it", a["reason"])
+                # no "Their range 16%: you have 60% against it" beside a fold made because that range is not theirs
+                self.assertNotIn("Their range", [tile["label"] for tile in a["tiles"]])
+
 
 if __name__ == "__main__":
     unittest.main()

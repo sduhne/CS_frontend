@@ -1369,6 +1369,10 @@ _COLD_ROUNDS = 120
 # hands that raise.  Both, because the width of an isolation raise is an estimate.
 _ISOLATED_BAR = 1.0
 _ISOLATED_AHEAD = 0.55
+# The estimate is the widest reading: every hand that plays against the all-in.  A player who raises with the
+# better half of them only (the engine itself, in that seat, raises with fewer still) must not turn this
+# all-in into a loss, so the hand must also hold its own against the top half of the estimate.
+_ISOLATED_AHEAD_TOP = 0.50
 _ISOLATED_UP_TO = 45.0
 _COLD_MEMO: dict = {}             # the last spot solved on chips, see _cold_allin
 
@@ -1450,20 +1454,39 @@ def cold_vs_3bet(spot: Spot, opener: int, raise_to: float, threebettor: int, thr
     ev = sol.ev_bb(hand)
     adv.numbers.append(f"shove EV {ev:+.2f}bb vs folding; both fold {_pct(sol.fold_equity[hand])}; "
                        f"when called you have {_pct(sol.eq_called[hand])}")
+    # The wide reading of a raise over an all-in is for a player with no read.  One tagged nit or tight raises
+    # there with far fewer hands (the range above does not move with the tag), so against that player only the
+    # list plays: eights are 56% against the estimate and 33% against TT+, AQs+ and AKo.
+    tight_raiser = spot.types[threebettor] in ("nit", "tight")
+    priced = over_allin and strong[hand] < 0.5 and eff <= _ISOLATED_UP_TO and ev > _ISOLATED_BAR
+    eq_top = eq_vs_range(hand, top_percent(range_pct(rng) / 2, list(allin_order())))[0] if priced else 0.0
+    ahead = priced and eq >= _ISOLATED_AHEAD and eq_top >= _ISOLATED_AHEAD_TOP
     if _TRAP[hand] or (strong[hand] >= 0.5 and ev > 0.5):
         adv.action = "ALL-IN" if eff <= 60 else f"4-BET to {2.3 * three_to / bb:.0f}bb"
         adv.confidence = "clear" if _TRAP[hand] else _conf(ev - 0.5, 2.0, 0.6)
         adv.why.append("a raise and a re-raise in front: only premiums continue, and they play for stacks")
-    elif over_allin and eff <= _ISOLATED_UP_TO and ev > _ISOLATED_BAR and eq >= _ISOLATED_AHEAD:
+    elif ahead and not tight_raiser:
         adv.action = "ALL-IN"
         adv.confidence = _conf(ev - _ISOLATED_BAR, 2.0, 0.6)
         adv.why.append(f"{spot.who(opener)} is all-in for {raise_to / bb:.1f}bb and {spot.who(threebettor)} raised "
                        "over it: that raise is made with far more hands than a re-raise over a full raise, "
                        "and against them the all-in earns")
-    elif over_allin and strong[hand] < 0.5 and eff <= _ISOLATED_UP_TO and ev > _ISOLATED_BAR:
+        adv.data.update(allin_bar_bb=_ISOLATED_BAR)          # the bar: what "close" is measured against
+    elif ahead and tight_raiser:
+        adv.why.append(f"{spot.pos(threebettor)} is {spot.types[threebettor]}: from this player a raise over an all-in "
+                       "is a strong hand, not the wide raise it usually is, so only JJ+ and ace-king move in")
+        # ... and the range line says whose range it is (the fold was not made from it)
+        adv.numbers[0] = (f"a raise over an all-in from a player with no read: ~{range_pct(rng):.1f}% "
+                          f"[{format_range(rng)}], and you have {_pct(eq)} against that; "
+                          f"{spot.pos(threebettor)} raises with fewer hands")
+    elif priced:
         # the number alone would move in: say why the fold stands beside it
-        adv.why.append(f"the all-in's number is positive because of the chips already in the pot, but this hand has "
-                       f"only {_pct(eq)} against the hands that raise over an all-in: not enough to move in over the raise")
+        adv.why.append(
+            f"the all-in's number is positive because of the chips already in the pot, but this hand has only "
+            f"{_pct(eq)} against the hands that raise over an all-in: not enough to move in over the raise"
+            if eq < _ISOLATED_AHEAD else
+            f"the all-in's number counts every hand that might raise over an all-in; against the better half of "
+            f"them this hand has only {_pct(eq_top)}: not enough to move in over the raise")
     else:
         adv.confidence = "clear" if strong[hand] < 0.5 else _conf(ev - 0.5, 2.0, 0.6)
         adv.why.append("a raise and a re-raise in front: fold everything except the very top of your range")

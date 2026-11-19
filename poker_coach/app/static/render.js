@@ -954,8 +954,9 @@
     const acting = actingSeat(view, ui);
     const aimed = acting != null ? seat.seat === acting : !!seat.is_target;
     const target = aimed || ui.seatMenu === seat.seat;
-    // Yellow is hero's seat while the decision is his; a white ring is where the next key lands.
-    const turn = seat.is_hero && aimed && heroToAct(view) && ui.target == null;
+    // Yellow is the seat that is up: the one the next action is recorded for, the user's own or another
+    // player's.  A white ring is a seat that is only selected (its menu is open, or no action is wanted yet).
+    const turn = acting != null && seat.seat === acting;
     const out = seat.folded || seat.status === "away" || seat.status === "busted" || (handOn && seat.in_hand === false);
     let cls = "pod";
     if (seat.is_hero) cls += " hero";
@@ -1184,7 +1185,9 @@
     //  words, shown where the bar is narrow (under 1280) so that it is not cut; the full sentence is the tooltip)
     const who = name ? `<span class="who"> \u00b7 ${esc(name)}</span>` : "";
     const words = brief && brief !== note ? `<span class="long">${esc(note)}</span><span class="brief">${esc(brief)}</span>` : esc(note);
-    return `<span class="eyebrow">${esc(eyebrow)}</span>${text ? `<b>${esc(text)}${who}</b>` : ""}${note ? `<span class="note" title="${esc(note)}">${words}</span>` : ""}`;
+    // (`up`: an action is wanted, and these words name the seat that is yellow on the table)
+    const up = eyebrow === "Your action" || eyebrow === "Recording" ? " up" : "";
+    return `<span class="eyebrow${up}">${esc(eyebrow)}</span>${text ? `<b>${esc(text)}${who}</b>` : ""}${note ? `<span class="note" title="${esc(note)}">${words}</span>` : ""}`;
   }
   // (a row of five buttons or more is marked "many": where the bar is narrow its buttons go without keycaps)
   function barHtml(whose, buttons, slots) {

@@ -690,6 +690,46 @@ class Preflop(unittest.TestCase):
         adv = self.play([40] * 8, 5, "QQ", [(0, "raise", 2.2), (4, "raise", 7)], left=400)
         self.assertTrue(any("3-bettor's range ~3" in line or "3-bettor's range ~4" in line for line in adv.numbers), adv.numbers)
 
+    def test_a_tight_player_who_raises_over_an_all_in_is_not_read_as_raising_wide(self):
+        # under the gun is all-in for 5bb, the cutoff raises to 11bb, hero is the big blind with 30bb.  With no read
+        # the cutoff is taken to hold about 22% of hands, and nines, tens and ace-queen move all-in.  The tag did
+        # not move that range, so the same hands moved in against a cutoff tagged nit: by the pot arithmetic
+        # eights lose about 8bb against TT+, AQs+ and AKo (33%).  Against a nit or a tight player only the list plays
+        stacks, acts = [5] + [30] * 7, [(0, "allin", 0), (4, "raise", 11)]
+
+        def tagged(tag):
+            return ["unknown"] * 4 + [tag] + ["unknown"] * 3
+
+        # (eights are ahead of every hand that might raise there, 56%, but not of the better half of them: the
+        #  estimate is the widest reading, so they fold whoever raised)
+        adv = self.play(stacks, 7, "88", acts)
+        self.assertEqual(adv.action, "FOLD")
+        self.assertTrue(any("against the better half of them this hand has only" in line for line in adv.why), adv.why)
+        for hand in ("99", "TT", "AQo", "AQs"):
+            self.assertEqual(self.play(stacks, 7, hand, acts).action, "ALL-IN", hand)        # no read: as before
+            self.assertEqual(self.play(stacks, 7, hand, acts, types=tagged("lag")).action, "ALL-IN", hand)
+            for tag in ("nit", "tight"):
+                adv = self.play(stacks, 7, hand, acts, types=tagged(tag))
+                self.assertEqual(adv.action, "FOLD", (hand, tag))
+                self.assertFalse(any("raised over it" in line for line in adv.why), adv.why)
+                # the reason is the tag, not "only 63% against the hands that raise" (63% is not "only")
+                self.assertTrue(any(line.startswith(f"CO is {tag}: ") for line in adv.why), adv.why)
+                self.assertFalse(any("has only" in line for line in adv.why), adv.why)
+                # ... and the range line says whose range it shows: the estimate for a player with no read
+                self.assertTrue(adv.numbers[0].startswith("a raise over an all-in from a player with no read: ~22."),
+                                adv.numbers)
+                self.assertNotIn("3-bettor's range", adv.numbers[0])
+        for tag in ("nit", "tight"):                                                        # the list, by the number
+            self.assertEqual(self.play(stacks, 7, "KK", acts, types=tagged(tag)).action, "ALL-IN")
+            self.assertEqual(self.play(stacks, 7, "QQ", acts, types=tagged(tag)).action, "ALL-IN")
+        # a hand behind even the wide range keeps its own sentence
+        adv = self.play(stacks, 7, "66", acts, types=tagged("nit"))
+        self.assertEqual(adv.action, "FOLD")
+        self.assertTrue(any("has only 51%" in line for line in adv.why), adv.why)
+        # the all-in the rule makes carries its bar (+1.00bb, twice the usual), for the table app's "close" sentence
+        self.assertEqual(self.play(stacks, 7, "TT", acts).data.get("allin_bar_bb"), 1.0)
+        self.assertNotIn("allin_bar_bb", self.play(stacks, 7, "QQ", acts).data)
+
     def test_a_fold_ahead_of_the_price_of_a_call_is_marked_close(self):
         # queens raised under the gun, re-raised by the big blind, 35bb: on chips a call; with prizes counted the
         # hand is ahead of the price and the risk premium by less than the 10 points that make it a call

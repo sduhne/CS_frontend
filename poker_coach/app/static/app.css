@@ -303,8 +303,10 @@ button.pod:hover{border-color:var(--grey)}
 .pod.stale:not(.allin) .stack .num{color:var(--grey)}      /* (an all-in player is in the hand: never grey) */
 .pod.allin .stack .num{font-style:italic}
 .pod.target{border:2px solid var(--white);padding:4px 6px}
-.pod.turn{border:2px solid var(--yellow);padding:4px 6px;background:var(--yellow-wash)}
-.pod.turn .pos{color:var(--yellow)}
+/* The seat that is up (the next action is recorded for it): Menlo yellow, for the user and for every other player. */
+.pod.turn{border:2px solid var(--yellow);padding:4px 6px;background:var(--yellow-wash);box-shadow:0 0 0 3px var(--yellow-tint)}
+button.pod.turn:hover{border-color:var(--yellow)}
+.pod.turn .pos,.pod.turn .key{color:var(--yellow)}
 .pod.empty{border:1px dashed var(--grey);background:none;align-items:center;justify-content:center;color:var(--grey);font:600 13px/1 var(--body)}
 .pod.empty:hover{color:var(--white);border-color:var(--white)}
 .pod.empty.target{border-width:2px;border-style:solid;color:var(--white)}
@@ -392,6 +394,7 @@ button.pod:hover{border-color:var(--grey)}
 .actions .whose{display:flex;align-items:baseline;gap:8px;height:16px;min-width:0;padding:0 2px;white-space:nowrap;overflow:hidden}
 .actions .whose b{font:800 15px/16px var(--display);text-transform:uppercase;letter-spacing:.02em;color:var(--white);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .who{text-transform:none}                /* a player's name inside a heading: as it was typed */
+.actions .whose .eyebrow.up,.actions .whose .eyebrow.up+b{color:var(--yellow)}      /* the seat that is yellow on the table */
 .actions .whose .note{font:500 12px/16px var(--body);color:var(--soft);min-width:0;overflow:hidden;text-overflow:ellipsis}
 .actions .whose .note .long{display:none}          /* under 1280 the note is said in fewer words (see render.js whoseHtml) */
 .actions .row{display:flex;gap:6px;align-items:stretch;min-width:0}

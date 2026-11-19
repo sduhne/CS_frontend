@@ -1238,6 +1238,8 @@ def engine_line(seen: Seen, facts: dict, before: Before) -> tuple | None:
         return None
     if "reshove_bar_bb" in facts:               # 26 to 45bb: the hand could re-raise small or call instead
         return facts["reshove_bar_bb"], "in place of a small re-raise"
+    if "allin_bar_bb" in facts:                 # an all-in and a raise over it, a hand outside JJ+ and ace-king
+        return facts["allin_bar_bb"], "over an all-in and a raise"
     if before.kind == "first_in":
         late = seen.n == 2 or seen.behind(seen.hero) == 1
         return ENGINE_FIRST_IN_LINE if 10 < seen.bbs(start_effective(seen)) <= (20 if late else 16) else None
