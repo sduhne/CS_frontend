@@ -72,6 +72,8 @@
   /* ---------- 2. The server ---------- */
 
   function readJson(response) { return response.json(); }
+  // The program is asked at addresses beside the page ("api/view", not "/api/view"), so the same page
+  // works at http://127.0.0.1:8765/ and behind a web server under a path of its own (https://a.site/coach/).
 
   const NO_ANSWER = {error: {message: "The program is not answering.",
                              fix: "Is it still running? Start it again (double-click Start Poker Coach) and reload this page."}};
@@ -83,7 +85,7 @@
   // screen (the tab got the focus back: another window may have changed the table meanwhile).
   function fetchView(ifNew) {
     const asked = traffic;
-    return fetch("/api/view", {cache: "no-store"}).then((response) => response.json().then((data) => ({ok: response.ok, data: data}))).then(
+    return fetch("api/view", {cache: "no-store"}).then((response) => response.json().then((data) => ({ok: response.ok, data: data}))).then(
       (answer) => {
         // An intent went out or came back while this look was on its way: its answer is the newer table.
         if (ifNew && (busy || traffic !== asked)) return;
@@ -131,7 +133,7 @@
       if (made !== epoch) return DROPPED;
       traffic += 1;
       const rev = state.view && state.view.rev != null ? {rev: state.view.rev} : {};
-      return fetch("/api/intent", {
+      return fetch("api/intent", {
         method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(Object.assign({}, intent, rev)),
       }).then(readJson);
     };
@@ -306,7 +308,7 @@
     if (!view || view.first_run) return;
     const rev = view.rev;
     if (!again && state.advice && state.advice.rev === rev) return;
-    fetch("/api/advice?rev=" + rev, {cache: "no-store"}).then(readJson).then((answer) => {
+    fetch("api/advice?rev=" + rev, {cache: "no-store"}).then(readJson).then((answer) => {
       if (!state.view || state.view.rev !== rev) return;          // the table has changed since: not for this screen
       if (answer.status === "stale") {
         if (!busy) fetchView();                                    // the table was changed elsewhere (a second window)

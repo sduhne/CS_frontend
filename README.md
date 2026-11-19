@@ -342,6 +342,13 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
 - Study and play money only. It does not read the screen, click for you or
   hide from a poker client, and it is not meant to.
 
+**On your own site.** The same program can run on a server, behind a web
+server that asks for a login, at an address such as
+`https://menlo.bet/coach/`: [deploy/README.md](deploy/README.md) has the
+steps, a systemd unit and the Caddy lines. The answers are the same; the
+tables are then kept on the server, so a phone and a computer see the same
+table. It keeps one table per mode for one user and has no login of its own.
+
 ## How to use it
 
 Open a Claude Code session on this repository and talk to it.

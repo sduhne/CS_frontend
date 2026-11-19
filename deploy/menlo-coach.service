@@ -1,0 +1,31 @@
+# Menlo Coach on a server of your own, behind a web server on the same machine.
+# Copy to /etc/systemd/system/menlo-coach.service, then:
+#   systemctl daemon-reload && systemctl enable --now menlo-coach
+# The program is in /opt/menlo-coach (this repository); its tables are kept in /var/lib/menlo-coach.
+# Change --public-url to the address people type, and the port if 8765 is taken.
+
+[Unit]
+Description=Menlo Coach (the poker table app)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/menlo-coach
+ExecStart=/usr/bin/python3 -m poker_coach app --port 8765 --folder /var/lib/menlo-coach --public-url https://menlo.bet/coach/
+Restart=on-failure
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# It needs no network (it listens on 127.0.0.1 only) and writes nothing but its own tables.
+DynamicUser=yes
+StateDirectory=menlo-coach
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

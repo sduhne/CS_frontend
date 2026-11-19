@@ -412,6 +412,7 @@ calls itself Menlo Coach wherever it speaks; file names keep "Poker Coach".
 python3 -m poker_coach app                             # 127.0.0.1:8765, opens the browser ("Start Poker Coach.bat" runs this)
 python3 -m poker_coach app --port 9000 --no-browser    # another port; only print the address
 python3 -m poker_coach app --folder <path> --verbose   # sessions saved elsewhere; log every request and the coach's errors
+python3 -m poker_coach app --public-url https://menlo.bet/coach/   # on a server, behind a web server with a login (deploy/README.md)
 python tools/build_exe.py --check                      # dist/PokerCoach.exe, then start it and check the page and one answer per mode
 python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about 500 tests, three minutes
 ```
@@ -564,6 +565,14 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
   It is for study and play money: if the user says they use it at a
   real-money table, say once that real-money sites ban real-time help and
   the account can be closed, and offer a review of the hand history instead.
+- **On a server.** `deploy/` has a systemd unit, the Caddy lines and the
+  steps. `--public-url` names the address people type: the program then
+  answers what a web server on the same machine passes on under that name,
+  and takes changes only from that address's pages. The page asks at
+  addresses beside itself, so it works under a path (`/coach/`). It has no
+  login and one table per mode: the web server in front must ask for a
+  login. Checked behind a stand-in proxy in a browser, never behind Caddy
+  or on the user's server: say so.
 - **The .exe.** `tools/build_exe.py` (PyInstaller, on the user's Windows PC)
   puts the page, its fonts and the solved tables inside. Double-clicked it
   starts the table app. It has no console: a small window shows the address

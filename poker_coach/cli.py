@@ -1220,9 +1220,12 @@ def cmd_app(a) -> int:
     folder = app_folder(a.folder)
     if folder:                          # a folder named here wins over $POKER_COACH_APP and the usual one
         options["folder"] = folder
+    if getattr(a, "public_url", None):  # behind a web server on this machine: no browser is opened here
+        options["public"] = a.public_url
+        options["open_browser"] = False
     try:
         return serve(**options)
-    except OSError as exc:              # no free port
+    except (OSError, ValueError) as exc:        # no free port; an address that is none
         return _fail(str(exc))
 
 
@@ -1528,6 +1531,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--folder", help="where the sessions are saved (default: tournament/app in this folder, "
                                     "or $POKER_COACH_APP; the packaged program: PokerCoach/app in the home folder)")
     p.add_argument("--verbose", action="store_true", help="log every request, and the coach's errors in full")
+    p.add_argument("--public-url", metavar="URL",
+                   help="on a server of your own: the address a web server on the same machine answers under "
+                        "(https://menlo.bet/coach/). The program then answers what that web server passes on. "
+                        "It has no login: the web server must ask for one")
     p.set_defaults(fn=cmd_app)
     return ap
 

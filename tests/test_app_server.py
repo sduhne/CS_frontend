@@ -1590,5 +1590,84 @@ class PackageCommandLine(unittest.TestCase):
         self.assertGreater(value("Ah9h7h4h2hKcKd"), value("AhKdQsJcTh2c3d"))        # a flush beats a straight
 
 
+class BehindAWebServer(ServerCase):
+    """On a server of one's own: a web server on the same machine passes requests on (``--public-url``)."""
+
+    public = "https://menlo.bet/coach"
+
+    def start(self):
+        self.server = server.start_server(0, folder=self.folder, verbose=self.verbose, static=self.static,
+                                          coach=self.coach, public=self.public)
+        self.port = self.server.server_port
+        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        self.thread.start()
+
+    def test_the_address_is_read_once_and_a_wrong_one_is_refused_before_anything_starts(self):
+        self.assertEqual(server.public_address("https://Menlo.bet/coach"), ("https://menlo.bet/coach/", "menlo.bet", "https://menlo.bet"))
+        self.assertEqual(server.public_address("http://coach.example:8080/"), ("http://coach.example:8080/", "coach.example:8080", "http://coach.example:8080"))
+        self.assertEqual(server.public_address(None), ("", "", ""))
+        other = tempfile.mkdtemp(prefix="menlo-app-")
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        for wrong in ("menlo.bet/coach", "ftp://menlo.bet/", "https://", "https://user:pw@menlo.bet/", "https://menlo.bet/coach?x=1"):
+            with self.assertRaises(ValueError, msg=wrong):
+                server.start_server(0, folder=other, public=wrong)
+        self.assertEqual(os.listdir(other), [])                     # nothing was started or written
+
+    def test_requests_under_the_public_name_are_answered_and_others_still_refused(self):
+        rev = self.do("new_session", size=6)["rev"]
+        status, _, body = self.request("GET", "/api/view", None, {"Host": "menlo.bet"})
+        self.assertEqual((status, json.loads(body)["rev"]), (200, rev))
+        status, _, body = self.request("GET", "/", None, {"Host": "MENLO.BET"})
+        self.assertEqual(status, 200)
+        self.assertIn(b"<title>", body)
+        for host in ("evil.example", "menlo.bet.evil.example", "menlo.bet:8443", "coach.menlo.bet", ""):
+            status, _, answer = self.request("GET", "/api/view", None, {"Host": host})
+            self.assertEqual(status, 403, host)
+            self.assertIn(b"Refused", answer)
+        # this computer's own names still work: the web server may pass the request on under either
+        status, _, _ = self.request("GET", "/api/view", None, {"Host": f"127.0.0.1:{self.port}"})
+        self.assertEqual(status, 200)
+
+    def test_a_change_from_the_public_page_is_taken_and_one_from_another_site_is_not(self):
+        rev = self.view()["rev"]
+        answer = self.post({"op": "level_up"}, {"Host": "menlo.bet", "Origin": "https://menlo.bet"})
+        self.assertEqual(answer["view"]["rev"], rev + 1)
+        for origin in ("http://menlo.bet", "https://menlo.bet.evil.example", "https://evil.example", "https://coach.menlo.bet", "null"):
+            status, _, body = self.request("POST", "/api/intent", b'{"op": "level_up"}', {"Host": "menlo.bet", "Origin": origin})
+            self.assertEqual(status, 403, origin)
+            self.assertIn("another site", json.loads(body)["error"]["message"])
+        self.assertEqual(self.view()["rev"], rev + 1)
+
+    def test_without_the_option_the_public_name_is_refused(self):
+        self.stop()
+        self.public = None
+        self.start()
+        status, _, _ = self.request("GET", "/api/view", None, {"Host": "menlo.bet"})
+        self.assertEqual(status, 403)
+        status, _, _ = self.request("POST", "/api/intent", b'{"op": "level_up"}', {"Origin": "https://menlo.bet"})
+        self.assertEqual(status, 403)
+
+    def test_the_port_is_not_moved_when_a_web_server_points_at_it(self):
+        # locally a taken port moves on to the next free one; behind a web server that would break the link
+        other = tempfile.mkdtemp(prefix="menlo-app-")
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        with self.assertRaises(OSError):
+            server.start_server(self.port, folder=other, public=self.public)
+
+    def test_the_page_asks_at_addresses_beside_itself(self):
+        # "api/view", not "/api/view": under https://menlo.bet/coach/ the page must not ask https://menlo.bet/api/view
+        static = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "poker_coach", "app", "static")
+        for name in ("controller.js", "render.js", "app.js", "index.html", "app.css"):
+            with open(os.path.join(static, name), encoding="utf-8") as fh:
+                text = fh.read()
+            self.assertNotRegex(text, r"""fetch\(\s*["']/""", name)
+            self.assertNotRegex(text, r"""(?:href|src)=["']/(?!/)""", name)
+            self.assertNotRegex(text, r"""url\(\s*["']?/""", name)
+        with open(os.path.join(static, "controller.js"), encoding="utf-8") as fh:
+            text = fh.read()
+        for address in ('fetch("api/view"', 'fetch("api/intent"', 'fetch("api/advice?rev="'):
+            self.assertIn(address, text)
+
+
 if __name__ == "__main__":
     unittest.main()

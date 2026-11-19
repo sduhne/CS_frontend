@@ -22,6 +22,11 @@ The rules it keeps:
 
 - It listens on 127.0.0.1 only and answers only requests addressed to 127.0.0.1 or localhost on
   its own port.  Nothing here reads the screen, clicks for the user or reaches the network.
+- On a server of one's own it can stand behind a web server on the same machine (Caddy, nginx)
+  that passes requests on to it: ``--public-url https://a.site/coach/`` names the address people
+  type, and requests and changes that come under that name are answered as well.  It still
+  listens on 127.0.0.1 only, and it has no login: the web server in front must ask for one.  It
+  holds one table per mode, for one user.
 - One lock guards the session.  The coach's answer is worked out on a private copy of the
   session, outside that lock, so typing the next action never waits for the engine.
 - An answer belongs to one revision of the table and is kept until the table changes.
@@ -485,6 +490,10 @@ class Handler(BaseHTTPRequestHandler):
         port = self.server.server_port
         return f"127.0.0.1:{port}", f"localhost:{port}"
 
+    def _public(self) -> tuple[str, str]:
+        """(host, origin) of the address a web server in front answers under, or two empty strings."""
+        return getattr(self.server, "public_host", ""), getattr(self.server, "public_origin", "")
+
     def _host_is_ours(self) -> bool:
         """Answer only requests addressed to this computer under its own name.
 
@@ -492,7 +501,7 @@ class Handler(BaseHTTPRequestHandler):
         call it; such a request still carries the other name in its Host line.
         """
         host = (self.headers.get("Host") or "").strip().lower()
-        if host in self._own_names():
+        if host in self._own_names() or (host and host == self._public()[0]):
             return True
         self._send(403, TEXT_TYPE, f"Refused: this is {PROGRAM} on http://{self._own_names()[0]}/ "
                                    "and the request was addressed to another host.\n".encode())
@@ -506,6 +515,8 @@ class Handler(BaseHTTPRequestHandler):
         """
         origin = self.headers.get("Origin")
         if origin is None or origin.strip().lower() in ["http://" + name for name in self._own_names()]:
+            return True
+        if origin.strip().lower() == self._public()[1] != "":     # the page as the web server in front serves it
             return True
         self._send_error(403, "Refused: the change was sent by a page of another site.", "")
         return False
@@ -654,10 +665,12 @@ class TableServer(ThreadingHTTPServer):
     allow_reuse_address = os.name != "nt"
     request_queue_size = 32                 # a page asks for its dozen files at once; none of them should wait at the door
 
-    def __init__(self, port: int, app: TableApp, verbose: bool = False):
+    def __init__(self, port: int, app: TableApp, verbose: bool = False, public: str | None = None):
         self.app = app
         self.verbose = verbose
         self.lock_path = None               # app.lock, once this server has written it
+        # the address a web server in front answers under (``--public-url``): its host and its origin
+        self.public_url, self.public_host, self.public_origin = public_address(public)
         super().__init__(("127.0.0.1", port), Handler)
 
     def server_bind(self) -> None:
@@ -698,16 +711,35 @@ class TableServer(ThreadingHTTPServer):
             pass
 
 
+def public_address(url: str | None) -> tuple[str, str, str]:
+    """``--public-url`` as (the address with a closing slash, its host, its origin); three empty strings for none.
+
+    ``https://menlo.bet/coach`` -> ("https://menlo.bet/coach/", "menlo.bet", "https://menlo.bet").
+    """
+    if not url:
+        return "", "", ""
+    parts = urlsplit(url.strip())
+    if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment or "@" in parts.netloc:
+        raise ValueError(f"--public-url: {url!r} is not an address like https://menlo.bet/coach/")
+    host = parts.netloc.lower()
+    path = parts.path if parts.path.endswith("/") else parts.path + "/"
+    return f"{parts.scheme}://{host}{path}", host, f"{parts.scheme}://{host}"
+
+
 def start_server(port: int = DEFAULT_PORT, folder: str | None = None, verbose: bool = False,
-                 static: str | None = None, coach=None) -> TableServer:
+                 static: str | None = None, coach=None, public: str | None = None) -> TableServer:
     """Open the server on ``port``, or on the next free port after it (0: any free port).
 
     It is listening when this returns; ``serve_forever()`` starts the answering.  When a copy
     of the program already serves the folder, nothing is started or touched: ``AlreadyRunning``
     carries that copy's address.
+
+    ``public``: the address a web server in front answers under.  The port is then not moved (the
+    web server passes requests on to this one): a taken port is an error.
     """
     if not 0 <= port <= 65535:
         raise ValueError(f"the port must be between 0 and 65535, not {port}")
+    public_address(public)                  # a wrong address is said before anything is started
     from .model import default_folder
 
     # Before a file of the folder is read or set aside: is a copy at work on it?  The lock says
@@ -717,11 +749,11 @@ def start_server(port: int = DEFAULT_PORT, folder: str | None = None, verbose: b
     if other:
         raise AlreadyRunning(other)
     app = TableApp(folder, static, coach, verbose)
-    last = port if port == 0 else min(port + PORT_TRIES - 1, 65535)
+    last = port if port == 0 or public else min(port + PORT_TRIES - 1, 65535)
     problem = None
     for candidate in range(port, last + 1):
         try:
-            server = TableServer(candidate, app, verbose)
+            server = TableServer(candidate, app, verbose, public)
         except OSError as err:
             problem = err                   # taken, or not allowed: try the next one
             continue
@@ -731,10 +763,10 @@ def start_server(port: int = DEFAULT_PORT, folder: str | None = None, verbose: b
 
 
 def main(port: int = DEFAULT_PORT, open_browser: bool = True, verbose: bool = False,
-         folder: str | None = None) -> int:
+         folder: str | None = None, public: str | None = None) -> int:
     """Start the table app and serve it until Ctrl+C.  Started a second time, it opens the running copy's page."""
     try:
-        server = start_server(port, folder, verbose)
+        server = start_server(port, folder, verbose, public=public)
     except AlreadyRunning as running:
         print(f"{PROGRAM} is already running at {running.address}", flush=True)
         if open_browser:
@@ -743,6 +775,9 @@ def main(port: int = DEFAULT_PORT, open_browser: bool = True, verbose: bool = Fa
     address = f"http://127.0.0.1:{server.server_port}/"
     moved = f"port {port} was taken; " if port and server.server_port != port else ""
     print(f"{PROGRAM} is running at {address}  ({moved}Ctrl+C stops it)", flush=True)
+    if server.public_url:
+        print(f"It also answers what a web server on this machine passes on from {server.public_url}  "
+              "(it has no login of its own: that web server must ask for one)", flush=True)
     if open_browser:
         # in a thread of its own: some systems take a moment to hand the address to the browser
         threading.Thread(target=webbrowser.open, args=(address,), daemon=True).start()
