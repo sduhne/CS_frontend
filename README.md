@@ -173,8 +173,8 @@ out by a closed formula, so that an answer still comes in about a third of
 a second: nine players at 150,000 entrants were measured. Nothing is
 merged, so three places from the money are three places. From 8,000 to
 150,000 entrants the formula was within 0.02 points of risk premium of the
-exact maths. On the command line `advise` and `quick` still use the exact
-maths, which takes about half a minute a decision at 150,000 entrants.
+exact maths. On the command line `advise`, `quick` and `icm` use the same
+formula under the same condition.
 
 *Styles.* What differs is what happens before the money, when a play would
 put a third or more of your chips at risk. The coach then also looks the

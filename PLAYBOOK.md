@@ -744,7 +744,10 @@ Heads-up the button is the small blind and acts first.
 
 ### Against players who call too much
 
-Only the first-in ranges change; the call tables stay as they are.
+The first-in ranges change most, and they are printed here. The calls shift
+as well: the small blind calls the button's all-in tighter (a loose big
+blind is still behind), and the big blind calls two all-ins wider.
+`spin-sheet --vs loose` prints them.
 
 **BTN, nobody has entered: all-in with**
 

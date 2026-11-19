@@ -62,7 +62,7 @@ python3 -m poker_coach sync '{"blinds":[300,600,75],"button":3,"hero":5,"remaini
 `entrants`, `start_stack`, `avg_stack`, `buyin`, `payouts` `[1st, 2nd, ...]`,
 `name`, `goal`, `pace` (`online` / `fast` / `live`).
 
-Small updates without a picture:
+Small updates without a picture (the names stand for players at the table):
 
 ```bash
 python3 -m poker_coach stack Carl 52k hero 13000      # new stacks
@@ -528,8 +528,8 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
 - **Very large fields.** Above 1,000 paid places still to reach, the app
   works the prize model out by a closed formula (nothing is merged): within
   0.02 points of risk premium of the exact one from 8,000 to 150,000
-  entrants, a third of a second an answer. `advise` and `quick` still use the
-  exact one: half a minute a decision at 150,000 entrants.
+  entrants, a third of a second an answer. `advise`, `quick` and `icm` use
+  the same formula under the same condition.
 - **When an answer looks wrong**, ask for the hand from the history sheet
   (`Y`, then Copy as text): it has the blinds, a "Seats:" line (seat,
   position, stack, name), the user's cards and every bet in chips, enough to
@@ -679,7 +679,9 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   Do not use `binary`, `advise` with ICM or the late-registration charts for
   a spin.
 - **Loose callers: tighter, not wider.** `--vs loose` drops the weak steals
-  when first in; calls do not change. Use it once the user has seen a player
+  when first in. The calls shift too: the small blind calls the button
+  tighter (a loose big blind is behind), the big blind calls two all-ins
+  wider. Use it once the user has seen a player
   call an all-in with a hand that is not on the call table. `very-loose`
   exists and wins the same within the noise.
 - **Limps and small raises.** `--facing "SB limp"`, `"BTN raise"` or
