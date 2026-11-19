@@ -3338,6 +3338,39 @@ class T4TheWinnerBySeatAndPosition(unittest.TestCase):
             s.do("undo")
 
 
+class T8TheKeysSheet(unittest.TestCase):
+    """T8: the sentences of the keys sheet say what the keys do now (the page reads them from defaults.py)."""
+
+    def text_of(self, group, command):
+        rows = [row for row in Session(save=False).view()["settings"]["keys"][group] if row["do"] == command]
+        self.assertEqual(len(rows), 1, command)
+        return rows[0]["text"]
+
+    def test_t8_the_key_sentences(self):
+        for command in ("bet", "raise"):
+            text = self.text_of("table", command)
+            self.assertIn("Your own: type the amount, then Enter", text)
+            self.assertIn("An opponent's is recorded at the usual size; E changes it", text)
+        enter = self.text_of("table", "accept")
+        for part in ("The rest fold (or check)", "While you record the players in front of you in turn: they fold and "
+                     "the keys are yours", "While a street's cards are wanted: skip the board",
+                     "While a split is ticked: split"):
+            self.assertIn(part, enter)
+        self.assertIn("Three or more players: tick who shares it with the seat numbers, then Enter",
+                      self.text_of("table", "split"))
+        self.assertIn("In a field: the old value comes back", self.text_of("table", "cancel"))
+        self.assertIn("an empty seat too", self.text_of("seat", "button"))
+
+    def test_t8_the_keys_named_in_the_sentences_are_the_keys_of_the_map(self):
+        keys = {row[1]: row[0] for row in D.KEYS_TABLE}
+        self.assertEqual((keys["edit"][0], keys["accept"][0], keys["split"][0], keys["cancel"][0]),
+                         ("e", "Enter", "Shift+W", "Escape"))
+        for group in D.KEYS.values():
+            for _, command, text in group:
+                self.assertFalse(text.endswith("."), command)       # one style: no full stop at the end of a row
+                self.assertLess(len(text), 200, command)
+
+
 class SeenInPassing(unittest.TestCase):
     """Small things the reviewers met on the way (the addendum's last list)."""
 

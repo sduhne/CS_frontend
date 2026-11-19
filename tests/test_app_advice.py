@@ -208,7 +208,12 @@ class TournamentFullPlan(unittest.TestCase):
         self.assertEqual(a["guard"], "agrees")
 
     def test_T5_bubble_survival_fold_and_max_ev(self):
-        a = A.advise(tournament(STACKS_A, BTN, "A8o", left=152))
+        # the strict guard of "Cash first" folds what the table folds ...
+        a = A.advise(tournament(STACKS_A, BTN, "A8o", left=152, style="cash"))
+        self.assertEqual((verb(a), a["guard"]), ("FOLD", "survival"))
+        self.assertIn("twice your stack", a["reason"])
+        # ... the default style a thin edge only (under +0.20bb, L1): A7o is worth +0.09bb here
+        a = A.advise(tournament(STACKS_A, BTN, "A7o", left=152))
         self.assertEqual((verb(a), a["guard"]), ("FOLD", "survival"))
         self.assertIn("twice your stack", a["reason"])
         a = A.advise(tournament(STACKS_A, BTN, "A8o", left=152, style="maxev"))
@@ -1063,7 +1068,7 @@ class SurvivalGuardFindings(unittest.TestCase):
 
     def test_pre_6_no_find_an_all_in_beside_a_survival_fold(self):
         def with_clock(left, before, minutes):
-            s = tournament([30, 25, 18, 40, 22, 12, 15, 20], BTN, "K9s", left=left)
+            s = tournament([30, 25, 18, 40, 22, 12, 15, 20], BTN, "K7s", left=left)    # a thin edge: +0.18bb, +0.11bb
             now = time.time()                       # two "players left" marks: the field loses a player a minute
             s.data["tournament"]["history"] = [{"t": now - minutes * 60, "remaining": before},
                                                {"t": now, "remaining": left}]
@@ -1087,13 +1092,15 @@ class SurvivalGuardFindings(unittest.TestCase):
         self.assertIn("when the fold clock says you cannot fold", safe["flip"])
 
     def test_pre_7_the_default_style_only_folds_a_thin_edge(self):
-        self.assertEqual((A.THIN_EV_BB_FAR, A.THIN_EV_BB_CLOSE), (0.30, 0.50))
+        self.assertEqual((A.THIN_EV_BB_FAR, A.THIN_EV_BB_CLOSE), (0.20, 0.20))         # L1: one line for both
         self.assertEqual((A.THIN_EDGE_POINTS_FAR, A.THIN_EDGE_POINTS_CLOSE), (4, 7))
         # the measure itself: an all-in by the engine's "all-in against folding", a call by have minus need,
         # and a play without a number counts as thin
-        all_in = A.Play("ALL-IN", "allin", facts={"ev": 0.30})
-        self.assertEqual(A.engine_edge(all_in, near=False), (False, "engine +0.30bb"))
-        self.assertEqual(A.engine_edge(all_in, near=True), (True, "engine +0.30bb"))
+        for near in (False, True):
+            self.assertEqual(A.engine_edge(A.Play("ALL-IN", "allin", facts={"ev": 0.20}), near),
+                             (False, "engine +0.20bb"))
+            self.assertEqual(A.engine_edge(A.Play("ALL-IN", "allin", facts={"ev": 0.19}), near),
+                             (True, "engine +0.19bb"))
         call = A.Play("CALL", "call", facts={"need": 0.47, "equity": 0.53, "ev": 2.0})
         self.assertEqual(A.engine_edge(call, near=False), (False, "53% against 47%"))
         self.assertEqual(A.engine_edge(call, near=True), (True, "53% against 47%"))
@@ -1113,9 +1120,12 @@ class SurvivalGuardFindings(unittest.TestCase):
     def test_pre_7_seventeen_big_blinds_or_more_the_sheets_small_raise_not_a_fold(self):
         # 44 in the cutoff with 18bb: the engine moves all-in for +0.26bb, the table folds (all-in up to 16bb),
         # and the sheet raises 44 from the cutoff: the headline is that raise, with the plan against an all-in
-        s = tournament([18] * 8, CO, "44")
+        # (in "Cash first": since L1 the default style plays an edge of +0.20bb or more, and +0.26bb is one)
+        s = tournament([18] * 8, CO, "44", style="cash")
         a = A.advise(s)
         self.assertEqual((verb(a), a["guard"]), ("RAISE", "survival"))
+        default = A.advise(tournament([18] * 8, CO, "44"))
+        self.assertEqual((verb(default), default["guard"]), ("ALL-IN", "edge"))
         self.assertEqual(a["headline"]["qualifier"], "survival raise")
         self.assertEqual(a["headline"]["follow"], {"kind": "raise", "to": 2000})
         self.assertIn("SURVIVAL RAISE (engine: ALL-IN +0.26bb): the sheet's small raise", a["source"])
@@ -1131,8 +1141,8 @@ class SurvivalGuardFindings(unittest.TestCase):
         self.assertEqual((verb(fold), fold["guard"]), ("FOLD", "survival"))
 
     def test_pre_8_a_read_lifts_the_guard_only_when_it_makes_the_play_safer(self):
-        def first_in(**more):                       # 87s first in from the small blind with 10bb
-            return A.advise(tournament([10] * 8, SB, "87s", **more))
+        def first_in(**more):                       # Q6o first in from the small blind with 10bb: a thin edge
+            return A.advise(tournament([10] * 8, SB, "Q6o", **more))
 
         def call(**more):                           # A9o in the big blind (20bb) against a cutoff all-in of 15bb
             return A.advise(tournament([30, 25, 18, 40, 15, 22, 16, 20], BB, "A9o", acts=[(CO, "allin", None)], **more))

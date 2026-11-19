@@ -255,6 +255,21 @@ class TheBuildScript(unittest.TestCase):
         pairs = [command[i + 1] for i, word in enumerate(command) if word == "--add-data"]
         return {pair.rsplit(os.pathsep, 1)[1]: pair.rsplit(os.pathsep, 1)[0] for pair in pairs}
 
+    def test_t9_the_saved_sessions_check_counts_only_the_json_files(self):
+        """The check "the sessions are saved": the folder also holds app.lock and the .bak copies."""
+        tmp = tempfile.mkdtemp(prefix="menlo-package-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        running = server.start_server(0, folder=tmp)            # as the program under check: it writes its lock
+        self.addCleanup(running.server_close)
+        for mode in ("tournament", "spin", "aof"):              # what the check does: a new session and a deal per mode
+            running.app.session.apply({"op": "new_session", "mode": mode})
+            running.app.session.apply({"op": "deal", "hero_cards": "AhKd"})
+        names = os.listdir(tmp)
+        self.assertIn("app.lock", names)
+        self.assertTrue([name for name in names if name.endswith(".bak")], names)
+        self.assertEqual(build_exe.saved_sessions(names), ["aof.json", "app.json", "spin.json", "tournament.json"])
+        self.assertEqual(build_exe.saved_sessions(["tournament.json", "app.lock", "tournament.json.bak"]), ["tournament.json"])
+
     def test_the_page_and_the_solved_tables_go_inside(self):
         data = self.added_data(build_exe.pyinstaller_command())
         self.assertEqual(set(data), {"poker_coach/data", "poker_coach/app/static"})
@@ -337,8 +352,7 @@ class ThePackagedProgram(FolderCase):
             return 0
 
         with mock.patch.object(cli, "main", command_line), \
-                mock.patch.object(coach_app, "has_console", return_value=console), \
-                mock.patch.object(coach_app, "coach_is_at", return_value=False):
+                mock.patch.object(coach_app, "has_console", return_value=console):
             return coach_app.run(argv), given
 
     def test_no_arguments_is_the_table_app(self):
@@ -408,15 +422,15 @@ class ThePackagedProgram(FolderCase):
         told = []
         with mock.patch.object(coach_app, "tell", told.append), \
                 mock.patch.object(server, "start_server", side_effect=OSError("no free port from 8765 to 8784")), \
-                mock.patch.object(coach_app, "coach_is_at", return_value=False), \
                 mock.patch.object(sys, "stdout", None), mock.patch.object(sys, "stderr", None):
             self.assertEqual(coach_app.run([]), 2)
         self.assertEqual(len(told), 1)
         self.assertIn("no free port", told[0])
 
-    def a_running_copy(self):
-        """A table app on a free port -> its port."""
-        running = server.start_server(0, folder=os.path.join(self.tmp, "running"))
+    def a_running_copy(self, folder=None):
+        """A table app on a free port -> (its port, its folder of tables)."""
+        folder = folder or os.path.join(self.tmp, "running")
+        running = server.start_server(0, folder=folder)
         thread = threading.Thread(target=running.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         thread.start()
 
@@ -426,43 +440,62 @@ class ThePackagedProgram(FolderCase):
             thread.join(5)
 
         self.addCleanup(stop)
-        return running.server_port
+        return running.server_port, folder
 
-    def test_it_knows_a_running_copy_from_another_program(self):
-        self.assertTrue(coach_app.coach_is_at(self.a_running_copy()))
-        other = socket.socket()                         # something else that listens and never answers
-        self.addCleanup(other.close)
-        other.bind(("127.0.0.1", 0))
-        other.listen(1)
-        with mock.patch.object(http.client.HTTPConnection, "getresponse", side_effect=socket.timeout("no answer")):
-            self.assertFalse(coach_app.coach_is_at(other.getsockname()[1]))
-        with socket.socket() as free:                   # nothing listens here
-            free.bind(("127.0.0.1", 0))
-            port = free.getsockname()[1]
-        self.assertFalse(coach_app.coach_is_at(port))
-        self.assertFalse(coach_app.coach_is_at(0))
+    def start_again(self, argv, console):
+        """A second start of the program -> (exit code, the pages it opened, what it printed, what it told in a box)."""
+        told = []
+        with mock.patch.object(coach_app, "stop_window", side_effect=AssertionError("a second copy was started")), \
+                mock.patch.object(server.TableServer, "serve_forever",
+                                  side_effect=AssertionError("a second copy was started")), \
+                mock.patch.object(coach_app, "tell", told.append), \
+                mock.patch.object(coach_app, "has_console", return_value=console), \
+                mock.patch.object(coach_app.webbrowser, "open") as open_browser, \
+                redirect_stdout(io.StringIO()) as printed:
+            code = coach_app.run(argv)
+        return code, [call.args[0] for call in open_browser.call_args_list], printed.getvalue(), told
 
-    def test_started_twice_it_opens_the_running_copy_s_page_and_ends(self):
-        port = self.a_running_copy()
+    def test_t9_started_twice_it_opens_the_running_copy_s_page_and_ends(self):
+        """In every way of starting: a window or a console, the copy's port, another port, the folder by option or variable."""
+        port, folder = self.a_running_copy()
         address = f"http://127.0.0.1:{port}/"
-        for console in (True, False):
-            with mock.patch.object(cli, "main", side_effect=AssertionError("a second copy was started")), \
-                    mock.patch.object(coach_app, "table_app_with_a_window",
-                                      side_effect=AssertionError("a second copy was started")), \
-                    mock.patch.object(coach_app, "has_console", return_value=console), \
-                    mock.patch.object(coach_app.webbrowser, "open") as open_browser, \
-                    redirect_stdout(io.StringIO()) as printed:
-                self.assertEqual(coach_app.run(["--port", str(port)]), 0)
-            open_browser.assert_called_once_with(address)
-            self.assertEqual(address in printed.getvalue(), console)
+        with socket.socket() as free:                   # a port nothing listens on: the folder's lock says where the copy is
+            free.bind(("127.0.0.1", 0))
+            elsewhere = free.getsockname()[1]
+        for argv in (["--folder", folder, "--port", str(port)], ["--folder", folder, "--port", str(elsewhere)],
+                     ["app", "--folder", folder, "--port", "0"]):
+            for console in (False, True):
+                code, opened, printed, told = self.start_again(argv, console)
+                self.assertEqual((code, opened, told), (0, [address], []), (argv, console))
+                self.assertEqual(f"Poker Coach is already running at {address}" in printed, console, (argv, console))
+        os.environ["POKER_COACH_APP"] = folder          # without --folder: the usual folder is the one being served
+        for console in (False, True):
+            code, opened, printed, told = self.start_again(["--port", str(elsewhere)], console)
+            self.assertEqual((code, opened, told), (0, [address], []), console)
+        self.assertEqual(sorted(n for n in os.listdir(folder) if n.endswith(".lock")), ["app.lock"])    # still the first copy's
+        self.assertEqual(get(port)[0], 200)             # ... which goes on answering
 
-    def test_a_copy_with_a_folder_of_its_own_is_started_all_the_same(self):
-        # a folder of its own means tables of its own: nothing to save over, so nothing is looked for
-        argv = ["--port", "9001", "--folder", os.path.join(self.tmp, "second"), "--no-browser"]
-        with mock.patch.object(cli, "main", return_value=0) as command_line, \
-                mock.patch.object(coach_app, "coach_is_at", side_effect=AssertionError("it looked for a running copy")):
+    def test_t9_started_twice_without_the_browser_it_only_ends(self):
+        port, folder = self.a_running_copy()
+        for console in (False, True):
+            code, opened, printed, told = self.start_again(["--folder", folder, "--no-browser"], console)
+            self.assertEqual((code, opened, told), (0, [], []), console)
+
+    def test_t9_a_copy_with_a_folder_of_its_own_is_started_all_the_same(self):
+        # a folder of its own means tables of its own: nothing to save over.  Also on the port the first copy has
+        port, folder = self.a_running_copy()
+        second = os.path.join(self.tmp, "second")
+        code, seen = self.run_without_a_console(["--port", str(port), "--folder", second, "--no-browser"])
+        self.assertEqual((code, seen["folder"]), (0, second))
+        self.assertNotEqual(seen["port"], port)         # the next free port
+        self.assertEqual(seen["view"][0], 200)
+        argv = ["--port", "9001", "--folder", second, "--no-browser"]
+        with mock.patch.object(cli, "main", return_value=0) as command_line:       # with a console: the command line, as it is
             self.assertEqual(coach_app.run(argv), 0)
         command_line.assert_called_once_with(["app"] + argv)
+
+    def test_t9_the_older_check_of_its_own_is_gone(self):
+        self.assertFalse(hasattr(coach_app, "coach_is_at"))     # one place decides: server.start_server
 
     def test_the_stop_window(self):
         """The real window, where this Python has tkinter and a screen: Stop closes it."""

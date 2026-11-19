@@ -149,13 +149,16 @@ KEYS_TABLE = [                          # between hands and while a hand is play
     (("f",), "fold", "Fold"),
     (("c",), "call", "Call"),
     (("x",), "check", "Check"),
-    (("b",), "bet", "Bet: type the amount, then Enter"),
-    (("r",), "raise", "Raise: type the amount, then Enter"),
+    (("b",), "bet", "Bet. Your own: type the amount, then Enter. An opponent's is recorded at the usual size; E changes it"),
+    (("r",), "raise", "Raise. Your own: type the amount, then Enter. An opponent's is recorded at the usual size; "
+                      "E changes it"),
     (("a",), "allin", "All-in"),
-    (("Enter",), "accept", "The rest fold (or check). While a street's cards are wanted: skip the board"),
+    (("Enter",), "accept", "The rest fold (or check). While you record the players in front of you in turn: they fold "
+                           "and the keys are yours. While a street's cards are wanted: skip the board. "
+                           "While a split is ticked: split"),
     (("w",), "won", "You won the pot"),
     (("l",), "lost", "You lost a heads-up pot"),
-    (("Shift+W",), "split", "Split pot"),
+    (("Shift+W",), "split", "Split pot. Three or more players: tick who shares it with the seat numbers, then Enter"),
     (("Backspace", "z", "Ctrl+z"), "undo", "Undo"),
     (("Ctrl+y", "Ctrl+Shift+Z"), "redo", "Redo"),
     (("Ctrl+Backspace",), "discard", "Discard the hand"),
@@ -186,7 +189,7 @@ KEYS_TABLE = [                          # between hands and while a hand is play
     (("Alt+1",), "mode_tournament", "Tournament"),
     (("Alt+2",), "mode_spin", "Spin & Gold"),
     (("Alt+3",), "mode_aof", "All-In or Fold"),
-    (("Escape",), "cancel", "Cancel, close"),
+    (("Escape",), "cancel", "Cancel, close. In a field: the old value comes back"),
 ]
 
 KEYS_SEAT = [                           # after a seat digit (the seat's menu is open)
@@ -197,7 +200,7 @@ KEYS_SEAT = [                           # after a seat digit (the seat's menu is
     (("t",), "type", "Type: then one of the type keys below"),
     (("m",), "note", "Note"),
     (("o",), "sit_out", "Sit out, sit back in"),
-    (("d",), "button", "Dealer button here"),
+    (("d",), "button", "Dealer button here (an empty seat too)"),
     (("k",), "bust", "Bust: the seat is cleared and one player fewer is left"),
     (("Delete",), "clear", "Clear the seat: the player left the table"),
 ]
