@@ -29,6 +29,12 @@
      Keys handled here: Enter in a field (sends it) and the arrow keys inside the mode tabs, the table
      and the hand line (they move the focus; the event is then defaultPrevented). Every other key is yours.
 
+   WHAT THE PAGE MEASURES (it reads its own layout in three places, all in section 12)
+     measureScrollBar   once: the room a thin scroll bar takes here (--sbw, for the advice column)
+     fitStrip           after every draw and on resize: when the strip is too short, the average stack, the
+                        wordmark, the ante text and then places paid leave it, so no value is cut in half
+     bleed              with it: how far the window reaches beyond the page (--bleed, for the header's rules)
+
      op              arguments                                        comes from
      set_mode        mode: tournament | spin | aof                    the mode tabs
      undo, redo                                                       header, toast
@@ -91,7 +97,7 @@
      split        null | [seat, ...]      a split pot is being ticked together (three or more at a showdown)
      awardTiers   [[seat], ...]           winners already chosen when a side pot needs another
      setupMode    "tournament" | "spin" | "aof"    the form shown on first run
-     toast        {text, fix, undo, action: {label, send}} | null     shown instead of view.toast; null hides both
+     toast        {text, fix, undo, redo, action: {label, send}} | null     shown instead of view.toast; null hides both
      fieldError   {fk, text, fix, value} | null    a value the server refused: drawn under the open field
                                                    with that data-fk, and the field is marked
      menuByKey    true when the seat menu was opened by its digit (the controller keeps it)
@@ -117,6 +123,8 @@
      view.hand.before_target         the seats in front of the target that have not acted, in order
      view.hero_out                   true: hero has no chips and no hand of his is running
      view.settings.button_rule       "dead" | "forward": how the dealer button moves after a hand
+     view.strip.prizes_typed         how many of the paid places have a prize typed (the settings say so)
+     view.toast.redo                 true after an undo: the toast's button is Redo
      seat.status "busted"            a seat with no chips: drawn grey with the word "Out"
    ========================================================================================== */
 (function () {
@@ -525,11 +533,6 @@
     const found = choices.find((choice) => choice.value === value);
     return found ? found.label : String(value || "");
   }
-  function nextOf(choices, value) {
-    const at = choices.findIndex((choice) => choice.value === value);
-    return choices[(at + 1) % choices.length].value;
-  }
-
   // A row of either-or buttons. `send` turns a value into the event it sends.
   function choiceHtml(label, choices, current, send) {
     const buttons = list(choices, (choice) =>

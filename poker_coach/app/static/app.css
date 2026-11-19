@@ -3,7 +3,10 @@
    6 advice, 7 table, 8 cards, 9 hand line, 10 action bar, 11 menus and sheets, 12 forms,
    13 toast, 14 first run, 15 wider screens, 16 motion.
    Colour rules: yellow = do this now; a white ring = your next key lands here;
-   green and red only on chips or big blinds won or lost; state is shown by brightness. */
+   green and red only on chips or big blinds won or lost; state is shown by brightness.
+   Sizes: no text under 12px; numbers in the condensed face; the edge of a control is Grey (3:1 on Ink).
+   Nothing moves under the pointer: the slab is one height under 1024, the table, hand line and action
+   bar stand at one place in every state, a toast takes no room. */
 
 /* ---------- 1. Fonts (latin subsets, SIL Open Font License, see fonts/OFL-*.txt) ---------- */
 @font-face{font-family:"Barlow Semi Condensed";font-weight:700;font-style:normal;font-display:swap;src:url(fonts/barlow-semi-condensed-latin-700-normal.woff2) format("woff2")}
