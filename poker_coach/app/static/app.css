@@ -147,12 +147,13 @@ button.value:hover{background:var(--line)}
 .pill.bubble{background:var(--yellow);color:var(--ink)}
 .pill.money{background:var(--win-tint);color:var(--win)}
 .pill.you{background:var(--white);color:var(--ink)}
-/* The pill that says how far the money is stays whole at every width; what gives way is listed in render.js (fitStrip). */
+/* The pill that says how far the money is stays whole at every width; what gives way is listed in render.js (fitStrip).
+   (It leaves the strip, whole, only while the places paid or the average stack are being typed and their field needs its room.) */
 .strip .stage{flex:none;padding:0 8px}
 .strip .in{width:132px}
 .strip .in.short{width:84px}
 .strip .from-avg,.strip .from-style{display:none}
-.header.no-avg .strip .from-avg,.header.no-ante .stat.level small,.header.no-paid .stat.paid{display:none}
+.header.no-avg .strip .from-avg,.header.no-ante .stat.level small,.header.no-paid .stat.paid,.header.no-stage .strip .stage{display:none}
 .header.no-word .word{display:none}
 
 /* ---------- 6. Advice ---------- */
@@ -424,6 +425,9 @@ button.pod:hover{border-color:var(--grey)}
 .btn.primary .sub{color:var(--ink)}
 .btn.wide{flex:1.8 1 0}
 .btn:disabled,.btn.primary:disabled{background:var(--line);border-color:var(--line);color:var(--grey)}
+/* The action bar takes a pointer click on a button once it has stood in its place for 400 ms (render.js, noteBar).
+   Until then the button is held, and is drawn dimmer while the pointer is on the bar: a click on it is dropped. */
+.actions:hover .btn.held:not(:disabled){opacity:.45}
 .btn:disabled kbd,.btn:disabled .sub{border-color:var(--line-strong);color:var(--grey)}
 .btn.compact{min-height:44px;flex:none;padding:0 14px;font-size:15px;flex-direction:row;gap:6px}
 
@@ -563,7 +567,8 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
 .line .amount .field-error small{display:inline;margin-left:6px}
 
 /* ---------- 13. Toast ---------- */
-/* The toast lies over the "Why and range" line under the slab (first run: its own row under the form). */
+/* The toast lies over the "Why and range" line under the slab (first run: its own row under the form; in a
+   window too short to show that row, over the form's title: section 16). */
 .toasts{align-self:end;z-index:8;display:flex;justify-content:center;min-width:0;pointer-events:none}
 .app.first .toasts{align-self:start}
 .toasts:empty{display:none}
@@ -760,7 +765,8 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
      of the narrow step. Everything is in sight from 529 high (a 1440 x 900 screen at 150%: 960 x 600).
    - from 1024: the table of the narrow step, as tall as the window lets it be. In sight from 557 high
      (from 1280: 529).
-   Nothing here applies to a window as tall as the page, nor to the first-run form (it scrolls as a page). */
+   Nothing here applies to a window as tall as the page. The first-run form scrolls as a page; in a short
+   window two things of it are kept in sight (the end of this section): what the program has to say, and Start. */
 .scroll{display:contents}
 @media (max-width:1023px) and (max-height:712px),
        (min-width:1024px) and (max-width:1279px) and (max-height:612px),
@@ -847,6 +853,17 @@ textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--bod
 /* Two columns under 1024: the menus stand over the table's column there too. */
 @media (min-width:852px) and (max-width:1023px) and (max-height:660px){
   .table .pop,.table.aof .pop{left:calc(50% - 6px - clamp(148px,calc(50vw - 326px),180px))}
+}
+
+/* The first-run form in a short window. The tournament's form ends 562px down the page and a toast under it
+   at 628: what the program says there (a saved table that could not be read and was set aside) would be
+   out of sight. It lies over the form's title instead, where no control is. And where Start itself would be
+   under the window's edge, the small print between the fields and Start follows Start. */
+@media (max-height:640px){
+  .app.first .toasts{grid-row:2}
+}
+@media (max-height:524px){
+  .first-run .stacked .hint{order:1}
 }
 
 /* ---------- 17. Motion ---------- */

@@ -91,7 +91,7 @@ table of the session.
 | `+` (or `=`) `-` | Blinds up, blinds down. `Shift+B`: type the blinds (`300/600/75`, or `600` alone). `Shift+A`: ante none, every player, big blind |
 | `,` `.` `<` `>` | Players left minus one, plus one, minus ten, plus ten |
 | `S` `Shift+S` `O` | Your own stack; every stack, clockwise; sit out and back in |
-| `I` `G` `V` | Tournament numbers; style (Spin & Gold and All-In or Fold: the opponents); chips or big blinds |
+| `I` `G` `V` | Players left, typed in place (Spin & Gold and All-In or Fold: the settings); style (Spin & Gold and All-In or Fold: the opponents); chips or big blinds |
 | `Y` `?` | Hand history; the list of keys |
 | `Alt+1` `Alt+2` `Alt+3` | Tournament, Spin & Gold, All-In or Fold |
 | `Esc` | Cancel, close. In a field: the old value comes back and nothing is sent |
@@ -116,7 +116,8 @@ has six places that never move: Follow (Next hand once you have folded or
 the hand is over), the four moves, and Rest fold. A click on the bar counts
 once the button under the pointer has stood there for a moment (400 ms), and
 not while a change is still on its way: a double-click on Next hand deals
-one hand, and a double-click on Fold folds one player. For a row of folds
+one hand, and a double-click on Fold folds one player. A button that does
+not take a click yet is drawn dimmer while the pointer is on the bar. For a row of folds
 use Rest fold or the keys. A click on a step of the hand line selects it
 (Amount, Delete); on a fold the app made for a player it offers Called and
 Raised. Under the answer, Why and Range show the reasons and the range
@@ -158,19 +159,20 @@ field with the reason under it.
   a bust the big blind still moves on by one player, so the button can
   stand on an empty seat for a hand. The other choice is a forward-moving
   button. After a bust in the blinds the page says where the button is;
-  check it against your table, and `[` `]` move it. A dead small blind
+  check it against your table, and `[` `]` move it from player to player
+  (onto an empty seat, a dead button: that seat's number, then `D`). A dead small blind
   cannot be entered. Once a hand has an action the button cannot be moved:
   undo, or discard the hand.
 - A change made in another window is noticed: "The table had changed: look
   again and repeat."
 
-**The tournament settings** (`I`, `G`, or Settings: the three lines at the
-top right). Players left and places paid tell the coach how far the money
+**The tournament settings** (Settings: the three lines at the top right;
+`I` goes straight to players left, `G` to the style). Players left and places paid tell the coach how far the money
 is; without them it counts chips only and says so. A typed payout list
 (`1:1000 2:600 4-6:200`) replaces the typical prizes. In a very large field
 (more than 1,000 paid places still to reach) the same prize maths is worked
-out by a closed formula, so that an answer still comes in about a third of
-a second: nine players at 150,000 entrants were measured. Nothing is
+out by a closed formula, so that an answer still comes in under half a
+second: nine players at 150,000 entrants were measured. Nothing is
 merged, so three places from the money are three places. From 8,000 to
 150,000 entrants the formula was within 0.02 points of risk premium of the
 exact maths. On the command line `advise`, `quick` and `icm` use the same
@@ -217,7 +219,8 @@ your whole stack are read as two all-ins. When you may not raise and nobody
 left in the hand can match more than the call, an all-in would only be
 that call, and the answer says CALL. And when you called earlier in the
 hand, a raise that costs a fifth of the pot or less (5 to 1 or better) is
-called whatever the hand.
+called whatever the hand. Not on the bubble for a third or more of your
+chips: there the coach folds and the small line says why.
 
 **The small line under an answer** says how much of the prize money is
 counted and where the answer comes from. In that line "table" means the
@@ -236,8 +239,10 @@ all-in or fold chart.
 | CLOSE: before the money the lower-variance side leads (engine: ...) | Two plays worth about the same: the quieter one is shown first |
 | SHEET FOLD (engine: CALL, 41% against 33%): before the money the big blind calls with the sheet's short list only | Big blind against a raise: a call by the price with 7 points or more to spare, but not a hand on the sheet's list |
 | a call at 5 to 1 or better after calling is never folded | You called earlier in the hand and the raise costs a fifth of the pot or less |
+| the sheet's rule (on the bubble the price alone is no call for a third or more of your chips) | You called earlier and the raise is cheap, but on the bubble that call would cost a third or more of your chips |
+| the plan made with your call before the flop: the stack goes in with an overpair, top pair or better | You called a re-raise before the flop on that plan and hold such a hand: no fold |
 | GUARD OFF (why) | The guard is off or steps aside: in the money, final table, Max EV style, re-entry open, too short to wait, the fold clock says you cannot fold, a good price, a read that makes the play safer |
-| after the flop: equity against an estimated range, a rule-based line | Every answer after the flop |
+| after the flop: equity against an estimated range, a rule-based line | Every other answer after the flop |
 
 **While the coach works** on a new spot the answer panel says "Updating".
 An answer made for an earlier table is never shown over a new one.
@@ -301,7 +306,7 @@ addresses (`/api/view`, `/api/intent`, `/api/advice`, `/api/ping`),
 `static/` is the page. The design notes are in `docs/table-app/`.
 
 ```bash
-python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about 485 tests, three minutes
+python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about 500 tests, three minutes
 ```
 
 **Limits.**
@@ -313,8 +318,8 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
   and says what failed. If it does not start, the text in the black window
   says why; if the page misbehaves, the browser's console (F12) does.
 - Window sizes, in that same browser only: 960x600, 853x533 and 683x650
-  show the whole nine-seat table. 560x600 hides the two seats at the
-  table's upper edge until you scroll its box. Under about 480 high the
+  show the whole nine-seat table. 560x600 and 1093x514 (a 1366x768 screen at 125%) hide the two seats at
+  the table's upper edge until you scroll its box, 1024x476 the upper four. Under about 480 high the
   table's box is a strip, and under 544 wide the page scrolls sideways.
 - Advice after the flop is heuristic: your equity against an estimated
   range, then rules. It is a baseline, not a solver.
@@ -621,7 +626,7 @@ you play.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests        # about 630 tests, five and a half minutes
+python3 -m unittest discover -s tests        # about 650 tests, six and a half minutes
 ```
 
 The data files in `poker_coach/data/` are generated:
@@ -635,7 +640,7 @@ python3 tools/build_aof_exploit.py  # ranges against loose tables, about 10 minu
 python3 tools/build_aof_page.py     # aof_trainer.html from those tables
 python3 tools/build_latereg.py      # late-registration shove spots, about a minute
 python3 tools/build_binary.py       # all-in or fold tournament tables, half a minute
-python3 tools/build_tag.py          # tight-aggressive sheet for 6, 7 and 8 players, about 5 minutes
+python3 tools/build_tag.py          # tight-aggressive sheet for 6, 7 and 8 players, about a minute and a half
 python3 tools/build_spin.py         # spin tables (3 players and heads-up), about 7 minutes
 python3 tools/spin_sim.py           # whole spin games played with those tables, about 6 minutes
 ```

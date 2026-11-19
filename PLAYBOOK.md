@@ -88,12 +88,19 @@ Sizes: 2x under 25bb, 2.2x to 40bb, 2.3-2.5x deeper, 3x from the small blind.
   open only 9% (77+, ATs+, AJo+, KQs).
 - **A raise and a re-raise in front:** KK+ only; QQ/AK only when both players
   are loose or stacks are short.
-- **You opened and got 3-bet:** with 45bb or less it is all-in or fold, by
-  the seat you raised from: KK+ and AKs from UTG or UTG+1; QQ+ and AK from
-  LJ or HJ; TT+, AQs+ and AKo from CO, BTN or SB. The rest folds unless the
-  3-bettor is wild. Deeper than 45bb QQ+ and AK never fold to one re-raise:
-  KK+ re-raise again; QQ and AK call in position, and out of position move
-  all-in with 60bb or less and call when deeper.
+- **You opened and got 3-bet:** with 45bb or less the all-in goes by the
+  seat you raised from: KK+ and AKs from UTG or UTG+1; QQ+ and AK from LJ
+  or HJ; TT+, AQs+ and AKo from CO, BTN or SB. TT+, AQs+ and AKo are not
+  folded to one re-raise while they have 10 points of equity over the price
+  of the call (with prizes: over the price and the risk premium), and AA
+  and KK never: where the all-in does not earn enough they call, and move
+  all-in instead when the call would leave less than the pot behind. After
+  such a call the stack goes in with an overpair, top pair or better. With
+  fewer points than that the fold is close, and the coach says so. The rest
+  folds unless the 3-bettor is wild. Deeper than 45bb QQ+ and AK never fold
+  to one re-raise: KK+ re-raise again; QQ and AK call in position, and out
+  of position move all-in with 60bb or less and call when deeper; JJ, TT
+  and AQs call as well while they have those 10 points.
 
 ## Push/fold: how wide to shove (9-handed, with antes)
 
@@ -149,7 +156,9 @@ strong: 99+, AQ+. On the bubble subtract most of that.
   reasonable bet.
 - **One pair is a two-street hand.** Facing a turn raise or a big river bet
   with one pair: fold, especially against passive players. The table app
-  folds there against every player not tagged lag or maniac.
+  folds there against every player not tagged lag or maniac, except with an
+  overpair or top pair after you called a re-raise before the flop on the
+  plan to play for stacks.
 - **No pair and no draw:** fold to a bet of half the pot or more from a
   player who did not raise before the flop. Only the raiser's flop bet is a
   continuation bet.
@@ -512,18 +521,25 @@ A raise and a re-raise before you (everything else folds):
 
 | The first raise came from | Re-raise, more than 60bb | All-in, 25 to 60bb | All-in, up to 24bb |
 |---|---|---|---|
-| UTG or UTG+1 | KK+ | KK+, AKs | JJ+, AKs, AKo |
-| LJ or HJ | KK+, AKs | KK+, AKs, AKo | JJ+, AKs, AKo |
+| UTG or UTG+1 | KK+ | KK+, AKs | KK+, AKs |
+| LJ or HJ | KK+, AKs | KK+, AKs, AKo | QQ+, AKs, AKo |
 | CO or BTN | KK+, AKs, AKo | JJ+, AKs, AKo | JJ+, AKs, AKo |
 
 You raised and were re-raised, not all-in (everything else folds):
 
-| You raised from | All-in, 45bb or less | Re-raise, more than 45bb | Call, more than 45bb |
-|---|---|---|---|
-| UTG or UTG+1 | KK+, AKs | KK+ | QQ, AKs, AKo |
-| LJ or HJ | QQ+, AKs, AKo | KK+ | QQ-JJ, AKs, AKo |
-| CO or BTN | TT+, AQs+, AKo | KK+ | QQ-44, AJs+, AKo |
-| SB | TT+, AQs+, AKo | KK+ | QQ-TT, AQs+, AKo |
+| You raised from | All-in, 45bb or less | Call, 45bb or less | Re-raise, more than 45bb | Call, more than 45bb |
+|---|---|---|---|---|
+| UTG or UTG+1 | KK+, AKs | QQ | KK+ | QQ, AKs, AKo |
+| LJ or HJ | QQ+, AKs, AKo | JJ (seven and eight players) | KK+ | QQ-JJ, AKs, AKo |
+| CO or BTN | TT+, AQs+, AKo | | KK+ | QQ-44, AJs+, AKo |
+| SB | TT+, AQs+, AKo | | KK+ | QQ-TT, AQs+, AKo |
+
+TT+, AQs+ and AKo are not folded to one re-raise while they have 10 points
+of equity over the price (with prizes: over the price and the risk premium),
+and AA and KK never: where the all-in does not earn enough they call. With
+less than the pot behind after the call they move all-in instead, unless
+that all-in loses. After the flop the stack goes in with an overpair, top
+pair or better.
 
 These lists are for a re-raise from the big blind, where you act last after
 the flop in every row but the small blind's. Out of position (the small
@@ -556,10 +572,12 @@ AKs and AKo move all-in with 46 to 60bb instead of calling.
 - **You only called and a player raised:** fold. With a pair and 15 times
   the raise behind you may call once. The table app also calls, whatever
   the hand, a raise that costs a fifth of the pot or less (5 to 1 or
-  better): the rule is for a real raise.
+  better): the rule is for a real raise. On the bubble it does not make
+  that call for a third or more of your chips.
 - **Where the hands come from.** The raise, call and re-raise lists are what
-  `advise` answers far from the money for each of the 169 hands; a test
-  checks it. Each list is the answer at one stack, which the sheet names:
+  `advise` answers on chips alone (no prizes counted, an ante of an eighth
+  of a big blind from each player) for each of the 169 hands; a test checks
+  it. With players left and places paid entered the answers are tighter. Each list is the answer at one stack, which the sheet names:
   first in 50 and 22bb, behind callers 40 and 20bb, against a raise 60bb, a
   raise and a re-raise 20, 40 and 100bb, re-raised 35 and 70bb. Against a
   raise every row is one question, so each hand played there is on one

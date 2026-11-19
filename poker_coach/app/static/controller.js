@@ -490,6 +490,13 @@
     const count = (hand.board || []).length;
     return count < 3 ? "flop" : count === 3 ? "turn" : "river";
   }
+  // "Type them: K S 7 D 2 C" for the flop, "Type it: 5 H" for the turn, "Type it: 9 C" for the river:
+  // the cards of the street that is wanted, as the program's own refusals spell them (model.py, BOARD_EXAMPLE).
+  const STREET_KEYS = {flop: "K S 7 D 2 C", turn: "5 H", river: "9 C"};
+  function typeTheStreet(view, three, one) {
+    const street = wantedSlot(view);
+    return (street === "turn" || street === "river" ? one : three) + ": " + (STREET_KEYS[street] || STREET_KEYS.flop);
+  }
 
   // Before every draw: drop what no longer fits the table, and open the card picker when cards are wanted.
   function tidyUi() {
@@ -668,7 +675,7 @@
       // Cards are wanted first: say so, and bring the card picker back if it was closed.
       if (now && (now.needs === "cards" || now.needs === "board")) state.ui.pickerOff = false;
       if (now && now.needs === "cards") toast("Your cards first.", "Type them: A K S, or A H K D.");
-      else if (now && now.needs === "board") toast("The cards of this street first.", "Type them: K S 7 D 2 C. Enter skips the board.");
+      else if (now && now.needs === "board") toast("The cards of this street first.", typeTheStreet(state.view, "Type them", "Type it") + ". Enter skips the board.");
       else if (now && now.needs === "result") toast("The betting is over.", "W or L says who won. A forgotten caller: their seat number, then C.");
       return;
     }
@@ -717,7 +724,7 @@
         return;
       }
       // It would be hero's fold (or check) too: his own action is always typed.
-      if (now.needs === "board") toast("The action is on you on this street.", "Type its cards first: K S 7 D 2 C.");
+      if (now.needs === "board") toast("The action is on you on this street.", typeTheStreet(state.view, "Type its cards first", "Type its card first") + ".");
       else toast("The action is on you.", "Space does what the coach says; or " + ownKeys() + ".");
       return;
     }

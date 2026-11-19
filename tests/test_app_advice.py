@@ -1263,7 +1263,12 @@ class SurvivalGuardFindings(unittest.TestCase):
             self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "T2s", acts=small_raise))), "CALL")
             self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "A3s", acts=small_raise))), "CALL")
             self.assertEqual(verb(A.advise(tournament([30] * 8, BB, "K9o", acts=small_raise))), "CALL")
+            # (K2o is on the sheet's row against a button raise, "call as well: K2o, ...", and not on the short
+            # list; Q3o is on neither: the reason says which of the two it is)
             deep = A.advise(tournament([30] * 8, BB, "K2o", acts=small_raise))
+            self.assertEqual((verb(deep), deep["guard"]), ("FOLD", "close"))
+            self.assertIn("not a hand that makes top pair or a real draw", deep["reason"])
+            deep = A.advise(tournament([30] * 8, BB, "Q3o", acts=small_raise))
             self.assertEqual((verb(deep), deep["guard"]), ("FOLD", "close"))
             self.assertIn("25bb or more against a raise from BTN", deep["reason"])
             self.assertEqual(verb(A.advise(tournament([18] * 8, BB, "T2s", acts=[(BTN, "raise", 3)]))), "FOLD")
@@ -3030,7 +3035,8 @@ class CloseOut(unittest.TestCase):
         acts = [(UTG, "allin", None), (CO, "raise", 4.2)]
         s = tournament(stacks, BB, "QQ", acts=acts)
         seen = A.read_table(s, s.view())
-        self.assertEqual([(act.idx, act.kind) for act in seen.acts], [(UTG, "limp"), (CO, "raise")])
+        # (listed after the raise, as a call of it: the engine then counts the short stack's chips in the pot)
+        self.assertEqual([(act.idx, act.kind) for act in seen.acts], [(CO, "raise"), (UTG, "call")])
         self.assertEqual(A.what_happened(seen).kind, "raise")
         for hand in ("QQ", "AKs"):
             a = A.advise(tournament(stacks, BB, hand, acts=acts))
@@ -3044,6 +3050,327 @@ class CloseOut(unittest.TestCase):
         stacks[UTG] = 8
         s = tournament(stacks, BB, "QQ", acts=[(UTG, "allin", None), (CO, "raise", 20)])
         self.assertEqual([act.kind for act in A.read_table(s, s.view()).acts], ["allin", "raise"])
+
+
+class FinalGate(unittest.TestCase):
+    """The faults the final gate confirmed in the adapter: one test each (G-A6 to G-A8)."""
+
+    def test_g_a6_the_big_blinds_sheet_list_is_the_printed_one_for_the_raisers_seat(self):
+        # Under a row of part 3 the sheet prints what changes against the other seat of the raiser's group:
+        # "if the raise came from LJ, do not call: ...", "if the raise came from BTN, call as well: ...".
+        checked = 0
+        for players in (6, 7, 8):
+            names = A.TAG.seats(players)                            # players behind -> seat name
+            for key, row in A.TAG.table(players)["vs_raise"].items():
+                if not key.endswith("|bb"):
+                    continue
+                for line in A.TAG.seat_lines(players, row):
+                    found = re.fullmatch(r"if the raise came from (\S+), (do not call|call as well): (.+)", line)
+                    self.assertIsNotNone(found, line)
+                    behind = next(nb for nb, name in names.items() if name == found.group(1))
+                    s = tournament([30] * players, players - 1, "AA", acts=[(players - 1 - behind, "raise", 2.2)])
+                    seen = A.read_table(s, s.view())
+                    hands, words = A.big_blind_sheet_list(seen, A.what_happened(seen))
+                    self.assertIn("against a raise from " + found.group(1), words)
+                    on_list, named = parse_range(hands), parse_range(found.group(3))
+                    wanted = 0.0 if found.group(2) == "do not call" else 1.0
+                    for hand in range(169):
+                        if named[hand] >= 0.5:
+                            self.assertEqual(on_list[hand], wanted, (players, line, HANDS[hand]))
+                            checked += 1
+        self.assertGreater(checked, 40)
+        # the two answers of the report.  Q9o against a lojack raise: the sheet prints "do not call"
+        a = A.advise(tournament([30] * 8, BB, "Qs9d", acts=[(LJ, "raise", 2.2)]))
+        self.assertEqual(verb(a), "FOLD")
+        self.assertNotIn("on the sheet's big blind list", a["source"])
+        self.assertIn("not on its list for the big blind with 25bb or more against a raise from LJ",
+                      [t["note"] for t in a["tiles"]])
+        # ... and against the hijack, the seat the row is printed for, the close call stays
+        a = A.advise(tournament([30] * 8, BB, "Qs9d", acts=[(HJ, "raise", 2.2)]))
+        self.assertEqual(verb(a), "CALL")
+        self.assertIn("the engine's close call is on the sheet's big blind list", a["source"])
+        # K2o against a button raise: the sheet prints "call as well", so "not on its list" is not said; the
+        # fold before the money is for what the hand is
+        a = A.advise(tournament([40] * 8, BB, "Ks2d", acts=[(BTN, "raise", 2.3)]))
+        self.assertEqual(verb(a), "FOLD")
+        text = " ".join([a["reason"]] + [t["note"] for t in a["tiles"]])
+        self.assertNotIn("not on its list", text)
+        self.assertNotIn("not a hand the sheet calls", text)
+        self.assertIn("not a hand that makes top pair or a real draw", a["reason"])
+        # against the cutoff, the seat the row is printed for, K2o is not on the list
+        a = A.advise(tournament([40] * 8, BB, "Ks2d", acts=[(CO, "raise", 2.3)]))
+        self.assertNotIn("not a hand that makes top pair or a real draw", a["reason"])
+
+    def test_g_a7_the_chart_behind_callers_is_the_row_the_answer_came_from(self):
+        def cells(chart, code):
+            return {HANDS[k] for k in range(169) if chart["cells"][k // 13][k % 13] == code}
+
+        def raise_list(session):
+            spot = A.engine_spot(A.read_table(session, session.view()), A.Prizes(), A.Prizes(), {}, False)
+            numbers = " | ".join(A.engine_advise(spot).numbers)
+            return {HANDS[k] for k, w in enumerate(parse_range(re.search(r"isolation range: .*?\[(.*?)\]", numbers).group(1)))
+                    if w >= 0.5}
+
+        one_caller = [(LJ, "call", None)]
+        # 20bb: the sheet's "17 to 24bb: without T8s, 98s, 87s, 76s", and "no calling along"
+        s = tournament([20] * 8, CO, "7s2d", acts=one_caller)
+        chart = A.advise(s)["chart"]
+        self.assertEqual(chart["title"], "Sheet: cutoff behind 1 caller, 20bb")
+        self.assertEqual(cells(chart, "r"), raise_list(s))
+        self.assertFalse({"T8s", "98s", "87s", "76s"} & cells(chart, "r"))
+        self.assertEqual(cells(chart, "c"), set())
+        self.assertEqual([item["label"] for item in chart["legend"]], ["Raise", "Fold"])
+        # 40bb: the deep row, with its calls
+        s = tournament([40] * 8, CO, "7s2d", acts=one_caller)
+        chart = A.advise(s)["chart"]
+        self.assertEqual(cells(chart, "r"), raise_list(s))
+        self.assertTrue({"T8s", "98s", "87s", "76s"} <= cells(chart, "r"))
+        self.assertEqual(cells(chart, "c"), {"22", "65s", "54s"})
+        # four callers: the sheet has no row ("fewer hands again with each caller"), so not the three-caller one
+        four = [(UTG, "call", None), (UTG1, "call", None), (LJ, "call", None), (HJ, "call", None)]
+        s = tournament([40] * 8, BTN, "7s2d", acts=four)
+        chart = A.advise(s)["chart"]
+        self.assertEqual(chart["title"], "Button behind 4 callers, 40bb")
+        self.assertEqual(cells(chart, "r"), raise_list(s))
+        self.assertNotIn("44", cells(chart, "r"))                   # the three-caller row raises 44+
+        self.assertTrue({"44", "87s"} <= cells(chart, "c"))
+        # and every answer is the cell the chart shows for the hand
+        for stack, acts, seat in ((20, one_caller, CO), (40, one_caller, CO), (40, four, BTN)):
+            for hand, cards in (("98s", "9s8s"), ("22", "2s2d"), ("44", "4s4d"), ("A9s", "As9s"), ("KJo", "KsJd")):
+                a = A.advise(tournament([stack] * 8, seat, cards, acts=acts))
+                wanted = {"RAISE": "r", "CALL": "c", "FOLD": "f"}[verb(a)]
+                self.assertEqual(hero_cell(a["chart"]), wanted, (stack, len(acts), hand, verb(a)))
+
+    def test_g_a8_a_fold_is_never_drawn_in_the_colour_of_a_play(self):
+        # the re-raise chart's third colour is "Re-raise as a bluff": a folded hand is not shown in it
+        for name, session in (
+                ("the engine's chart calls", tournament([40] * 8, BB, "Ks2d", acts=[(BTN, "raise", 2.3)])),
+                ("the engine's chart bluffs", tournament([26] * 8, SB, "KsQs", acts=[(CO, "raise", 2.2)]))):
+            with self.subTest(name):
+                a = A.advise(session)
+                self.assertEqual(verb(a), "FOLD")
+                self.assertIn("Re-raise as a bluff", [item["label"] for item in a["chart"]["legend"]])
+                self.assertEqual(hero_cell(a["chart"]), "f")
+        # a chart of the sheet has no third colour at all
+        a = A.advise(tournament([20] * 8, CO, "9s8s", acts=[(LJ, "call", None)]))
+        self.assertEqual((verb(a), hero_cell(a["chart"])), ("FOLD", "f"))
+        # what the chart itself calls "Close" stays: that is the calculation's own word for the hand
+        for kind in ("fold", "check"):
+            close = A.range_chart("t", "AKo", {"r": [0.0] * 169, "x": parse_range("AKo")},
+                                  legend=(("r", "All-in"), ("x", "Close"), ("f", "Fold")))
+            self.assertEqual(hero_cell(A.hero_cell_as_played(close, HANDS.index("AKo"), kind)), "x")
+            played = A.range_chart("t", "AKo", {"r": parse_range("AKo")}, legend=(("r", "All-in"), ("x", "Close"), ("f", "Fold")))
+            self.assertEqual(hero_cell(A.hero_cell_as_played(played, HANDS.index("AKo"), kind)), "f")
+
+    def test_g_a9_a_call_of_a_re_raise_states_its_plan_and_the_flop_keeps_it(self):
+        # Queens in the hijack with 45bb, the big blind re-raises: since the gate the engine calls (it folded),
+        # on the plan "after the flop the stack goes in with an overpair, top pair or better".
+        def called(cards, flop, hero=HJ, stack=45, open_to=2.3, to=8.7, **more):
+            s = tournament([stack] * 8, hero, cards, acts=[(hero, "raise", open_to), (BB, "raise", to)], **more)
+            first = A.advise(s)
+            s.do("act", seat=1, kind="call")
+            s.do("set_cards", slot="flop", text=flop)
+            return s, first, seat_of(BB, hero, 8)
+
+        for style in ("survive", "cash"):
+            with self.subTest(style=style):
+                s, first, villain = called("QsQd", "9h7c2d", style=style)
+                self.assertEqual((verb(first), first["guard"]), ("CALL", "none"))
+                self.assertEqual(first["plans"], [A.STACK_IN_PLAN])
+                s.do("act", seat=villain, kind="bet", amount=round(s.view()["hand"]["pot"] / 2))
+                self.assertEqual(verb(A.advise(s)), "CALL")
+                s.do("act", seat=1, kind="call")
+                s.do("set_cards", slot="turn", text="4s")
+                s.do("act", seat=villain, kind="allin")             # 26.7bb into 37.8bb: less than a pot behind
+                a = A.advise(s)
+                self.assertEqual((verb(a), a["headline"]["qualifier"], a["headline"]["follow"]),
+                                 ("CALL", "as planned", {"kind": "call"}))
+                self.assertIn("By the numbers alone: FOLD", a["also"])
+                self.assertIn("the plan made with your call before the flop", a["source"])
+                self.assertEqual({t["note"] for t in a["tiles"] if t["label"] in ("Equity", "Need / have")},
+                                 {"by the numbers alone"})
+                self.assertNotIn("engine", codes(a))                # "folding a strong hand here ..." was about the fold
+        # the same when a bet of the user's is raised all-in on the flop
+        s, _first, villain = called("QsQd", "9h7c2d")
+        s.do("act", seat=villain, kind="check")
+        s.do("act", seat=1, **A.advise(s)["headline"]["follow"])
+        s.do("act", seat=villain, kind="allin")
+        self.assertEqual((verb(A.advise(s)), A.advise(s)["headline"]["qualifier"]), ("CALL", "as planned"))
+        # no overpair and no top pair: the plan says nothing, the fold stands
+        s, _first, villain = called("QsQd", "Kh7c2d")
+        s.do("act", seat=villain, kind="bet", amount=round(s.view()["hand"]["pot"] / 2))
+        self.assertEqual(verb(A.advise(s)), "FOLD")
+        # a call the coach did not advise carries no plan: queens under the gun with 35bb were a fold
+        s, first, villain = called("QsQd", "9h7c2d", hero=UTG, stack=35, open_to=2.2, to=7.9)
+        self.assertEqual((verb(first), first["plans"]), ("FOLD", []))
+        s.do("act", seat=villain, kind="allin")
+        a = A.advise(s)
+        self.assertNotEqual(a["headline"]["qualifier"], "as planned")
+        self.assertNotIn("the plan made with your call", a["source"])
+        # and the all-in plan never just calls a re-raise, so it has no such plan to keep
+        s, first, villain = called("QsQd", "9h7c2d", plan="allin")
+        self.assertEqual((verb(first), first["plans"]), ("ALL-IN", []))
+        s.do("act", seat=villain, kind="allin")
+        self.assertNotEqual(A.advise(s)["headline"]["qualifier"], "as planned")
+
+    def test_g_a9_the_sheets_row_for_a_re_raised_raise_in_both_plans(self):
+        def cells(chart, code):
+            return {HANDS[k] for k in range(169) if chart["cells"][k // 13][k % 13] == code}
+
+        # with all moves the chart is the sheet's row, its call list included ("call QQ" under the gun)
+        acts = [(UTG, "raise", 2.2), (BB, "raise", 7.9)]
+        row = A.TAG.table(8)["reraised"]["early"]
+        chart = A.advise(tournament([35] * 8, UTG, "AsKd", acts=acts))["chart"]
+        self.assertEqual(chart["title"], "Sheet: you raised and were re-raised, 45bb or less")
+        self.assertEqual(cells(chart, "c"), {HANDS[k] for k, w in enumerate(parse_range(row["call_short"])) if w >= 0.5})
+        self.assertEqual(cells(chart, "c"), {"QQ"})
+        self.assertIn("Call", [item["label"] for item in chart["legend"]])
+        # the all-in plan never just calls: its chart is all-in or fold, and so is its answer
+        a = A.advise(tournament([35] * 8, UTG, "QsQd", acts=acts, plan="allin"))
+        self.assertEqual(verb(a), "FOLD")
+        self.assertEqual([item["label"] for item in a["chart"]["legend"]], ["All-in", "Fold"])
+        self.assertEqual(cells(a["chart"], "c"), set())
+        # "over 40bb only aces and kings" is the rule of the first-in and over-a-raise charts.  It is not said
+        # beside an all-in the sheet's deeper rows make: queens re-raised with 45bb, ace-king after two raises
+        said = "Over 40bb the all-in plan only moves all-in with aces and kings."
+        for name, session, wanted, shown in (
+                ("re-raised", tournament([45] * 8, HJ, "QsQd", acts=[(HJ, "raise", 2.3), (BB, "raise", 8.7)],
+                                         plan="allin"), "ALL-IN", False),
+                ("a raise and a re-raise", tournament([45] * 8, BTN, "AsKs", acts=[(UTG, "raise", 2.3), (HJ, "raise", 7)],
+                                                      plan="allin"), "ALL-IN", False),
+                ("first in", tournament([45] * 8, HJ, "QsQd", plan="allin"), "FOLD", True),
+                ("one raise", tournament([45] * 8, BTN, "QsQd", acts=[(HJ, "raise", 2.3)], plan="allin"), "FOLD", True)):
+            with self.subTest(name):
+                a = A.advise(session)
+                self.assertEqual(verb(a), wanted)
+                self.assertEqual(said in [w["text"] for w in a["warnings"]], shown)
+
+    def test_g_a3_aces_and_kings_have_no_limit_in_the_all_in_chart(self):
+        # The chart moves in with AA and KK up to its deepest column and beyond it ("over 40bb only AA, KK").
+        # Close to the money "an all-in up to 20bb" stood beside an ALL-IN with 21.5bb, also in the hand's cell.
+        row, column = divmod(HANDS.index("KK"), 13)
+        for stack, left in ((18.5, 240), (21.5, 240), (18.5, 400)):
+            with self.subTest(stack=stack, left=left):
+                stacks = [30.0] * 6
+                stacks[0] = stack
+                a = A.advise(tournament(stacks, 0, "KsKd", left=left, plan="allin"))
+                self.assertEqual(verb(a), "ALL-IN")
+                self.assertEqual(a["chart"]["numbers"][row][column], "all-in with any stack")
+                text = " ".join([a["reason"]] + [t["value"] for t in a["tiles"]])
+                self.assertNotIn("up to 20bb", text)
+                self.assertNotIn("up to 40bb", text)
+        # queens do have the limit, in the user's own chips close to the money
+        self.assertEqual(a["chart"]["numbers"][2][2], "all-in up to 40bb")
+        stacks = [30.0] * 6
+        stacks[0] = 18.5
+        close = A.advise(tournament(stacks, 0, "QsQd", left=240, plan="allin"))
+        self.assertEqual(close["chart"]["numbers"][2][2], "all-in up to 20bb this close to the money")
+        # the line under an answer with all moves says the same
+        stacks = [30.0] * 8
+        stacks[BTN] = 14
+        a = A.advise(tournament(stacks, BTN, "KsKd", left=240, style="cash"))
+        self.assertEqual(a["flip"], "The all-in chart moves in with KK with any stack from this seat before the money.")
+
+    def test_g_a1_two_big_stacks_at_one_table_under_a_top_heavy_ladder(self):
+        # 7,000 entrants, 1,100 paid, two thirds of the pool to the winner; the money has just been reached.
+        # Hero holds 20 average stacks and a player at the table 25.  The closed formula took that player's
+        # chance to be ahead of hero at the field's moment and said 1.22 points of risk premium; the integral
+        # says 0.93.  (More than 0.1 points apart is the gate's line.)
+        from poker_coach.icm import Prizes, default_payouts
+        entrants, paid = 7000, 1100
+        shape = [k ** -2.2 for k in range(1, paid + 1)]
+        scale = (entrants - 1.2 * paid) / sum(shape)
+        raw, ladder, k = [1.2 + scale * w for w in shape], [], 0
+        while k < paid:                                 # places beyond the 60th in groups, as lobbies print them
+            size = 1 if k < 60 else max(3, k // 5)
+            ladder += [sum(raw[k:k + size]) / len(raw[k:k + size])] * len(raw[k:k + size])
+            k += size
+        average = entrants * 10000.0 / paid
+        for stacks in ([20 * average, 0.1 * average, 25 * average],
+                       [20 * average, 0.2 * average, 0.3 * average, 0.25 * average, 0.4 * average, 30 * average]):
+            field = paid - len(stacks)
+            exact = Prizes(ladder, field, average).risk_premium(stacks, 0, len(stacks) - 1)
+            closed = Prizes(ladder, field, average, large=True).risk_premium(stacks, 0, len(stacks) - 1)
+            self.assertAlmostEqual(100 * exact, 0.93, delta=0.01)
+            self.assertAlmostEqual(100 * closed, 100 * exact, delta=0.02)
+        # and the ordinary ladder with the same two stacks: 0.09 points apart before, now under 0.01
+        ladder = default_payouts(entrants, paid)
+        stacks = [20 * average, 0.2 * average, 0.3 * average, 0.25 * average, 0.4 * average, 30 * average]
+        exact = Prizes(ladder, paid - 6, average).risk_premium(stacks, 0, 5)
+        closed = Prizes(ladder, paid - 6, average, large=True).risk_premium(stacks, 0, 5)
+        self.assertAlmostEqual(100 * closed, 100 * exact, delta=0.01)
+
+    def test_g_a4_the_short_all_ins_chips_are_in_the_pot_the_answer_prices(self):
+        # Under the gun is all-in for 2.975bb and the cutoff raises to 7bb.  The big blind calls 6bb into
+        # 1 (antes) + 0.5 + 1 + 2.975 + 7 = 12.475bb: 32%.  Passed as a call of the big blind, the engine left
+        # the short stack's chips out and the tile said 39%.
+        stacks = [30] * 8
+        stacks[UTG] = 3.1
+        acts = [(UTG, "allin", None), (CO, "raise", 7)]
+        a = A.advise(tournament(stacks, BB, "9s9d", acts=acts))
+        self.assertEqual(verb(a), "CALL")
+        need = next(t for t in a["tiles"] if t["label"] == "Need / have")
+        self.assertIn("the price (32%)", need["note"])
+        s = tournament(stacks, BB, "9s9d", acts=acts)
+        self.assertAlmostEqual(A.call_price(A.read_table(s, s.view())), 6 / 18.475, places=4)   # the table's own count
+        # two short all-ins and a raise: both are callers of that raise, in the order they acted
+        stacks[UTG], stacks[HJ] = 1.5, 2.5
+        s = tournament(stacks, BTN, "QsQd", acts=[(UTG, "allin", None), (HJ, "allin", None), (CO, "raise", 7)])
+        seen = A.read_table(s, s.view())
+        self.assertEqual([(act.idx, act.kind) for act in seen.acts], [(CO, "raise"), (UTG, "call"), (HJ, "call")])
+        self.assertEqual((A.what_happened(seen).kind, verb(A.advise(s))), ("raise", "ALL-IN"))
+        # a short all-in that only an all-in came over stays what it was, and so does one of 3bb or more
+        stacks = [30] * 8
+        stacks[UTG], stacks[CO] = 2, 15
+        s = tournament(stacks, BB, "QsQd", acts=[(UTG, "allin", None), (CO, "allin", None)])
+        self.assertEqual([act.kind for act in A.read_table(s, s.view()).acts], ["allin", "allin"])
+        stacks = [30] * 8
+        stacks[UTG] = 3.125                             # all-in for exactly 3bb after the ante
+        s = tournament(stacks, BB, "QsQd", acts=[(UTG, "allin", None), (CO, "raise", 7)])
+        self.assertEqual([(act.idx, act.kind) for act in A.read_table(s, s.view()).acts], [(UTG, "allin"), (CO, "raise")])
+
+    def test_g_a4_the_five_to_one_call_is_not_forced_on_the_bubble_for_a_third_of_the_chips(self):
+        # Three players and the user call the big blind, the big blind raises to 2.125bb, two of them call:
+        # 1.125bb more for a pot of 8.875bb, 7.9 to 1.  With 4bb at the start that call is 39% of what is left.
+        # One place from the money 72o has 13% against the three of them and the prize maths wants 18%.
+        def spot(stack, left, **more):
+            stacks = [30, 28, 35, 26, 24, 40, 22, 33]
+            stacks[CO] = stack
+            acts = [(UTG, "call", None), (HJ, "call", None), (CO, "call", None), (BB, "raise", 2.125),
+                    (UTG, "call", None), (HJ, "call", None)]
+            return A.advise(tournament(stacks, CO, "7s2d", acts=acts, left=left, **more))
+
+        for more in (dict(style="cash"), dict(style="survive"), dict(style="maxev"), dict(plan="allin")):
+            for left in (151, 152):
+                with self.subTest(left=left, **more):
+                    a = spot(4, left, **more)
+                    self.assertEqual(verb(a), "FOLD")
+                    self.assertTrue(a["source"].endswith(
+                        "the sheet's rule (on the bubble the price alone is no call for a third or more of your chips)"))
+        # the rule itself stays: away from the bubble, in the money, and for a small part of the chips on it
+        for stack, left in ((4, 165), (4, 400), (4, 100), (8, 151)):
+            with self.subTest(stack=stack, left=left):
+                a = spot(stack, left)
+                self.assertEqual((verb(a), a["headline"]["qualifier"]), ("CALL", "the price"))
+                self.assertTrue(a["source"].endswith("a call at 5 to 1 or better after calling is never folded"))
+        # the price is the real pot's: antes 1bb, the dead small blind, the raise, two callers, the user's own call
+        a = spot(8, 400)
+        self.assertEqual(a["tiles"][0]["value"], "7.9 to 1")
+        self.assertIn("1.1bb more for a pot of 8.9bb", a["reason"])
+        # and the edge: 5 to 1 is called, 4.9 to 1 is the sheet's fold
+        for to, wanted in ((2.125, "CALL"), (2.15, "FOLD")):
+            acts = [(UTG, "call", None), (BTN, "call", None), (BB, "raise", to), (UTG, "fold", None)]
+            self.assertEqual(verb(A.advise(tournament([30] * 8, BTN, "7s2d", acts=acts))), wanted, to)
+
+    def test_g_a5_a_player_is_they_in_the_engines_sentences_too(self):
+        # found by random play: "... a raiser who has committed his stack" as the reason on the screen
+        stacks = [20, 20, 6, 20, 4.3]                   # five players; the button raises to 4bb of a 6bb stack
+        a = A.advise(tournament(stacks, 4, "Ac5h", acts=[(2, "raise", 4)], left=None))
+        self.assertEqual(a["reason"], "You beat the price against a raiser who has committed their stack.")
+        for theirs in ("you beat the price against a raiser who has committed his stack",
+                       "re-raise to play the short stack heads-up: the caller folds most of his hands"):
+            self.assertNotRegex(A.plain(theirs), r"\b(he|his|him)\b")
+            self.assertIn("their", A.plain(theirs))
 
 
 if __name__ == "__main__":

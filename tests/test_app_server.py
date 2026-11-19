@@ -978,6 +978,114 @@ class CloseT5TheNamesOfAFinishedHandAfterAnUndo(unittest.TestCase):
         self.assertEqual([seat["pos"] for seat in undone["table"]["seats"]], [seat["pos"] for seat in over["table"]["seats"]])
 
 
+class GateThePageInSmallWindows(unittest.TestCase):
+    """What the final gate found on the page and fixed.  Each is checked on screen in the browser (gate.js).
+
+    G1  560 wide: a click on "Paid" in the strip opened nothing: the strip was too short for the field,
+        and the part that gave way was the places paid themselves.  A value that is being typed stays.
+    G2  The first-run form in a short window: what the program has to say there (a saved table that
+        could not be read) was under the window's edge, and so was Start at 1024 x 476.
+    G3  A scroll position of the table's box came back when the window was made small a second time:
+        the box was put to rest after a draw only, not after a resize.
+    G4  A click on the action bar inside the 400 ms was dropped without a trace: the button now looks held.
+    G5  While the turn or the river is wanted, two toasts told the user to type the flop's three cards.
+    G6  The settings said "[ and ] move the button by hand, also onto an empty seat": they step from
+        player to player.
+    """
+
+    def read(self, name: str) -> str:
+        with open(os.path.join(server.STATIC_FOLDER, name), encoding="utf-8") as fh:
+            return fh.read()
+
+    def body(self, text: str, start: str) -> str:
+        """The function (or rule set) of the page that begins with ``start``, up to its closing line."""
+        at = text.index(start)
+        return text[at:text.index("\n  }\n", at)]
+
+    def test_gate_g1_a_value_that_is_being_typed_stays_in_the_strip(self):
+        page, css = self.read("render.js"), self.read("app.css")
+        fit = self.body(page, "  function fitStrip() {")
+        self.assertIn('const typed = strip.querySelector(".editing");', fit)
+        self.assertIn('typed.closest(".stat.paid") ? "no-paid"', fit)       # its own turn to give way is passed over ...
+        self.assertIn('["no-stage"].concat(GIVE_WAY.filter((name) => name !== own))', fit)     # ... and the pill leaves first
+        self.assertIn('GIVE_WAY.concat("no-stage").forEach((name) => header.classList.remove(name));', fit)
+        self.assertIn(",.header.no-stage .strip .stage{display:none}", css)
+        # the field needs more room than the value it replaces: 84 against a button of 44 or more
+        self.assertIn(".strip .in.short{width:84px}", css)
+
+    def test_gate_g2_the_first_run_form_in_a_short_window(self):
+        css = self.read("app.css")
+        short = css[css.index("/* ---------- 16. A window shorter than the page"):css.index("/* ---------- 17. Motion")]
+        self.assertIn("@media (max-height:640px){\n  .app.first .toasts{grid-row:2}\n}", short)       # over the form's title
+        self.assertIn("@media (max-height:524px){\n  .first-run .stacked .hint{order:1}\n}", short)   # Start before the small print
+        # in a window as tall as the form nothing changes: the toast keeps its row under the form
+        before = css[:css.index(short)]
+        self.assertIn(".app.first .toasts{grid-row:3}", before)
+        self.assertIn(".stacked{display:flex;flex-direction:column;gap:10px}", before)    # (order works on a flex column)
+        # the notice is the first view's toast, on the first-run form too
+        page = self.read("render.js")
+        self.assertIn("const toast = toastHtml(view || (said ? {toast: said} : null), ui);", page)
+
+    def test_gate_g2_a_file_set_aside_is_said_on_the_first_run_form(self):
+        tmp = tempfile.mkdtemp(prefix="pc-gate-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        with open(os.path.join(tmp, "tournament.json"), "w", encoding="utf-8") as fh:
+            fh.write("not json")
+        view = Session(folder=tmp).view()
+        self.assertTrue(view["first_run"])
+        self.assertIn("could not be read and was set aside as tournament.json.unreadable-", view["toast"]["text"])
+        self.assertIn("This is a new table", view["toast"]["text"])
+
+    def test_gate_g3_the_tables_box_is_put_to_rest_after_a_resize_too(self):
+        page = self.read("render.js")
+        self.assertIn('window.addEventListener("resize", onResize);', page)
+        self.assertNotIn('window.addEventListener("resize", fitStrip);', page)
+        resize = self.body(page, "  function onResize() {")
+        self.assertIn("fitStrip();", resize)
+        self.assertIn("restTable(resting[0], resting[1]);", resize)
+        self.assertIn("    restTable(view, ui);\n    resting = [view, ui];\n", page)       # the view and ui of the last draw
+        rest = self.body(page, "  function restTable(view, ui) {")
+        # a window as tall as the page forgets where the box rested, so the next short window starts at the user's cards
+        self.assertIn('getComputedStyle(box).display === "contents") { restKey = ""; lifted = false; return; }', rest)
+        self.assertIn("} else if (lifted || key !== restKey) {\n      box.scrollTop = 0;", rest)
+
+    def test_gate_g4_a_bar_button_that_does_not_listen_yet_looks_held(self):
+        page, css = self.read("render.js"), self.read("app.css")
+        note = self.body(page, "  function noteBar() {")
+        self.assertIn("const left = BAR_WAIT_MS - (now - next[id]);", note)
+        self.assertIn('button.classList.toggle("held", left > 0 && button.hasAttribute("data-emit"));', note)
+        self.assertIn("if (wait > 0) heldTimer = setTimeout(noteBar, wait + 1);", note)     # taken off when the last new button listens
+        self.assertIn(".actions:hover .btn.held:not(:disabled){opacity:.45}", css)
+        # the rule itself is as it was: 400 ms, pointer clicks only
+        self.assertIn("const BAR_WAIT_MS = 400;", page)
+        early = self.body(page, "  function barClickTooEarly(button) {")
+        self.assertIn("return since == null || performance.now() - since < BAR_WAIT_MS;", early)
+        self.assertIn("if (onBar && barClickTooEarly(element)) return;", page)
+
+    def test_gate_g5_a_toast_names_the_cards_of_the_street_that_is_wanted(self):
+        from poker_coach.app import model
+        page = self.read("controller.js")
+        self.assertIn('const STREET_KEYS = {flop: "K S 7 D 2 C", turn: "5 H", river: "9 C"};', page)
+        self.assertEqual(model.BOARD_EXAMPLE, {"flop": "K S 7 D 2 C", "turn": "5 H", "river": "9 C"})     # the program's own refusals
+        toasts = [line for line in page.split("\n") if "toast(" in line and "K S 7 D 2 C" in line]
+        self.assertEqual(toasts, [])                                # no toast carries the flop's cards whatever the street
+        self.assertIn('typeTheStreet(state.view, "Type them", "Type it") + ". Enter skips the board."', page)
+        self.assertIn('typeTheStreet(state.view, "Type its cards first", "Type its card first") + "."', page)
+        street = self.body(page, "  function typeTheStreet(view, three, one) {")
+        self.assertIn('street === "turn" || street === "river" ? one : three', street)
+
+    def test_gate_g6_the_bracket_keys_step_from_player_to_player(self):
+        page = self.read("render.js")
+        self.assertNotIn("also onto an empty seat", page)
+        self.assertIn("[ and ] move the button by hand, from player to player. A seat's number, then D, puts it on that seat, an empty one too.", page)
+        session = Session(save=False)
+        session.apply({"op": "new_session", "mode": "tournament", "size": 8, "start_stack": 20000, "level": "300/600/75", "button": 1})
+        session.apply({"op": "clear_seat", "seat": 3})
+        buttons = [session.apply({"op": "button_step", "step": step})["table"]["button"] for step in (1, 1, -1, -1)]
+        self.assertEqual(buttons, [2, 4, 2, 1])                     # the empty seat 3 is stepped over, both ways
+        self.assertEqual(session.apply({"op": "set_button", "seat": 3})["table"]["button"], 3)     # a seat's number, then D
+
+
 class Saving(ServerCase):
     def test_the_session_survives_a_restart(self):
         self.do("new_session", size=6, start_stack=10000, button=1, level="300/600/75")

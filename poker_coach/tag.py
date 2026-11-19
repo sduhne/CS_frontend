@@ -40,7 +40,7 @@ from . import binary as B
 from .cards import format_range, parse_range
 
 _PATH = os.path.join(os.path.dirname(__file__), "data", "tag.json")
-DATA_VERSION = 2
+DATA_VERSION = 3
 TABLES = B.TABLES                         # 6, 7 and 8 players
 SHORT_STACKS = (15.0, 10.0, 6.0)          # the all-in columns: 12 to 16bb, 8 to 11bb, up to 7bb
 SHORT_LABELS = ("12 to 16bb", "8 to 11bb", "up to 7bb")
@@ -137,6 +137,12 @@ SIZES = (
     ("Second re-raise", "2.3 times their re-raise. Your own raise was re-raised: with more than 45bb. A raise and a "
                         "re-raise came before you: with more than 60bb. With less, all-in."),
 )
+# Part 5, one re-raise: the engine's rule (preflop._NEVER_FOLD), in the sheet's words.
+RERAISED_RULE = ("TT+, AQs+ and AKo are not folded to one re-raise while they have 10 points of equity over the "
+                 "price (with prizes: over the price and the risk premium), and AA and KK never: where the all-in "
+                 "does not earn enough they call. With less than the pot behind after the call they move all-in "
+                 "instead, unless that all-in loses. After the flop the stack goes in with an overpair, top pair "
+                 "or better.")
 AFTER_FLOP = (
     ("You raised, one caller", "Bet a third of the pot on dry high boards (K-7-2, A-8-3). Check boards that hit callers (9-8-7) without a hand or a draw."),
     ("Several players", "Bet only real hands and strong draws."),
@@ -279,11 +285,13 @@ def sheet_text(players: int = 8) -> str:
     out.append("5. YOU RAISED FIRST")
     out.append("  You were re-raised (not all-in)")
     for group, row in t["reraised"].items():
-        out.append(f"    you raised from {group_label(group, players)}: 45bb or less all-in with {row['allin']}; "
-                   f"more than 45bb re-raise {row['fourbet']}, call {row['call']}; otherwise fold")
+        short_call = f", call {row['call_short']}" if row["call_short"] else ""
+        out.append(f"    you raised from {group_label(group, players)}: 45bb or less all-in with {row['allin']}"
+                   f"{short_call}; more than 45bb re-raise {row['fourbet']}, call {row['call']}; otherwise fold")
     out.append(f"    These lists are the coach's answers with {_bb(ASKED['reraised'][0])} and with "
                f"{_bb(ASKED['reraised'][1])} to a re-raise from the big blind: you act last after the flop, except "
                "in the SB row. Out of position QQ, AKs and AKo move all-in with 46 to 60bb.")
+    out.append(f"    {RERAISED_RULE}")
     out.append("  A player moved all-in over your raise: call with")
     for group, rows in t["shoved_on"].items():
         out.append(f"    you raised from {group_label(group, players)}")

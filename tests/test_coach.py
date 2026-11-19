@@ -369,7 +369,7 @@ class Preflop(unittest.TestCase):
                             self.assertEqual(adv.action, "CALL", key)
                         elif abs(number) >= 0.01:                                # out of position, 60bb or less
                             self.assertEqual(adv.action, "ALL-IN" if number > 0 else "CALL", key)
-        # the hands below them still fold, and 45bb or less stays all-in or fold
+        # the hands below them still fold, and with 45bb or less ace-king's all-in stays the play where it earns
         self.assertEqual(self.play([50] * 8, 4, "AJo", [(4, "raise", 2.3), (5, "raise", 7.0)]).action, "FOLD")
         self.assertEqual(self.play([40] * 8, 4, "AKo", [(4, "raise", 2.3), (5, "raise", 7.0)]).action, "ALL-IN")
 
@@ -781,6 +781,188 @@ class Preflop(unittest.TestCase):
         utg = self.go("A9s", 17, "UTG", players=8)
         self.assertEqual(utg.action, "FOLD")
         self.assertTrue(any("the plan is raise or fold" in line for line in utg.why), utg.why)
+
+    # ---- the final gate: premium hands against one re-raise, and a raise and a re-raise in front ----
+
+    @staticmethod
+    def gate_prizes(left, itm=False, players=8, stack=45.0):
+        """The prize model of ``quick --remaining <left> --paid 150 --entrants 1000`` (``--goal itm`` or balanced)."""
+        pays = default_payouts(1000, 150)
+        return Prizes(pays, left - players, stack, itm_bonus=pays[-1] if itm and left > len(pays) else 0.0)
+
+    @staticmethod
+    def shove_number(adv):
+        return float(re.search(r"shove EV ([+-][\d.]+)bb", " ".join(adv.numbers)).group(1))
+
+    def test_gate_1_a_hand_far_ahead_of_the_price_is_never_folded_to_one_re_raise(self):
+        from poker_coach import preflop
+        from poker_coach.preflop import _icm_pressure
+        from poker_coach.ranges import threebet_range
+        _NEVER_FOLD, _NEVER_FOLD_EDGE = parse_range("TT+, AQs+, AKo"), 0.10         # the rule, as the sheet says it
+
+        def edge(spot, hero, villain, open_to, three):
+            """Equity against the re-raiser's range, less the price of the call and the risk premium."""
+            equity = eq_vs_range(spot.hand, threebet_range(max(1, spot.nb(hero))))[0]
+            pot = sum(spot.setup.antes) + sum(spot.setup.invested({hero: open_to, villain: three}))
+            return equity - (three - open_to) / (pot + three - open_to) - _icm_pressure(spot, [villain])[0]
+
+        # The hand that was found: queens raised from the hijack with 45bb, the big blind re-raises to 8.7bb,
+        # 400 left of 1,000 and 150 paid.  53% against the range the engine gives the re-raiser, the call needs
+        # 34%: FOLD "[standard]" beside "4-bet shove EV +0.03bb", where AKo and KK moved all-in.
+        line = "hero raise 2.3bb, BB raise 8.7bb"
+        for itm in (False, True):
+            for facing in (line, "hero raise 2.3bb, BTN raise 6.9bb"):      # ... and out of position against the button
+                adv = self.go("QQ", 45, "HJ", facing, players=8, prizes=self.gate_prizes(400, itm))
+                text = " ".join(adv.why)
+                self.assertEqual((adv.action, adv.confidence), ("CALL", "standard"), (itm, facing, text))
+                self.assertIn("too far ahead of the price to fold to one re-raise: 53% against their range", text)
+                self.assertIn("with prizes counted", text)             # the all-in is thin, or does not earn
+                self.assertIn("after the flop the stack goes in with an overpair, top pair or better", text)
+                self.assertLessEqual(self.shove_number(adv), 0.5, (itm, facing))
+        self.assertEqual(self.go("QQ", 35, "HJ", line, players=8, prizes=self.gate_prizes(400, stack=35)).action, "CALL")
+        # where the all-in clears the engine's bar it stays the play: on chips, and for the hands that had it
+        self.assertEqual(self.go("QQ", 45, "HJ", line, players=8).action, "ALL-IN")
+        self.assertEqual(self.go("AKo", 45, "HJ", line, players=8, prizes=self.gate_prizes(400)).action, "ALL-IN")
+        # the risk premium stays in the test: on the bubble, against a stack that covers hero, queens still fold
+        for itm in (False, True):
+            adv = self.go("QQ", 45, "HJ", line, players=8, prizes=self.gate_prizes(152, itm))
+            self.assertEqual(adv.action, "FOLD", itm)
+        # a call that would leave less than the pot behind is made as the all-in (while that all-in does not lose)
+        reraise = [(0, "raise", 2.2), (7, "raise", 8.4)]                   # under the gun raises, the big blind re-raises
+        short = self.play([24] * 8, 0, "QQ", reraise)
+        self.assertEqual(short.action, "ALL-IN")
+        self.assertIn("a call would leave less than the pot behind", " ".join(short.why))
+        self.assertGreater(self.shove_number(short), 0.0)
+        for stack in (26, 30, 35):
+            self.assertEqual(self.play([stack] * 8, 0, "QQ", reraise).action, "CALL", stack)
+        # The rule is for the hands that are too good to fold (TT+, AQs+, AKo).  A small pair or a weak ace has
+        # the 10 points on paper too, and keeps the old answer: out of position it does not get them.
+        button = [(4, "raise", 2.2), (5, "raise", 6.6)]                    # the cutoff raises, the button re-raises
+        for hand in ("99", "66", "22", "ATs", "AQo"):
+            spot = self.table([35] * 8, 4, hand, button)
+            self.assertGreaterEqual(edge(spot, 4, 5, 2.2, 6.6), _NEVER_FOLD_EDGE, hand)
+            self.assertLess(_NEVER_FOLD[spot.hand], 0.5, hand)
+            self.assertEqual(advise(spot).action, "FOLD", hand)
+        # ... and for ONE re-raise: a player who called it, or a second re-raise, and the old answer stands
+        called = self.play([45] * 8, 0, "QQ", [(0, "raise", 2.3), (4, "raise", 6.9), (5, "call", 6.9)], left=400)
+        twice = self.play([45] * 8, 0, "QQ", [(0, "raise", 2.3), (4, "raise", 6.9), (5, "raise", 14.0)], left=400)
+        alone = self.play([45] * 8, 0, "QQ", [(0, "raise", 2.3), (4, "raise", 6.9)], left=400)
+        self.assertEqual((called.action, twice.action, alone.action), ("FOLD", "FOLD", "CALL"))
+        # Every stage and depth: no hand of that list is folded with 10 points over the price and the risk
+        # premium, by the engine's own numbers.  (Deeper than 45bb the old call test, 78% of the equity out of
+        # position, folded JJ, TT and AQs there as well.)
+        folds = 0
+        for hero, villain, open_to, three in ((3, 7, 2.3, 8.7), (3, 5, 2.3, 6.9), (0, 7, 2.3, 8.7), (2, 5, 2.3, 6.9)):
+            for stack in (30, 45, 55):
+                for left in (None, 400, 152):
+                    for hand in ("TT", "JJ", "QQ", "AKo", "AQs"):
+                        spot = self.table([stack] * 8, hero, hand, [(hero, "raise", open_to), (villain, "raise", three)],
+                                          left=left)
+                        adv = advise(spot)
+                        if adv.action != "FOLD":
+                            continue
+                        folds += 1
+                        self.assertLess(edge(spot, hero, villain, open_to, three), _NEVER_FOLD_EDGE,
+                                        (hero, villain, stack, left, hand))
+        self.assertGreater(folds, 20)                                       # the bubble, and the hands that are behind
+        self.assertEqual((preflop._NEVER_FOLD, preflop._NEVER_FOLD_EDGE), (_NEVER_FOLD, _NEVER_FOLD_EDGE))
+
+    def test_gate_3_aces_and_kings_are_never_folded_to_one_re_raise_and_pairs_keep_their_order(self):
+        # Kings were folded 20 times in the map of this spot: on the bubble and close to it, 25 to 45bb, raised
+        # under the gun (61% against the re-raiser's range).  Never: where the all-in does not earn they call.
+        for itm in (False, True):
+            for left in (400, 200, 152, 100):
+                for stack, open_to, villain, three in ((30, 2.2, "BB", 8.4), (45, 2.3, "BB", 8.7), (35, 2.2, "BTN", 6.6),
+                                                       (45, 2.3, "BTN", 6.9)):
+                    facing = f"hero raise {open_to}bb, {villain} raise {three}bb"
+                    for hand in ("AA", "KK"):
+                        adv = self.go(hand, stack, "UTG", facing, players=8, prizes=self.gate_prizes(left, itm, stack=stack))
+                        self.assertIn(adv.action, ("ALL-IN", "CALL"), (itm, left, stack, villain, hand))
+                        if adv.action == "CALL":
+                            self.assertNotEqual(adv.confidence, "close")
+                            self.assertLessEqual(self.shove_number(adv), 0.5)
+        worst = self.go("KK", 45, "UTG", "hero raise 2.3bb, BB raise 8.7bb", players=8, prizes=self.gate_prizes(152, True))
+        self.assertEqual(worst.action, "CALL")
+        self.assertIn("aces and kings are never folded before the flop to one re-raise", " ".join(worst.why))
+        self.assertLess(self.shove_number(worst), -1.0)                     # the all-in is no play there
+        # against a re-raiser tagged nit after an early raise kings are behind even at the price (28% against
+        # 34%): still no fold, but a close call without the plan to put the stack in, as it is with 60bb
+        nit = ["unknown"] * 7 + ["nit"]
+        for stack in (40, 60):
+            adv = self.play([stack] * 8, 0, "KK", [(0, "raise", 2.3), (7, "raise", 8.7)], types=nit)
+            self.assertEqual((adv.action, adv.confidence), ("CALL", "close"), stack)
+            self.assertNotIn("the stack goes in", " ".join(adv.why))
+        # within one spot no pair folds where a smaller pair plays
+        pairs = ["AA", "KK", "QQ", "JJ", "TT", "99", "77", "22"]
+        for hero, villain, open_to, three in ((0, 7, 2.3, 8.7), (3, 5, 2.3, 6.9), (6, 7, 3.0, 9.0)):
+            for stack in (30, 45):
+                for left in (None, 400, 152):
+                    got = [self.play([stack] * 8, hero, hand, [(hero, "raise", open_to), (villain, "raise", three)],
+                                     left=left).action for hand in pairs]
+                    folded = [i for i, action in enumerate(got) if action == "FOLD"]
+                    if folded:
+                        self.assertEqual(folded, list(range(folded[0], len(pairs))), (hero, villain, stack, left, got))
+                    self.assertNotIn(0, folded)
+                    self.assertNotIn(1, folded)
+
+    def test_gate_4_a_raise_and_a_re_raise_in_front_has_one_solution_and_a_number_to_believe(self):
+        # Queens in the big blind with 20bb, under the gun raises to 2.2bb, the button re-raises to 6.6bb.  On
+        # chips: ALL-IN [clear], "shove EV +12.89bb ... both fold 0%"; 400 left of 1,000: FOLD, -0.57bb.  The
+        # solver had two solutions (preflop._cold_allin says why).  One spot, one answer, near one number.
+        facing = "UTG raise 2.2bb, BTN raise 6.6bb"
+        chips = self.go("QQ", 20, "BB", facing, players=8)
+        far = self.go("QQ", 20, "BB", facing, players=8, prizes=self.gate_prizes(400, True, stack=20))
+        self.assertEqual((chips.action, far.action), ("FOLD", "FOLD"))
+        self.assertLess(abs(self.shove_number(chips)), 1.0)
+        self.assertLess(abs(self.shove_number(chips) - self.shove_number(far)), 1.0)
+        self.assertEqual(chips.confidence, "close")                         # ... and it says how thin the fold is
+        # Against an early raise these hands are no favourite when called (45% or less against the re-raiser's
+        # range), so their all-in cannot earn more than the dead money it wins when both fold: no number above
+        # it, at any depth, on chips or with prizes.
+        for raiser, reraiser in ((0, 5), (4, 5)):
+            for left in (None, 400):
+                last = {}
+                for stack in (12, 16, 20, 25, 30):
+                    acts = [(raiser, "raise", 2.2), (reraiser, "raise", 6.6)]
+                    for hand in ("JJ", "QQ", "AKs", "AKo"):
+                        adv = self.play([stack] * 8, 7, hand, acts, left=left)
+                        number = self.shove_number(adv)
+                        if raiser == 0:
+                            self.assertLess(number, 2.2 + 6.6 + 0.5 + 1.0, (left, stack, hand))
+                        if abs(number - 0.5) > 0.011:                       # (the printed number is rounded)
+                            self.assertEqual(adv.action == "ALL-IN", number > 0.5, (raiser, left, stack, hand, number))
+                        # stack to stack the number moves by a few big blinds at most (it fell from +12.89bb
+                        # with 20bb to +2.92bb with 22bb and -0.32bb with 25bb)
+                        if hand in last:
+                            self.assertLess(abs(number - last[hand]), 4.0, (raiser, left, stack, hand))
+                        last[hand] = number
+                    for hand in ("AA", "KK"):
+                        self.assertEqual(self.play([stack] * 8, 7, hand, acts, left=left).action, "ALL-IN", (stack, hand))
+        # against an early raise and a re-raise the short column of the sheet is the top only; against a late
+        # raise JJ+ and ace-king still play (the 3-bettor's range is twice as wide)
+        early = {hand: self.play([20] * 8, 7, hand, [(0, "raise", 2.2), (5, "raise", 6.6)]).action for hand in ("JJ", "QQ", "AKs")}
+        late = {hand: self.play([20] * 8, 7, hand, [(4, "raise", 2.2), (5, "raise", 6.6)]).action for hand in ("JJ", "QQ", "AKo")}
+        self.assertEqual(early, {"JJ": "FOLD", "QQ": "FOLD", "AKs": "ALL-IN"})
+        self.assertEqual(late, {"JJ": "ALL-IN", "QQ": "ALL-IN", "AKo": "ALL-IN"})
+        # The bubble is not played looser for it.  Solved against JJ+ and ace-king alone, both players fold
+        # kings there and a 60bb all-in with ace-king showed +3.18bb; the lowest of the three pricings counts.
+        for hand, pos, facing, itm in (("AKs", "BTN", "HJ raise 2.3bb, CO raise 6.9bb", False),
+                                       ("AKo", "BB", "LJ raise 2.3bb, BTN raise 6.9bb", True)):
+            adv = self.go(hand, 60, pos, facing, players=6, prizes=self.gate_prizes(152, itm, players=6, stack=60))
+            self.assertEqual(adv.action, "FOLD", (hand, adv.numbers))
+            self.assertLess(self.shove_number(adv), 0.5, hand)
+
+    def test_gate_5_these_answers_take_well_under_a_second(self):
+        import time
+        spots = (("QQ", 45, "HJ", "hero raise 2.3bb, BB raise 8.7bb"), ("QQ", 20, "BB", "UTG raise 2.2bb, BTN raise 6.6bb"),
+                 ("KK", 40, "BTN", "UTG raise 2.2bb, HJ raise 6.6bb"))
+        for hand, stack, pos, facing in spots:
+            took = []
+            for _ in range(3):
+                start = time.perf_counter()
+                self.go(hand, stack, pos, facing, players=8, prizes=self.gate_prizes(400, True, stack=stack))
+                took.append(time.perf_counter() - start)
+            self.assertLess(min(took), 1.0, (hand, facing, took))
 
 
 class Postflop(unittest.TestCase):
@@ -2160,6 +2342,20 @@ class TagSheet(unittest.TestCase):
                 self.assertTrue(self.has(row["allin"], "AA") and self.has(row["allin"], "KK"), (players, group))
                 self.assertTrue(self.has(row["fourbet"], "AA"))
                 self.assertFalse(self.has(row["allin"], "99"))
+                # 45bb or less, the call list: hands that are too good to fold and whose all-in does not earn
+                # enough (the final gate).  It shares no hand with the all-in list.
+                self.assertTrue(self.inside(row["call_short"], "TT+, AQs+, AKo"), (players, group))
+                self.assertFalse(any(self.has(row["allin"], hand) and self.has(row["call_short"], hand) for hand in HANDS),
+                                 (players, group))
+            self.assertIn(T.RERAISED_RULE, T.sheet_text(players))
+        # under the gun with queens: all-in from a late seat, a call from the first seats (it was a fold)
+        row = T.table(8)["reraised"]["early"]
+        self.assertEqual((row["allin"], row["call_short"]), ("KK+, AKs", "QQ"))
+        self.assertIn("you raised from UTG or UTG+1: 45bb or less all-in with KK+, AKs, call QQ; more than 45bb re-raise KK+",
+                      T.sheet_text(8))
+        self.assertEqual(self.answer(8, 7, 35.0, [(7, "raise", 2.2), (0, "raise", 8.4)], HAND_INDEX["QQ"]), "CALL")
+        for players in T.TABLES:
+            t = T.table(players)
             for group, rows in t["shoved_on"].items():
                 opened = T.opened(players, group)
                 for k in range(5):
@@ -2339,6 +2535,8 @@ class TagSheet(unittest.TestCase):
             for group, row in t["reraised"].items():
                 both = [HANDS[h] for h in range(169) if self.weights(row["fourbet"])[h] >= 0.5 and self.weights(row["call"])[h] >= 0.5]
                 self.assertEqual(both, [], (players, "reraised", group))
+                both = [HANDS[h] for h in range(169) if self.weights(row["allin"])[h] >= 0.5 and self.weights(row["call_short"])[h] >= 0.5]
+                self.assertEqual(both, [], (players, "reraised", group, "45bb or less"))
 
     def test_l8_every_cell_is_what_the_builder_gets_from_the_engine(self):
         # tag.json against tools/build_tag.py, for 6, 7 and 8 players.  The cells that need no question to the
@@ -2427,7 +2625,7 @@ class TagSheet(unittest.TestCase):
                 self.assertIn(words, text, players)
         self.assertEqual(T.ASKED, {"first_in": (50.0, 22.0), "limpers": (40.0, 20.0), "vs_raise": 60.0,
                                    "cold": (20.0, 40.0, 100.0), "reraised": (35.0, 70.0)})
-        self.assertEqual(T.data()["version"], 2)
+        self.assertEqual(T.data()["version"], 3)
 
         def at(players, key, h_nb, raiser, size, eff, h, caller=None):
             """The engine's answer with ``eff`` big blinds effective (the big blind has posted the table's ante)."""

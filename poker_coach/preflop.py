@@ -1202,10 +1202,26 @@ def _acts_after(spot: Spot, a: int, b: int) -> bool:
     return turn(a) > turn(b)
 
 
+# One re-raise.  With 45bb or less the reply was all-in or fold by the all-in's number alone, so a hand far
+# ahead of the price was folded as soon as prizes made the all-in thin: queens with 53% against a range
+# that asks 34%, 250 places from the money, where ace-king offsuit and kings played.  Now a hand that is
+# too good to fold (the same hands as in the small blind against a late raise: TT+, AQs+, AKo) and has this
+# much equity over the price and the risk premium is never folded to one re-raise: where its all-in does
+# not clear the bar, it calls.  Aces and kings are never folded there at all.  The risk premium is in the
+# test, so on the bubble against a stack that covers hero queens can still be a fold.
+# The other hands keep the old answer: a small pair or a weak ace that calls a re-raise out of position
+# does not get the equity it has on paper.
+_NEVER_FOLD = _SMALL_BLIND_CALLS
+_NEVER_FOLD_EDGE = 0.10
+# ... and it moves all-in after all when a call would leave less than this many pots behind.
+_CALL_LEAVES_POTS = 1.0
+
+
 def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
-            reraised: int | None = None) -> Advice:
+            reraised: int | None = None, alone: bool = True) -> Advice:
     """Hero raised and ``villain`` re-raised, not all-in.  ``reraised``: hero's raise was itself
-    a re-raise, over the raise of that player."""
+    a re-raise, over the raise of that player.  ``alone``: nobody else re-raised, and nobody
+    called the re-raise."""
     setup, hero, hand = spot.setup, spot.hero, spot.hand
     live = setup.live
     bb = spot.bb
@@ -1251,14 +1267,58 @@ def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
     adv.numbers.append(f"4-bet shove EV {ev:+.2f}bb vs folding; they fold {_pct(sol.fold_equity[hand])}; "
                        f"when called you have {_pct(sol.eq_called[hand])}")
 
+    one = alone and reraised is None                     # hero opened and one player re-raised
+
+    def clears(h: int, e: float) -> bool:
+        """45bb or less: the all-in earns what the engine wants of it."""
+        return sol.ev_bb(h) > 0.5 and (e >= 0.45 or bool(_PREMIUM[h]))
+
+    def kept(h: int, e: float) -> bool:
+        """Never folded to one re-raise (``_NEVER_FOLD``)."""
+        return one and bool(_TRAP[h] or (_NEVER_FOLD[h] >= 0.5 and e - need - rp >= _NEVER_FOLD_EDGE))
+
+    keep = kept(hand, eq)
+    if one and not keep and eff <= 45 and hand in _pairs():
+        # no pair folds where a smaller pair plays
+        keep = any(clears(p, e) or kept(p, e) for p in _pairs() if p > hand for e in [eq_vs_range(p, rng)[0]])
+    ahead = (f"too far ahead of the price to fold to one re-raise: {_pct(eq)} against their range, and the "
+             f"call needs {_pct(need)}" + (f" ({_pct(need + rp)} with the prizes counted)" if rp >= 0.005 else "")
+             if eq - need - rp >= _NEVER_FOLD_EDGE and _NEVER_FOLD[hand] >= 0.5 else
+             "aces and kings are never folded before the flop to one re-raise" if _TRAP[hand] else
+             "a smaller pair plays here, so this one is not folded")
+
     if eff <= 45:
-        if ev > 0.5 and (eq >= 0.45 or _PREMIUM[hand]):
+        if clears(hand, eq):
             adv.action = "ALL-IN"
             adv.confidence = "clear" if _PREMIUM[hand] and eq >= 0.5 else "standard"
             adv.why.append("at this depth a 4-bet is a shove, and this hand profits from it")
+        elif keep:
+            adv.why.append(ahead)
+            counted = "" if prizes.chip_ev else " with prizes counted"
+            if min(live[hero], live[villain]) - three_to < _CALL_LEAVES_POTS * (pot + to_call) and ev > 0:
+                adv.action = "ALL-IN"
+                adv.why.append("a call would leave less than the pot behind, so the chips go in now")
+            else:
+                adv.action = "CALL"
+                # kings against a re-raiser tagged nit after an early raise are behind even at the price:
+                # still no fold, but a close call, as it is with more than 45bb
+                adv.confidence = "standard" if eq >= need + 0.03 else "close"
+                adv.why.append(
+                    f"the all-in is thin{counted} ({ev:+.2f}bb against folding): call, the lower-variance play"
+                    if 0 < ev <= 0.5 else
+                    f"the all-in does not earn{counted} ({ev:+.2f}bb against folding): call" if ev <= 0 else
+                    f"called, an all-in has only {_pct(sol.eq_called[hand])}: call instead")
+                if eq >= need + 0.03:
+                    adv.why.append("after the flop the stack goes in with an overpair, top pair or better")
+            adv.data.update(never_fold=True)
         else:
             adv.why.append("not strong enough to play for stacks against a 3-betting range")
             adv.confidence = _conf(ev - 0.5, 1.0, 0.3)
+            if one and _NEVER_FOLD[hand] >= 0.5 and eq - need - rp >= 0.03:
+                # ahead of the price, but by less than the points that make it a call: a close fold, said as one
+                adv.confidence = "close"
+                adv.alt.append(f"CALL is close: {_pct(eq)} against their range, and the call needs {_pct(need + rp)}"
+                               + (" with the prizes counted" if rp >= 0.005 else ""))
     else:
         # QQ+ and AK never fold to one re-raise this deep.  In position they call; out of position
         # with 60bb or less they move all-in when that all-in earns, otherwise they call too.
@@ -1282,6 +1342,11 @@ def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
             adv.confidence = "standard" if eq >= need + 0.03 else "close"
             adv.why.append("too strong to fold to one re-raise: call"
                            + (" in position" if ip else " and play carefully out of position"))
+        elif keep:
+            adv.action = "CALL"
+            adv.why.append(ahead)
+            adv.why.append("call" + (" in position" if ip else " and play carefully out of position"))
+            adv.data.update(never_fold=True)
         else:
             adv.why.append("dominated too often by a 3-betting range; let it go")
     if v_type in ("nit", "tight"):
@@ -1293,6 +1358,67 @@ def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
     return adv
 
 
+# A raise and a re-raise in front: the only hands that ever move all-in there (aces and kings always, the
+# others when the all-in earns).  The two players' calls are solved against a range inside these hands.
+_COLD_ALLIN = parse_range("JJ+, AKs, AKo")
+_COLD_ROUNDS = 120
+# The first raise was an all-in and a player raised over it.  That raise isolates the all-in player and is made
+# with far more hands than a re-raise over a full raise (see ``cold_vs_3bet``), so with 45bb or less other hands
+# than the list above move all-in too: when the all-in earns twice the usual bar and the hand is ahead of the
+# hands that raise.  Both, because the width of an isolation raise is an estimate.
+_ISOLATED_BAR = 1.0
+_ISOLATED_AHEAD = 0.55
+_ISOLATED_UP_TO = 45.0
+_COLD_MEMO: dict = {}             # the last spot solved on chips, see _cold_allin
+
+
+def _cold_allin(spot: Spot, prizes: Prizes, bets: dict[int, float], priors: dict[int, list[float]],
+                opener: int, threebettor: int):
+    """Hero's all-in over a raise and a re-raise, priced: the solver's answer for every hand.
+
+    The solver lets the players behind a caller fold, and starts from a 35% all-in range.  In this spot
+    the two made a second solution that belongs to the model only.  Against 35% the first raiser's whole
+    range has the price; when that player calls with all of it the re-raiser never gets to act, so the
+    re-raise is dead money, and a wide all-in is then the best reply: the two keep each other up, however
+    many rounds are played.  Queens showed +12.89bb for a 20bb stack on chips; any prize pressure took the
+    first raiser's price away and the same hand was a fold at -0.57bb.  So here:
+
+    * the calls are solved against the hands that ever move all-in in this spot, not against 35%;
+    * with more rounds, because a handful of hands decide and 40 rounds had not settled;
+    * twice, once with each of the two players answering first.  The first raiser first is the real
+      order and counts their aces and kings; the re-raiser first counts that this player, with a narrow
+      range and much of a short stack in, is nearly always there (asked second, they are still taken to
+      fold whenever the first raiser calls);
+    * and the solver as it was is kept as a third pricing: players who do not believe the all-in call
+      it with more hands, and close to the money that is the lower number (against JJ+ and ace-king
+      alone they fold kings there, and a 60bb all-in with ace-king showed +3bb on the bubble).
+
+    The lowest of the three counts.  So no hand moves all-in here that folded before."""
+    setup, hero = spot.setup, spot.hero
+    # The solutions do not depend on hero's cards.  On chips they are kept for the next question about the
+    # same spot: the sheet's builder asks all 169 hands of one.
+    key = None
+    if prizes.chip_ev and spot.field_prizes.chip_ev:
+        key = (tuple(setup.start), setup.sb, setup.bb, tuple(setup.antes), hero, opener, threebettor,
+               tuple(sorted(bets.items())), tuple((j, tuple(priors[j])) for j in sorted(priors)),
+               tuple(spot.types), tuple(spot.away))
+    solved = _COLD_MEMO.get(key)
+    if solved is None:
+        solved = []
+        for order, inside, rounds in (([opener, threebettor], _COLD_ALLIN, _COLD_ROUNDS),
+                                      ([threebettor, opener], _COLD_ALLIN, _COLD_ROUNDS),
+                                      ([opener, threebettor], None, 40)):          # the last: as it was
+            v_fold, v_steal, callers = build_shove_spot(
+                setup, hero, prizes, caller_prizes=spot.field_prizes, types=spot.types, away=spot.away,
+                bets=bets, priors=priors, caller_order=order, fold_winner=threebettor)
+            solved.append(solve_shove(v_fold, v_steal, callers, shover_prior=inside, iters=rounds,
+                                      unit=_unit(prizes, setup, hero)))
+        if key is not None:
+            _COLD_MEMO.clear()
+            _COLD_MEMO[key] = solved
+    return min(solved, key=lambda sol: sol.ev[spot.hand])
+
+
 def cold_vs_3bet(spot: Spot, opener: int, raise_to: float, threebettor: int, three_to: float) -> Advice:
     setup, hero, hand = spot.setup, spot.hero, spot.hand
     live = setup.live
@@ -1300,7 +1426,8 @@ def cold_vs_3bet(spot: Spot, opener: int, raise_to: float, threebettor: int, thr
     eff = min(live[hero], max(live[opener], live[threebettor])) / bb
     rng = threebet_range(spot.nb(opener), spot.types[threebettor])
     open_rng = villain_open_range(spot.nb(opener), spot.types[opener])
-    if raise_to >= live[opener] - 1e-9:
+    over_allin = raise_to >= live[opener] - 1e-9
+    if over_allin:
         # The first raise was an all-in.  The player who raised over it holds the hands that play against that
         # all-in, not a re-raise over a full opening raise: the same reading as for a caller with chips (three
         # quarters of the solved calling range, at most half of all hands).  The all-in player holds his own
@@ -1316,19 +1443,22 @@ def cold_vs_3bet(spot: Spot, opener: int, raise_to: float, threebettor: int, thr
     adv = Advice("FOLD", "standard", sit)
     adv.numbers.append(f"3-bettor's range ~{range_pct(rng):.1f}% [{format_range(rng)}]; your equity {_pct(eq)}")
     prizes = Prizes() if spot.desperate else spot.prizes
-    v_fold, v_steal, callers = build_shove_spot(
-        setup, hero, prizes, caller_prizes=spot.field_prizes, types=spot.types, away=spot.away,
-        bets={opener: raise_to, threebettor: three_to}, priors={opener: open_rng, threebettor: rng},
-        caller_order=[opener, threebettor], fold_winner=threebettor)
-    sol = solve_shove(v_fold, v_steal, callers, unit=_unit(prizes, setup, hero))
+    strong = _COLD_ALLIN
+    sol = _cold_allin(spot, prizes, {opener: raise_to, threebettor: three_to}, {opener: open_rng, threebettor: rng},
+                      opener, threebettor)
     ev = sol.ev_bb(hand)
     adv.numbers.append(f"shove EV {ev:+.2f}bb vs folding; both fold {_pct(sol.fold_equity[hand])}; "
                        f"when called you have {_pct(sol.eq_called[hand])}")
-    strong = parse_range("JJ+, AKs, AKo")
     if _TRAP[hand] or (strong[hand] >= 0.5 and ev > 0.5):
         adv.action = "ALL-IN" if eff <= 60 else f"4-BET to {2.3 * three_to / bb:.0f}bb"
         adv.confidence = "clear" if _TRAP[hand] else _conf(ev - 0.5, 2.0, 0.6)
         adv.why.append("a raise and a re-raise in front: only premiums continue, and they play for stacks")
+    elif over_allin and eff <= _ISOLATED_UP_TO and ev > _ISOLATED_BAR and eq >= _ISOLATED_AHEAD:
+        adv.action = "ALL-IN"
+        adv.confidence = _conf(ev - _ISOLATED_BAR, 2.0, 0.6)
+        adv.why.append(f"{spot.who(opener)} is all-in for {raise_to / bb:.1f}bb and {spot.who(threebettor)} raised "
+                       "over it: that raise is made with far more hands than a re-raise over a full raise, "
+                       "and against them the all-in earns")
     else:
         adv.confidence = "clear" if strong[hand] < 0.5 else _conf(ev - 0.5, 2.0, 0.6)
         adv.why.append("a raise and a re-raise in front: fold everything except the very top of your range")
@@ -1418,11 +1548,11 @@ def advise(spot: Spot) -> Advice:
         r = later[0]
         if r.kind == "allin":
             return done(vs_shove(spot, r.idx, hero_open=hero_raise, callers=flats, reraised=reraised))
-        return done(vs_3bet(spot, r.idx, r.amount, hero_raise, reraised=reraised))
+        return done(vs_3bet(spot, r.idx, r.amount, hero_raise, reraised=reraised, alone=not flats))
     if not later:
         adv = Advice("WAIT", "standard", "you raised and nobody has re-raised yet")
         return done(adv)
-    adv = vs_3bet(spot, later[-1].idx, later[-1].amount, hero_raise)
+    adv = vs_3bet(spot, later[-1].idx, later[-1].amount, hero_raise, alone=False)
     adv.warnings.append("more than one player re-raised: continue only with AA/KK")
     return done(adv)
 

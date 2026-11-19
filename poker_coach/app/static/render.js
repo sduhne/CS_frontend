@@ -35,8 +35,8 @@
      fitStrip           after every draw and on resize: when the strip is too short, the average stack, the
                         wordmark, the ante text and then places paid leave it, so no value is cut in half
      bleed              with it: how far the window reaches beyond the page (--bleed, for the header's rules)
-     restTable          after every draw, in a window shorter than the page only (app.css, section 16): the
-                        box around the table rests at its lower end, and shows a seat that is aimed at
+     restTable          after every draw and on resize, in a window shorter than the page only (app.css,
+                        section 16): the box around the table rests at its lower end, and shows a seat that is aimed at
 
      op              arguments                                        comes from
      set_mode        mode: tournament | spin | aof                    the mode tabs
@@ -1974,7 +1974,7 @@
         choiceRow("Dealer button", CHOICES.button_rule, rule, config("button_rule")) +
         `<p class="hint">Dead button: after a player busts the big blind still moves on by one player, so the button can stand on an empty seat for a hand. Most sites deal this way.</p>
          <p class="hint">Forward-moving button: the button always goes to the next player.</p>
-         <p class="hint">[ and ] move the button by hand, also onto an empty seat.</p>`);
+         <p class="hint">[ and ] move the button by hand, from player to player. A seat's number, then D, puts it on that seat, an empty one too.</p>`);
     }
     html += section("Screen",
       (view.mode === "aof" ? "" : choiceRow("Numbers in", CHOICES.unit, view.unit, config("unit"))) +
@@ -2280,6 +2280,7 @@
     keepRefused(ui);
     fitStrip();
     restTable(view, ui);
+    resting = [view, ui];
     noteBar();
   }
 
@@ -2287,9 +2288,16 @@
      answer above it and the action bar below it stay where they are. The box rests at its lower end,
      where the user's own cards, the board and the pot are. A seat the user aims at (its digit, or a
      click) is brought into sight; when that is over, and with every new hand, new street and new turn
-     of the user, the lower end comes back. What the user scrolled by hand is left alone until then. */
+     of the user, the lower end comes back. What the user scrolled by hand is left alone until then.
+     The same is done when the window changes its size (onResize): a box that has become a box again
+     starts at its lower end, whatever it showed the last time the window was short. */
   let restKey = "";            // the hand, what it waits for and whose turn it is, when the box was last put to rest
   let lifted = false;          // the box was moved to show an aimed seat
+  let resting = [null, {}];    // the view and the ui of the last draw, for a resize
+  function onResize() {
+    fitStrip();
+    restTable(resting[0], resting[1]);
+  }
   function restTable(view, ui) {
     const box = part("scroll");
     if (!box || !view || getComputedStyle(box).display === "contents") { restKey = ""; lifted = false; return; }
@@ -2311,7 +2319,9 @@
   /* The strip never cuts a value in half. Its widths are chosen so the usual numbers fit (app.css); when
      a row is too short all the same (six-digit blinds, five-digit fields), the parts that can be read
      elsewhere leave it one after the other, until the rest fits: the average stack (settings), the
-     wordmark, the ante (the tooltip of the blinds), the places paid (settings; the pill counts from them). */
+     wordmark, the ante (the tooltip of the blinds), the places paid (settings; the pill counts from them).
+     A value that is being typed in the strip stays: while the places paid or the average stack have their
+     field open, the pill that says how far the money is leaves first, and their own turn is passed over. */
   const GIVE_WAY = ["no-avg", "no-word", "no-ante", "no-paid"];
   // The header's rules run across the whole window, also where the page is a column narrower than it.
   function bleed() {
@@ -2323,14 +2333,17 @@
     bleed();
     const header = part("header");
     const strip = header.querySelector(".strip");
-    GIVE_WAY.forEach((name) => header.classList.remove(name));
+    GIVE_WAY.concat("no-stage").forEach((name) => header.classList.remove(name));
     if (!strip) return;
     // Too short: the last part reaches beyond the strip's own room.
     const tooShort = () => {
       const room = strip.getBoundingClientRect().right - (parseFloat(getComputedStyle(strip).paddingRight) || 0);
       return Array.prototype.some.call(strip.children, (kid) => kid.getClientRects().length && kid.getBoundingClientRect().right > room + 0.5);
     };
-    for (let i = 0; i < GIVE_WAY.length && tooShort(); i++) header.classList.add(GIVE_WAY[i]);
+    const typed = strip.querySelector(".editing");
+    const own = !typed ? "" : typed.closest(".stat.paid") ? "no-paid" : typed.closest(".from-avg") ? "no-avg" : "";
+    const order = own ? ["no-stage"].concat(GIVE_WAY.filter((name) => name !== own)) : GIVE_WAY;
+    for (let i = 0; i < order.length && tooShort(); i++) header.classList.add(order[i]);
   }
 
   // What is typed and not sent yet, in every field on the page: a menu or a sheet that is drawn anew
@@ -2401,9 +2414,12 @@
      where Follow was, or the same Fold for the next player) is not pressed by the second. A row of
      folds is what Rest fold and the keys are for. Keys are not affected.
      (The second click can also come before the program has answered the first, while the old bar is
-     still drawn: the controller drops a bar click made while a change is on its way.) */
+     still drawn: the controller drops a bar click made while a change is on its way.)
+     A button that does not take a click yet carries the class "held" for those 400 ms: it is drawn
+     dimmer while the pointer is on the bar (app.css), so a click that is dropped is seen to be dropped. */
   const BAR_WAIT_MS = 400;
   let barSince = {};           // button and place -> when it was first there
+  let heldTimer = null;        // takes "held" off again once the last new button listens
   function barId(button) {
     const box = button.getBoundingClientRect();
     const label = button.querySelector(".label");
@@ -2415,11 +2431,18 @@
   function noteBar() {
     const now = performance.now();
     const next = {};
+    let wait = 0;
     Array.prototype.forEach.call(part("actions").querySelectorAll("button"), (button) => {
       const id = barId(button);
       next[id] = barSince[id] != null ? barSince[id] : now;
+      const left = BAR_WAIT_MS - (now - next[id]);
+      // (only a button the rule holds back: one that sends by itself. The Save of an amount is a form's button.)
+      button.classList.toggle("held", left > 0 && button.hasAttribute("data-emit"));
+      wait = Math.max(wait, left);
     });
     barSince = next;
+    clearTimeout(heldTimer);
+    if (wait > 0) heldTimer = setTimeout(noteBar, wait + 1);
   }
   function barClickTooEarly(button) {
     const since = barSince[barId(button)];
@@ -2623,7 +2646,7 @@
     if (mounted) return;
     mounted = true;
     measureScrollBar();
-    window.addEventListener("resize", fitStrip);
+    window.addEventListener("resize", onResize);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitStrip);
     document.addEventListener("click", onClick);
     document.addEventListener("submit", onSubmit);

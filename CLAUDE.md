@@ -372,7 +372,8 @@ python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 
   live question use `advise` (table tracked) or `quick`, as in the speed
   rules, and answer in the usual shape.
 - **Sheet and engine.** The raise, call and re-raise lists are what `advise`
-  answers far from the money. Every list is the answer at one stack, printed
+  answers on chips alone (no prizes counted, an ante of an eighth of a big
+  blind a player). Every list is the answer at one stack, printed
   in the sheet: first in 50 and 22bb; behind callers 40 and 20bb; against a
   raise 60bb; a raise and a re-raise 20, 40 and 100bb in the big blind;
   re-raised 35 and 70bb. With 26 to 45bb some hands on a re-raise list move
@@ -392,9 +393,10 @@ python3 -m poker_coach tag-sheet --players 8      # every situation as text (6, 
   the seat by the players behind.
 - **Printed sheet.** One PDF per table size, seven pages, with a seat map at
   the top right of every page. Stack columns run from deep to short on
-  every page. The PDFs are older than the rebuilt sheet (19 lists differ,
-  all of them calls: the big blind's against a raise with 25bb or more, and
-  after the user's raise was re-raised; the notes under the lists are newer
+  every page. The PDFs are older than the rebuilt sheet (28 lists differ:
+  the big blind's calls against a raise with 25bb or more, the calls and
+  all-ins after the user's raise was re-raised, the all-ins against a raise
+  and a re-raise with 24bb or less; the notes under the lists are newer
   too): where they differ, `tag-sheet` is right.
 - The sheet is a study aid, like everything else here.
 
@@ -411,7 +413,7 @@ python3 -m poker_coach app                             # 127.0.0.1:8765, opens t
 python3 -m poker_coach app --port 9000 --no-browser    # another port; only print the address
 python3 -m poker_coach app --folder <path> --verbose   # sessions saved elsewhere; log every request and the coach's errors
 python tools/build_exe.py --check                      # dist/PokerCoach.exe, then start it and check the page and one answer per mode
-python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about 485 tests, three minutes
+python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_server tests.test_app_package   # about 500 tests, three minutes
 ```
 
 - **Three modes**, each with its own saved table: tournament (2 to 9 seats,
@@ -451,8 +453,8 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
   plain keys record ("YOUR ACTION", or "RECORDING" with position and seat).
   The bar has six fixed slots: Follow or Next hand, four moves, Rest fold. A
   pointer click on it is dropped while a change is on its way, and for 400 ms
-  after a move button changed its player: a double-click deals one hand, or
-  folds one player (a row of folds by mouse is Rest fold; keys are not held
+  after a move button changed its player (the button is drawn dimmer
+  meanwhile): a double-click deals one hand, or folds one player (a row of folds by mouse is Rest fold; keys are not held
   back). Esc cancels a field; a seat's fields are saved with Enter or Save
   only. In a window shorter than the page the answer stays at the top and the
   action bar at the foot; what does not fit scrolls inside the table's box,
@@ -487,7 +489,8 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
   raise. A blind all-in from posting is no caller; two players in for the
   user's whole stack are two all-ins; an all-in that can only be a call
   shows as CALL. After the user's own call, a raise at 5 to 1 or better is
-  called whatever the hand ("a call at 5 to 1 or better ... never folded").
+  called whatever the hand ("a call at 5 to 1 or better ... never folded"),
+  except on the bubble for a third or more of the user's chips.
 - **Survival guard** (tournament, all moves, before the money). A play that
   puts a third or more of the user's chips at risk before the flop (what they
   can still lose to players who can match it) is also put to the all-in or
@@ -506,7 +509,10 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
   1 or better, or equity 15 points over what is needed); a read, but only one
   that makes the play safer (nit or tight on the players who can still call;
   lag, loose or maniac on the raiser). A plan stated under a raise ("If CO
-  (30bb) moves all-in: CALL" or "FOLD") is kept by the next answer.
+  (30bb) moves all-in: CALL" or "FOLD") is kept by the next answer. So is
+  the plan under a call of one re-raise ("After the flop: the stack goes in
+  with an overpair, top pair or better"): such a hand is not folded after
+  the flop (CALL, "as planned").
 - **Close before the money** ("CLOSE: ..."). The lower-variance side is shown
   first (FOLD, or CHECK when free), the engine's play second. Big blind
   against one raise: "Need / have 35% / 40%" is the engine's own test (the
@@ -528,7 +534,7 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
 - **Very large fields.** Above 1,000 paid places still to reach, the app
   works the prize model out by a closed formula (nothing is merged): within
   0.02 points of risk premium of the exact one from 8,000 to 150,000
-  entrants, a third of a second an answer. `advise`, `quick` and `icm` use
+  entrants, under half a second an answer. `advise`, `quick` and `icm` use
   the same formula under the same condition.
 - **When an answer looks wrong**, ask for the hand from the history sheet
   (`Y`, then Copy as text): it has the blinds, a "Seats:" line (seat,
@@ -560,7 +566,8 @@ python3 -m unittest tests.test_app_model tests.test_app_advice tests.test_app_se
     the black window; if the page misbehaves, for the browser's name and
     what its console shows (F12).
   - A 960x600 window (1440x900 at 150%), 853x533 or 683x650 shows the whole
-    table; 560x600 hides the two upper seats until scrolled; under about 480
+    table; 560x600 and 1093x514 hide the two upper seats until scrolled, 1024x476
+    the upper four; under about 480
     high the table is a strip; under 544 wide the page scrolls sideways.
   - Advice after the flop is heuristic: equity against an estimated range,
     then rules. Spin & Gold uses the tournament's range charts there.
@@ -719,7 +726,7 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   previous tournament. The table app keeps its own sessions beside it, in
   `tournament/app/`; the two do not read each other.
 - After the tournament, if asked for a review, use `log` and `show --log 30`.
-- Tests: `python3 -m unittest discover -s tests` (about 630 tests, five and
+- Tests: `python3 -m unittest discover -s tests` (about 650 tests, six and
   a half minutes; the live reader's tests need
   `pip install -r requirements-live.txt`; without it they are skipped). Rebuild data only if ranges
   or the solver change: `tools/gen_preflop_equity.c` (equity table),
@@ -730,8 +737,8 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   `python3 tools/build_latereg.py` (late-registration shove spots, about a
   minute), then `python3 tools/build_binary.py` (all-in or fold tournament
   tables, half a minute; it reads the late-registration data);
-  `python3 tools/build_tag.py` (the tight-aggressive sheet, about 5
-  minutes; it asks the engine and reads the all-in or fold tables);
+  `python3 tools/build_tag.py` (the tight-aggressive sheet, about a minute
+  and a half; it asks the engine and reads the all-in or fold tables);
   `python3 tools/build_spin.py` (spin tables, about 7 minutes; it reads the
   All-In or Fold tables), then `python3 tools/spin_sim.py` (the whole-game
   simulation, about 6 minutes).

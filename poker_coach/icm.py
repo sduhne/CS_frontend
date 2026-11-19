@@ -191,8 +191,8 @@ def hero_equity(stacks, idx: int, payouts, field_n: int = 0, field_stack: float 
 #   most ``j`` of them with probability ``1 - G(F+1) G(F-j+r) / (G(F-j) G(F+1+r))`` (``G`` the gamma function):
 #   the product of the chances that one of the remaining field clocks rings before his, taken j+1 times.
 # * Pay steps far from hero's present place.  The players at his table only shift such a step by the few of
-#   them who are ahead of him when the field reaches it; their distribution is taken at that moment and the
-#   field formula does the rest.
+#   them who are ahead of him when he reaches it; their distribution is taken at that moment (his own clock
+#   time, given the field players ahead of him) and the field formula does the rest.
 # * Pay steps near his place (the bubble, and the first steps after it).  There every player at the table
 #   counts, so the sum is exact: the chance that at most ``n`` of all the others finish behind hero, written
 #   out over the subsets of his table (256 of them at a table of nine) with the field in closed form.
@@ -241,22 +241,38 @@ def large_field_equity(stacks, idx: int, payouts, field_n: int, field_stack: flo
 
 
 def _far_steps(s_h: float, others: list, tiers: list, field_n: int, field_stack: float) -> float:
-    """The pay steps far from hero's place: ``sum(d * P(hero finishes in the top k))``."""
-    lgamma, exp, log = math.lgamma, math.exp, math.log
+    """The pay steps far from hero's place: ``sum(d * P(hero finishes in the top k))``.
+
+    The players at hero's table are counted by their chance to be ahead of
+    him at the moment he reaches the step.  That moment is his own: with
+    ``j`` of the ``F`` field players ahead of him, ``u = exp(-field stack *
+    t)`` at his clock time is Beta(r + F - j, j + 1), so a table player
+    holding ``a`` field stacks is behind him with probability
+
+        E[u^a] = G(F-j+r+a) G(F+1+r) / (G(F-j+r) G(F+1+r+a))
+
+    (Taken at the field's moment alone, -log(1 - k/F), a table player with
+    25 average stacks beside a hero with 20 was put ahead of him too often:
+    0.29 points of risk premium under a ladder that pays most of the pool
+    to the winner.)
+    """
+    lgamma, exp = math.lgamma, math.exp
     r = s_h / field_stack
     lg_all = lgamma(field_n + 1) - lgamma(field_n + 1 + r)
+    lg_top = lgamma(field_n + 1 + r)
+    shares = [s / field_stack for s in others]
+    lg_tops = [lgamma(field_n + 1 + r + a) for a in shares]
     total = 0.0
     for k, d in tiers:
-        # the moment the field reaches this step: about k - 1/2 of its players are ahead of hero
-        share = (k - 0.5) / field_n
-        t = -log(1.0 - share) / field_stack if share < 1.0 else float("inf")
+        j0 = max(0.0, min(field_n - 1.0, k - 1.0))      # about this many field players are ahead of hero at the step
+        base = lg_top - lgamma(field_n - j0 + r)
         ahead = [1.0]                           # how many of the table's players are ahead of hero then
-        for s in others:
-            p = 1.0 - exp(-s * t)
+        for a, lg in zip(shares, lg_tops):
+            p = 1.0 - min(1.0, exp(lgamma(field_n - j0 + r + a) - lg + base))
             new = [0.0] * (len(ahead) + 1)
-            for a, v in enumerate(ahead):
-                new[a] += v * (1.0 - p)
-                new[a + 1] += v * p
+            for i, v in enumerate(ahead):
+                new[i] += v * (1.0 - p)
+                new[i + 1] += v * p
             ahead = new
         pk = 0.0
         for a, v in enumerate(ahead):

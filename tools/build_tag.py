@@ -2,7 +2,7 @@
 """Build poker_coach/data/tag.json: every preflop situation of a tight-aggressive tournament
 player, as text, for tables of 6, 7 and 8 players.
 
-    python3 tools/build_tag.py            # about 6 minutes
+    python3 tools/build_tag.py            # about a minute and a half
 
 The answers are the coach's own.  For each situation the engine (poker_coach.preflop.advise)
 is asked what it does with each of the 169 hands, far from the money and on chips, and the
@@ -282,24 +282,27 @@ def cold(players: int) -> dict:
 # --------------------------------------------------------------------------
 
 def reraised(players: int) -> dict:
-    """Hero opened and was re-raised (not all-in): {hero's group: {allin, fourbet, call}}.
+    """Hero opened and was re-raised (not all-in): {hero's group: {allin, call_short, fourbet, call}}.
 
     The engine is asked with the big blind as the player who re-raised.  So hero acts last after
     the flop ("in position") in every row but the small blind's, where he acts first; against a
     re-raise from a seat behind him other than the blinds, hero is out of position and the engine
     calls less than the "call" lists (deeper than 45bb) say.
 
-    Two questions for each row, with 35 and 70bb (``tag.ASKED``): with 35bb the engine moves all-in or
-    folds, with 70bb it re-raises, calls or folds."""
+    Two questions for each row, with 35 and 70bb (``tag.ASKED``): with 35bb the engine moves all-in,
+    calls (``call_short``: a hand too far ahead of the price to fold, whose all-in does not earn
+    enough) or folds; with 70bb it re-raises, calls or folds."""
     out = {}
     for group, h_nb in raiser_groups(players):
         open_to, three = (3.0, 9.0) if group == "sb" else (2.2, 8.4)
         acts = [(h_nb, "raise", open_to), (0, "raise", three)]
         short_stack, deep_stack = T.ASKED["reraised"]
-        short = place(ask(players, h_nb, short_stack, acts), {"allin": ("allin",)}, (players, "reraised", group, short_stack))
+        short = place(ask(players, h_nb, short_stack, acts), {"allin": ("allin",), "call_short": ("call",)},
+                      (players, "reraised", group, short_stack))
         deep = place(ask(players, h_nb, deep_stack, acts), {"fourbet": ("reraise",), "call": ("call",)},
                      (players, "reraised", group, deep_stack))
-        out[group] = {"allin": text(short["allin"]), "fourbet": text(deep["fourbet"]), "call": text(deep["call"])}
+        out[group] = {"allin": text(short["allin"]), "call_short": text(short["call_short"]),
+                      "fourbet": text(deep["fourbet"]), "call": text(deep["call"])}
     return out
 
 
