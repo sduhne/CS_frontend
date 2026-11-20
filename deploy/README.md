@@ -92,9 +92,12 @@ the web server hands them out as they are, and the page keeps the user's
 choices in their own browser. Nothing is stored on the server.
 
 **On menlo.bet it is live at `https://menlo.bet/poker/`**, behind a user
-name and password of its own (20 November 2026, commit 5de3895, set up from
-the Menlo Gaming session on the owner's PC). The folder on the server is
-`/opt/menlo-guide`; it is a copy, not a checkout.
+name and password of its own (since 20 November 2026, set up from the Menlo
+Gaming session on the owner's PC). The folder on the server is
+`/opt/menlo-guide`; it is a copy, not a checkout. The copy there is commit
+1f6a90c (page 2: the table map and Reset); the one before it is kept beside
+it as `/opt/menlo-guide.old_<date>_<time>` for a swap back. The foot of the
+page names the page's number, which tells the copies apart.
 
 To set it up again, or somewhere else:
 
@@ -119,6 +122,8 @@ keeps a copy for five minutes.
 
 What was checked: before going live, behind a throwaway Caddy with a test
 login (every file 200, `data.js` identical after compression, 401 without
-the login); on the live site from outside, the first three lines above, and
-that `/admin` answers as before. The page behind the real login was not
-opened by either session: that check is the owner's.
+the login); on the live site from outside, the first three lines above.
+Page 2 was opened from a local server in Chromium on the owner's Windows PC
+before the swap (the foot, both reset buttons, the map of eight seats, no
+errors in the console). The page behind the real login was not opened by
+either session: that check is the owner's.
