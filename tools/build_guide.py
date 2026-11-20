@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import dataclasses
 import json
 import os
@@ -123,8 +124,11 @@ def _key(value):
     return id(value)                    # the hand's setup and prize objects: one object for all 169 hands of a spot
 
 
+_SOLVERS = ("solve_open_shove", "solve_reshove", "build_shove_spot", "_shover_solution")
+_plain_solve_shove = P.solve_shove
+
+
 def _memoized(name):
-    """The solver's answers do not depend on hero's cards: one solve serves the 169 hands of a spot."""
     plain = getattr(P, name)
 
     def wrapped(*args, **kw):
@@ -133,12 +137,7 @@ def _memoized(name):
             _memo[key] = plain(*args, **kw)
         return _memo[key]
 
-    setattr(P, name, wrapped)
-
-
-for _name in ("solve_open_shove", "solve_reshove", "build_shove_spot", "_shover_solution"):
-    _memoized(_name)
-_plain_solve_shove = P.solve_shove
+    return wrapped
 
 
 def _solve_shove(v_fold, v_steal, callers, **kw):
@@ -148,26 +147,43 @@ def _solve_shove(v_fold, v_steal, callers, **kw):
     return _memo[key]
 
 
-P.solve_shove = _solve_shove
+@contextlib.contextmanager
+def one_solve_per_spot():
+    """The solver's answers do not depend on hero's cards: inside this, one solve serves the 169 hands of a spot.
+
+    The engine is given back as it was on the way out.  (Left in place, the kept answers would be handed to
+    whatever asks the engine next: importing this file once made ten tests of other parts fail.)"""
+    saved = {name: getattr(P, name) for name in _SOLVERS + ("solve_shove",)}
+    _memo.clear()
+    P._COLD_MEMO.clear()
+    try:
+        for name in _SOLVERS:
+            setattr(P, name, _memoized(name))
+        P.solve_shove = _solve_shove
+        yield
+    finally:
+        for name, plain in saved.items():
+            setattr(P, name, plain)
+        _memo.clear()
+        P._COLD_MEMO.clear()
 
 
 def table(hero_nb: int, stack: float, facing: str, opp: str, players: int = N, hero_seat: str | None = None) -> dict:
     """Ask the engine about every hand of one spot.  -> {"a": 169 letters, and what the page shows beside them}."""
-    _memo.clear()
-    P._COLD_MEMO.clear()
     name = hero_seat or seat(hero_nb)
     spot = P.quick_spot(0, None, float(stack), players, name, facing)
     spot.types = [opp] * players
     letters, sizes, first = [], set(), None
-    for h in range(169):
-        adv = P.advise(dataclasses.replace(spot, hand=h))
-        letters.append(code_of(adv))
-        if first is None:
-            first = adv
-        for word in adv.action.replace("(", " ").split():
-            if word.endswith("bb") and word[:-2].replace(".", "", 1).isdigit():
-                sizes.add((adv.action.split()[0].upper(), float(word[:-2])))
-    out = {"a": "".join(letters)}
+    with one_solve_per_spot():
+        for h in range(169):
+            adv = P.advise(dataclasses.replace(spot, hand=h))
+            letters.append(code_of(adv))
+            if first is None:
+                first = adv
+            for word in adv.action.replace("(", " ").split():
+                if word.endswith("bb") and word[:-2].replace(".", "", 1).isdigit():
+                    sizes.add((adv.action.split()[0].upper(), float(word[:-2])))
+    out = {"a": "".join(pairs_in_order(letters))}
     by_kind = {}
     for kind, size in sorted(sizes):
         by_kind.setdefault(kind, size)
@@ -176,6 +192,19 @@ def table(hero_nb: int, stack: float, facing: str, opp: str, players: int = N, h
     facts = P_facts(first)
     if facts:
         out["f"] = facts
+    return out
+
+
+def pairs_in_order(letters) -> list[str]:
+    """A pair never folds where a lower pair plays: it takes the lower pair's play.
+
+    Against a narrow all-in range two neighbouring pairs are worth the same, and the engine's equities carry
+    a little noise, so now and then tens called where jacks folded (47 of 37,692 spots).  The answer is as
+    good either way; a chart must not show it."""
+    out = list(letters)
+    for i in range(11, -1, -1):                 # kings against queens last: 14 * i is a pair, aces first
+        if out[14 * i] in "fF" and out[14 * (i + 1)] not in "fF":
+            out[14 * i] = out[14 * (i + 1)]
     return out
 
 
@@ -357,8 +386,10 @@ FAMILIES = {
     "hu_re_allin": ("two players, you raised and the big blind moved all-in: [stack]", fam_hu("re_allin")),
     "hu_re3": ("two players, you raised and the big blind re-raised: [stack]", fam_hu("re3")),
 }
-# Families whose answers do not change with the style (no opening row and no bar of the style is in them)
-SAME_IN_EVERY_STYLE = {"allin", "raise_allin", "two_allin", "hu_allin"}
+# Families whose answers do not change with the style: only all-ins are in front, and those ranges are
+# solved, not read from an opening row.  (A raise and an all-in is not one of them: the all-in is priced
+# against the raiser's row.  A test asks a sample of every family again in a style drawn at random.)
+SAME_IN_EVERY_STYLE = {"allin", "two_allin", "hu_allin"}
 
 
 def work(job):
@@ -421,7 +452,7 @@ def main() -> int:
         with open(cache_path(job)) as fh:
             rows = json.load(fh)
         for key, tab in rows:
-            tab["a"] = pack(tab["a"])
+            tab["a"] = pack("".join(pairs_in_order(tab["a"])))       # jobs finished before that rule keep raw answers
             facts = tab.get("f") or {}
             if family in ("vsraise", "hu_vsraise") and "vp" in facts and "vr" not in facts:
                 # the engine prints the size of the raiser's range, not the hands: ask for them the way it does

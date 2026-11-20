@@ -23,8 +23,8 @@ Cards, seat, stack in big blinds, what happened before you: the play, one
 sentence of why, the numbers behind it and the whole chart, at once. Nothing
 is worked out while you play: every answer is read from tables that
 `tools/build_guide.py` made by asking the engine about each of the 169 hands
-of every spot before the flop (every seat, 28 stack sizes, three kinds of opponent, two
-styles).
+of every spot before the flop (37,692 spots, 17,546 different tables: every seat, 28 stack
+sizes, three kinds of opponent, two styles).
 
 **To open it:** double-click `guide/index.html` ("Open Quick Guide.bat" on
 Windows). It is a page on your own computer: no Python, no internet. On a
@@ -77,7 +77,7 @@ It is a chart. Most real-money sites forbid charts and outside help while
 you play: use it to study, to review hands and where help is allowed.
 
 ```bash
-python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 40 minutes on four processors
+python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 45 minutes on four processors
 python3 tools/build_guide.py --only open --styles win    # some of them; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py out/       # the page as one file, with data.json beside it
 python3 -m unittest tests.test_guide         # about 20 seconds
@@ -743,5 +743,5 @@ python3 tools/build_binary.py       # all-in or fold tournament tables, half a m
 python3 tools/build_tag.py          # tight-aggressive sheet for 6, 7 and 8 players, about a minute and a half
 python3 tools/build_spin.py         # spin tables (3 players and heads-up), about 7 minutes
 python3 tools/spin_sim.py           # whole spin games played with those tables, about 6 minutes
-python3 tools/build_guide.py        # the quick guide's tables (guide/data.js), about 40 minutes; after any change to the engine before the flop
+python3 tools/build_guide.py        # the quick guide's tables (guide/data.js), about 45 minutes; after any change to the engine before the flop
 ```

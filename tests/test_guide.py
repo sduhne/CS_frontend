@@ -164,15 +164,36 @@ class Builder(unittest.TestCase):
                                 ("tag", dict(hero_nb=2, stack=14, facing="hero raise 2.0bb, BB allin"))):
             R.set_style(style)
             made = B.table(opp="unknown", **question)
-            B._memo.clear()
-            P._COLD_MEMO.clear()
-            plain_shove, P.solve_shove = P.solve_shove, B._plain_solve_shove
-            try:
-                spot = P.quick_spot(0, None, float(question["stack"]), 9, B.seat(question["hero_nb"]), question["facing"])
-                plain = "".join(B.code_of(P.advise(dataclasses.replace(spot, hand=h))) for h in range(0, 169, 7))
-            finally:
-                P.solve_shove = plain_shove
-            self.assertEqual(made["a"][::7], plain, (style, question))
+            spot = P.quick_spot(0, None, float(question["stack"]), 9, B.seat(question["hero_nb"]), question["facing"])
+            plain = "".join(B.pairs_in_order([B.code_of(P.advise(dataclasses.replace(spot, hand=h))) for h in range(169)]))
+            self.assertEqual(made["a"], plain, (style, question))
+
+    def test_pairs_keep_their_order(self):
+        """Tens do not call where jacks fold: the higher pair takes the lower pair's play."""
+        fold = ["f"] * 169
+        tens, jacks, queens, nines = (B.HANDS.index(h) for h in ("TT", "JJ", "QQ", "99"))
+        letters = list(fold)
+        letters[tens] = "C"                     # a close call
+        letters[B.HANDS.index("AA")] = letters[B.HANDS.index("KK")] = "c"
+        out = B.pairs_in_order(letters)
+        self.assertEqual((out[jacks], out[queens], out[tens], out[nines]), ("C", "C", "C", "f"))
+        self.assertEqual(sum(1 for a, b in zip(out, letters) if a != b), 2)
+        ordered = list(fold)
+        for hand in ("AA", "KK", "QQ"):
+            ordered[B.HANDS.index(hand)] = "a"
+        self.assertEqual(B.pairs_in_order(ordered), ordered)
+        self.assertEqual(B.pairs_in_order(B.pairs_in_order(letters)), out)
+
+    def test_the_builder_leaves_the_engine_as_it_found_it(self):
+        """It keeps the solver's answers while it asks about one spot, and only then."""
+        names = B._SOLVERS + ("solve_shove",)
+        before = [getattr(P, name) for name in names]
+        with B.one_solve_per_spot():
+            self.assertTrue(all(getattr(P, name) is not plain for name, plain in zip(names, before)))
+        self.assertEqual([getattr(P, name) for name in names], before)
+        B.table(hero_nb=2, stack=12, facing="", opp="unknown")
+        self.assertEqual([getattr(P, name) for name in names], before)
+        self.assertEqual(B._memo, {})
 
     def test_every_family_asks_questions_the_engine_can_read(self):
         counts = {}
@@ -230,6 +251,12 @@ class Tables(unittest.TestCase):
             for style in B.STYLES:
                 for opp in B.OPPONENTS:
                     self.assertEqual(set(self.d["index"][name][style][opp]), want, (name, style, opp))
+
+    def test_no_table_has_a_pair_folding_where_a_lower_pair_plays(self):
+        for t in self.d["tables"]:
+            a = B.unpack(t["a"])
+            plays = [a[14 * i] not in "fF" for i in range(13)]
+            self.assertEqual(plays, sorted(plays, reverse=True), a)
 
     def test_a_table_is_169_letters_and_its_range_169_marks(self):
         letters = set(B.CODES + B.CLOSE)

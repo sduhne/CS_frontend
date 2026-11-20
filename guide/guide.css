@@ -236,13 +236,17 @@ h1,h2,h3,p{margin:0}
   .cols{display:grid;grid-template-columns:minmax(380px,440px) minmax(0,1fr);gap:16px;align-items:start}
   .col{display:flex;flex-direction:column;gap:12px;min-width:0}
   #mini{display:none}
-  .col.right{position:sticky;top:12px}
+  /* the answer, what comes next and the chart stay in sight while the choices scroll; when they are taller
+     than the window they scroll on their own */
+  .col.right{position:sticky;top:12px;max-height:calc(100vh - 72px);overflow-y:auto;overscroll-behavior:contain;
+    scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;padding-right:2px}
   .slab{min-height:128px;padding:14px 18px 16px}
   .slab .verb{font-size:60px}
   .slab .size{font-size:28px}
   .slab .why{font-size:14px}
   .cell{font-size:13px;aspect-ratio:1/.8}
   .grid{gap:3px}
+  .plan .rows{display:grid;grid-template-columns:1fr 1fr}        /* two side by side: the chart keeps its place in the window */
 }
 @media (max-width:479px){
   .brand .sub{display:none}

@@ -410,7 +410,7 @@ by asking the engine about each of the 169 hands of every spot before the
 flop.
 
 ```bash
-python3 tools/build_guide.py                         # every table -> guide/data.js (about 40 minutes on four processors)
+python3 tools/build_guide.py                         # every table -> guide/data.js (about 45 minutes on four processors)
 python3 tools/build_guide.py --only open,vsraise --styles win    # some again; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py <folder>           # one HTML file and data.json, to publish as an Artifact
 python3 -m poker_coach quick --hand A7o --stack 40 --pos CO --goal chips --style win   # one of its answers, from the engine
@@ -838,5 +838,5 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   `python3 tools/build_spin.py` (spin tables, about 7 minutes; it reads the
   All-In or Fold tables), then `python3 tools/spin_sim.py` (the whole-game
   simulation, about 6 minutes); `python3 tools/build_guide.py` (the quick
-  guide's tables, about 40 minutes; needed after any change to the engine's
+  guide's tables, about 45 minutes; needed after any change to the engine's
   answers before the flop).

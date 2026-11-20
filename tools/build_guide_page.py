@@ -29,8 +29,6 @@ def page() -> str:
         raise SystemExit("the script or the styles hold a closing tag: they cannot go inside the page as they are")
     return f"""<title>Menlo Guide</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="{FONTS}">
 <style>
 {css}</style>

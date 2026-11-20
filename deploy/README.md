@@ -105,8 +105,8 @@ no login of its own (put it behind one if the address should stay private).
    ```
 
 To update: `git pull` in the checkout (or copy the folder again). The tables
-are one file of a few megabytes; with `encode` the web server sends it
-compressed.
+are one file of 2.7 MB; with `encode` the web server sends it compressed,
+about 0.4 MB.
 
 Not run behind Caddy or on the server: the page was checked from the disk
 and behind a small stand-in web server, in a browser on Linux.
