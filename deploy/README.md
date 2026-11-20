@@ -89,24 +89,36 @@ notice on the page says so and stays.
 
 The quick guide is not a program. `guide/` holds a page and its tables;
 the web server hands them out as they are, and the page keeps the user's
-choices in their own browser. Nothing is stored on the server, so it needs
-no login of its own (put it behind one if the address should stay private).
+choices in their own browser. Nothing is stored on the server.
 
-1. The files are in the same checkout: `/opt/menlo-coach/guide/`
-   (`index.html`, `guide.css`, `guide.js`, `fonts.css`, `fonts/`, `data.js`).
-   Without the coach, copy that one folder anywhere the web server can read.
+**On menlo.bet it is live at `https://menlo.bet/poker/`**, behind a user
+name and password of its own (20 November 2026, commit 5de3895, set up from
+the Menlo Gaming session on the owner's PC). The folder on the server is
+`/opt/menlo-guide`; it is a copy, not a checkout.
+
+To set it up again, or somewhere else:
+
+1. Copy `guide/` (`index.html`, `guide.css`, `guide.js`, `fonts.css`,
+   `fonts/`, `data.js`) to a folder the web server can read.
 2. Put the second block of `deploy/Caddyfile.snippet` inside the site's
-   block, then `caddy validate --config /etc/caddy/Caddyfile` and
-   `systemctl reload caddy`.
-3. Check: `https://menlo.bet/guide/` shows the page, and
+   block, with the hash from `caddy hash-password`, then
+   `caddy validate --config /etc/caddy/Caddyfile` and `systemctl reload caddy`.
+3. Check from outside. Without the login every address must refuse:
 
    ```bash
-   curl -s -o /dev/null -w "%{http_code} %{size_download}\n" https://menlo.bet/guide/data.js    # 200 and the size of the file
+   curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" https://menlo.bet/poker          # 308 https://menlo.bet/poker/
+   curl -s -o /dev/null -w "%{http_code}\n" https://menlo.bet/poker/                        # 401
+   curl -s -o /dev/null -w "%{http_code}\n" https://menlo.bet/poker/data.js                 # 401
+   curl -s -o /dev/null -w "%{http_code} %{size_download}\n" -u NAME https://menlo.bet/poker/data.js   # 200 and the size of the file
    ```
 
-To update: `git pull` in the checkout (or copy the folder again). The tables
-are one file of 2.7 MB; with `encode` the web server sends it compressed,
-about 0.4 MB.
+To update: copy the folder again over `/opt/menlo-guide` (all of it: the
+tables and the script belong together). The tables are one file of 2.7 MB;
+with `encode` the web server sends it compressed, about 0.4 MB. The browser
+keeps a copy for five minutes.
 
-Not run behind Caddy or on the server: the page was checked from the disk
-and behind a small stand-in web server, in a browser on Linux.
+What was checked: before going live, behind a throwaway Caddy with a test
+login (every file 200, `data.js` identical after compression, 401 without
+the login); on the live site from outside, the first three lines above, and
+that `/admin` answers as before. The page behind the real login was not
+opened by either session: that check is the owner's.
