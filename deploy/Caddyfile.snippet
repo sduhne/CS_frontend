@@ -1,0 +1,36 @@
+# Menlo Coach under https://menlo.bet/coach/ : put these lines INSIDE the existing "menlo.bet { ... }" block,
+# before the line that sends everything else to the site's own program.
+#
+# The coach has no login of its own. Keep one of the two ways below, never none:
+#   A. the login the rest of the site already uses (forward_auth to the site's own check), or
+#   B. a password of its own (basic_auth; make the hash with:  caddy hash-password ).
+# (Caddy older than 2.8 writes basic_auth as "basicauth".)
+
+	redir /coach /coach/ 308
+	handle_path /coach/* {
+		# --- A: the site's own login (the address of its check is the site's to name) ---
+		# forward_auth 127.0.0.1:5612 {
+		# 	uri /admin/auth-check
+		# }
+		# --- B: a password of its own ---
+		basic_auth {
+			you REPLACE_WITH_THE_HASH_FROM_caddy_hash-password
+		}
+		reverse_proxy 127.0.0.1:8765
+	}
+
+
+# The quick guide under https://menlo.bet/poker/ : a folder of files, no program behind it.
+# It stores nothing. It has a user name and password of its own (make the hash with:  caddy hash-password ).
+# (Caddy older than 2.8 writes basic_auth as "basicauth".)
+
+	redir /poker /poker/ 308
+	handle_path /poker/* {
+		basic_auth {
+			you REPLACE_WITH_THE_HASH_FROM_caddy_hash-password
+		}
+		root * /opt/menlo-guide
+		encode zstd gzip
+		header Cache-Control "max-age=300"
+		file_server
+	}

@@ -1,0 +1,55 @@
+import sys, time
+sys.path.insert(0, "/tmp/claude-0/-home-user-CS-frontend/aa601cb2-5545-5621-9e0c-8faa1c3fd22d/scratchpad/tableapp")
+from proto import *
+def keynum(adv):
+    d = adv.data
+    if "shove_ev_bb" in d: return f"shove EV {d['shove_ev_bb']:+.2f}bb"
+    if "reshove_ev_bb" in d: return f"re-shove EV {d['reshove_ev_bb']:+.2f}bb"
+    if "equity" in d and "need" in d: return f"equity {100*d['equity']:.0f}% / need {100*d['need']:.0f}%"
+    return (adv.numbers[0][:70] if adv.numbers else "")
+def T(tag, *a, **k):
+    t = time.time()
+    adv, tab, head, note, stg, spot = tournament(*a, **k)
+    print(f"{tag} | {HANDS[spot.hand]} | stage={stg['code']} | prize={spot.prizes.label or 'chip EV'} | ENGINE: {adv.action} [{adv.confidence}] | {keynum(adv)} | TABLE: {tab[0]} | HEAD: {head} ({note}) | {time.time()-t:.2f}s")
+    return adv
+E = [30,25,18,40,15,35,16,28]
+T("T1 QJs BTN 35bb first in, 400 left", [30,25,18,40,15,35,16,28], "BTN", "QJs", rem=400)
+T("T2 A8o BTN 12bb first in, 400 left", [30,25,18,40,22,12,15,20], "BTN", "A8o", rem=400)
+T("T3 K9s CO 14bb first in, 400 left", [30,25,18,40,14,22,16,28], "CO", "K9s", rem=400)
+T("T4 QQ CO 14bb first in, 400 left", [30,25,18,40,14,22,16,28], "CO", "QQ", rem=400)
+T("T5 A8o BTN 12bb first in, bubble 152 left (balanced)", [30,25,18,40,22,12,15,20], "BTN", "A8o", rem=152)
+T("T5b same, goal itm", [30,25,18,40,22,12,15,20], "BTN", "A8o", rem=152, goal="itm")
+T("T5c same, goal chips", [30,25,18,40,22,12,15,20], "BTN", "A8o", rem=152, goal="chips")
+T("T6 72o BTN 30bb, SB+BB away", [30,25,18,40,22,30,15,20], "BTN", "72o", rem=400, away=["SB","BB"])
+T("T7 77 HJ 30bb, UTG and LJ limp", [30,25,30,30,22,30,15,20], "HJ", "77", acts=[(0,"limp",1),(2,"limp",1)], rem=400)
+T("T8 AKs BTN 40bb vs LJ raise 2.3bb", [40,40,40,40,40,40,40,40], "BTN", "AKs", acts=[(2,"raise",2.3)], rem=400)
+T("T9 66 BTN 40bb vs UTG raise 2.3bb", [40,40,40,40,40,40,40,40], "BTN", "66", acts=[(0,"raise",2.3)], rem=400)
+T("T10 TT HJ 22bb vs UTG raise 2.2bb, 400 left", [35,25,18,22,15,25,16,18], "HJ", "TT", acts=[(0,"raise",2.2)], rem=400)
+T("T10b same, 800 left (early)", [35,25,18,22,15,25,16,18], "HJ", "TT", acts=[(0,"raise",2.2)], rem=800)
+T("T11 K9o BB 20bb vs BTN raise 2bb", [30,25,18,40,22,25,15,20], "BB", "K9o", acts=[(5,"raise",2.0)], rem=400)
+T("T12 99 BB 20bb vs CO all-in 15bb, 400 left", [30,25,18,40,15,22,16,20], "BB", "99", acts=[(4,"allin",15)], rem=400)
+T("T13 AJo BB 18bb vs BTN all-in 25bb, bubble", [30,25,18,40,15,25,16,18], "BB", "AJo", acts=[(5,"allin",25)], rem=152)
+T("T13b same, in the money 100 left", [30,25,18,40,15,25,16,18], "BB", "AJo", acts=[(5,"allin",25)], rem=100)
+T("T14 JJ BTN 20bb vs HJ raise 2.2, CO all-in 14bb", [30,25,18,40,14,20,16,18], "BTN", "JJ", acts=[(3,"raise",2.2),(4,"allin",14)], rem=400)
+T("T15 AQs CO 30bb: hero raise 2.2, BB all-in 16bb", [30,25,18,40,30,25,16,16], "CO", "AQs", acts=[(4,"raise",2.2),(7,"allin",16)], rem=400)
+T("T16 AQs CO 60bb: hero raise 2.3, BTN 3-bet 7bb", [60,60,60,60,60,60,60,60], "CO", "AQs", acts=[(4,"raise",2.3),(5,"raise",7)], rem=800)
+T("T17 QQ BTN 50bb vs UTG raise 2.3, HJ 3-bet 7", [50,50,50,50,50,50,50,50], "BTN", "QQ", acts=[(0,"raise",2.3),(3,"raise",7)], rem=800)
+T("T18 TT BTN 12bb vs HJ all-in 40, CO call all-in 22, near bubble", [30,25,18,40,22,12,15,20], "BTN", "TT", acts=[(3,"allin",40),(4,"allin",22)], rem=185)
+T("T19 final table 8 left: A9s SB 15bb vs BB 40bb", [30,25,18,40,22,12,15,40], "SB", "A9s", rem=8)
+T("T20 Q7o UTG 2.5bb, 400 left (desperate)", [2.5,25,18,40,22,12,15,20], "UTG", "Q7o", rem=400)
+T("T21 6-handed A9o LJ 10bb", [10,25,18,40,22,20], "UTG(LJ)", "A9o", rem=400)
+T("T22 7-handed KQo CO 28bb vs UTG(nit) raise 2.2", [30,25,18,28,22,20,20], "CO", "KQo", acts=[(0,"raise",2.2)], rem=400, types={"UTG":"nit"})
+T("T23 heads-up, 2 left: K5o SB/BTN 18bb", [18,30], "SB/BTN", "K5o", rem=2, paid=150)
+T("T24 A8o BTN 12bb, no tournament numbers", [30,25,18,40,22,12,15,20], "BTN", "A8o")
+T("T25 99 BB 20bb vs CO(nit) all-in 15bb", [30,25,18,40,15,22,16,20], "BB", "99", acts=[(4,"allin",15)], rem=400, types={"CO":"nit"})
+T("T25b 99 BB vs CO(maniac) all-in 15bb, bubble", [30,25,18,40,15,22,16,20], "BB", "99", acts=[(4,"allin",15)], rem=152, types={"CO":"maniac"})
+T("T26 A5o BTN 12bb first in, 260 left (close to money)", [30,25,18,40,22,12,15,20], "BTN", "A5o", rem=260)
+print()
+T("B1 aof-plan A8o BTN 12bb far", [30,25,18,40,22,12,15,20], "BTN", "A8o", rem=400, plan="aof")
+T("B2 aof-plan KTs CO 14bb in the money", [30,25,18,40,14,22,16,28], "CO", "KTs", rem=100, plan="aof")
+T("B3 aof-plan 99 BTN 15bb vs CO raise", [30,25,18,40,22,15,15,20], "BTN", "99", acts=[(4,"raise",2.2)], rem=400, plan="aof")
+T("B4 aof-plan AJo BB 20bb vs HJ all-in 9bb", [30,25,18,9,22,15,15,20], "BB", "AJo", acts=[(3,"allin",9)], rem=400, plan="aof")
+T("B5 aof-plan TT BTN 10bb vs HJ all-in, CO all-in", [30,25,18,12,11,10,15,20], "BTN", "TT", acts=[(3,"allin",12),(4,"allin",11)], rem=400, plan="aof")
+T("B6 aof-plan 6-handed A9o LJ 10bb", [10,25,18,40,22,20], "UTG(LJ)", "A9o", rem=400, plan="aof")
+T("B7 aof-plan A5o BTN 12bb close to money (260 left)", [30,25,18,40,22,12,15,20], "BTN", "A5o", rem=260, plan="aof")
+T("B8 aof-plan J9s BB 15bb, no raise", [30,25,18,40,22,12,15,15], "BB", "J9s", acts=[(5,"limp",1)], rem=400, plan="aof")

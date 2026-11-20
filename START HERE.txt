@@ -1,0 +1,43 @@
+MENLO COACH
+===========
+
+TO START (Windows)
+  Unpack the whole zip, then double-click "Start Poker Coach.bat" in the unpacked folder.
+  It needs Python 3.10 or newer and nothing else: nothing is installed, no internet is used.
+  No Python yet: get it from https://www.python.org/downloads/ and tick "Add python.exe to PATH".
+  If Windows asks whether to run the file, choose Run.
+  Not yet tried on a Windows computer: if it does not start, the black window says why.
+
+WHAT OPENS
+  A black window titled Menlo Coach, which must stay open, and a page in your browser with
+  that name. Menlo Coach is the program; its files keep "Poker Coach" in their names.
+  On the page you type or click what happens at your table, and the coach answers.
+  Three modes: Tournament, Spin & Gold (3 or 6 players), All-In or Fold. Press ? on the page for the keys.
+  Nothing reads your screen, nothing clicks for you, nothing is sent anywhere.
+
+WHERE YOUR TABLES ARE SAVED
+  In this folder, in tournament\app, after every change. The next start goes on from there.
+
+TO STOP
+  Close the black window. Closing only the page leaves the coach running: the page comes
+  back at the address the black window shows (usually http://127.0.0.1:8765/).
+  Starting it a second time opens the page of the copy that is already running.
+
+STUDY AND PLAY MONEY ONLY
+  Real-money sites ban real-time help. Using this during a real-money game can close an account.
+
+THE QUICK GUIDE (new)
+  Double-click "Open Quick Guide.bat" (or guide\index.html). A page opens in your browser:
+  tap your two cards, what happened before you, your seat and your stack in big blinds,
+  and it shows the play, why, and the whole chart. It needs no Python and no black window.
+  It looks answers up in tables; it reads nothing from your screen.
+
+ALSO HERE
+  "Start Screen Reader (old).bat"  the older program that reads the table from the screen.
+  "Build exe.bat"   makes dist\PokerCoach.exe, the same table app as one program that runs
+                    without Python. It shows a small window with a Stop button, and saves
+                    your tables in PokerCoach\app in your user folder.
+  Mac or Linux      in a terminal in this folder:  python3 -m poker_coach app
+  README.md         everything else: what to change (blinds, stacks and keys are in
+                    poker_coach\app\defaults.py), the commands, the tests
+  PLAYBOOK.md       the strategy, in words

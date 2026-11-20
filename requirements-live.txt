@@ -1,0 +1,10 @@
+# Only for the live table reader (python3 -m poker_coach live): the rest of the coach needs nothing.
+mss>=10.0
+pillow>=10.0
+pydantic>=2.0
+# The window and the setup use tkinter, which comes with Python from python.org
+# (Windows, macOS). On Linux: sudo apt install python3-tk
+# Optional: the Claude vision reader (--reader vision) also needs
+#   anthropic>=2.10
+# and building the Windows program (tools/build_exe.py) needs
+#   pyinstaller
