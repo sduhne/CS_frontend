@@ -41,6 +41,12 @@ h1,h2,h3,p{margin:0}
 .word b{color:var(--yellow);font-weight:800}
 .brand .sub{font:700 11px/1 var(--body);letter-spacing:.1em;text-transform:uppercase;color:var(--grey);white-space:nowrap;
   padding-left:10px;border-left:1px solid var(--line-strong)}
+.tools{display:flex;align-items:center;gap:8px;flex:none}
+.reset{flex:none;height:36px;min-width:36px;padding:0 9px;border-radius:999px;border:1px solid var(--line-strong);background:var(--panel);
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;font:600 13px/1 var(--body);color:var(--soft);white-space:nowrap}
+.reset svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.reset span{display:none}                      /* the word shows where there is room for it (section 11) */
+.reset.undo{padding:0 12px;border-color:var(--yellow);color:var(--yellow);font-weight:700}
 .next{flex:none;height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--line-strong);background:var(--panel);
   font:600 13px/1 var(--body);color:var(--white);white-space:nowrap}
 .next b{color:var(--yellow);font-weight:700}
@@ -107,6 +113,31 @@ h1,h2,h3,p{margin:0}
 .chip:disabled{opacity:.35}
 .seats{display:grid;grid-template-columns:repeat(auto-fit,minmax(58px,1fr));gap:6px}
 .seats .chip{padding:0 4px;font:800 16px/1 var(--display);letter-spacing:.01em}
+/* The table from above: seats on the rim of the felt, yours at the bottom. */
+.map{position:relative;aspect-ratio:9/5;max-width:440px;margin:12px auto 0}
+.map .felt{position:absolute;left:10%;right:10%;top:14%;bottom:14%;border-radius:50%;background:#0E0E11;border:2px solid var(--line-strong);
+  box-shadow:inset 0 0 0 5px #131317;display:grid;place-items:center}
+.map .felt .mark{width:26px;height:26px;opacity:.2}
+.pod{position:absolute;transform:translate(-50%,-50%);min-width:50px;height:36px;padding:0 6px;border-radius:9px;border:1px solid var(--line-strong);
+  background:var(--raised);color:var(--white);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;white-space:nowrap}
+.pod b{font:800 14px/1 var(--display);letter-spacing:.01em}
+.pod i{font:700 8.5px/1 var(--body);font-style:normal;letter-spacing:.06em;text-transform:uppercase;color:var(--grey)}
+.pod.fold{opacity:.55}                         /* out of the hand: fainter, the name still easy to read */
+.pod.you,.pod.raised,.pod.reraised{background:var(--yellow);border-color:var(--yellow);color:var(--ink);z-index:1}
+.pod.you i,.pod.raised i,.pod.reraised i{color:var(--ink)}
+.pod.raise,.pod.reraise{border-color:var(--yellow)}
+.pod.raise i,.pod.reraise i{color:var(--yellow)}
+.pod.allin{border-color:var(--hot)}
+.pod.allin i{color:var(--hot)}
+.pod.call,.pod.limp{border-color:var(--white)}
+.pod.call i,.pod.limp i{color:var(--white)}
+button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is less faint than one that only folded */
+.map .dealer{position:absolute;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:50%;background:var(--white);color:var(--ink);
+  font:800 11px/18px var(--display);text-align:center}
+.maphint{margin-top:6px;text-align:center}
+.resetall{display:block;width:100%;min-height:40px;margin-top:12px;border-radius:var(--r-in);border:1px solid var(--line-strong);
+  font:600 14px/1 var(--body);color:var(--soft);text-align:center}
+.resetall.undo{border-color:var(--yellow);color:var(--yellow);font-weight:700}
 .sub{margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .sub .eyebrow{flex:none}
 .group{margin-top:10px}
@@ -218,10 +249,21 @@ h1,h2,h3,p{margin:0}
   .clear:hover{color:var(--white)}
   .key:hover{border-color:var(--grey)}
   button.planrow:hover{border-color:var(--grey)}
+  .reset:hover,.resetall:hover{border-color:var(--white);color:var(--white)}
+  .reset.undo:hover,.resetall.undo:hover{border-color:var(--yellow);color:var(--yellow)}
+  button.pod.can:hover{border-color:var(--white);opacity:1}
   .chip.on:hover{border-color:var(--yellow);color:var(--ink)}
 }
 
 /* ---------- 11. Wider ---------- */
+@media (min-width:480px){
+  .reset{padding:0 12px}
+  .reset span{display:inline}
+}
+@media (max-width:399px){
+  .top{gap:8px}
+  .next{padding:0 10px}
+}
 @media (min-width:560px){
   .keys{grid-template-columns:repeat(13,1fr)}
   .key{height:44px;font-size:22px}

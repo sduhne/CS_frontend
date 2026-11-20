@@ -338,6 +338,19 @@ class PageFiles(unittest.TestCase):
         for action in B.ACTIONS:
             self.assertIn(action, js, action)
 
+    def test_the_map_gives_every_line_its_seats_and_reset_goes_back_to_the_start(self):
+        """Read from the script: the browser run checks what they do."""
+        js = self.read("guide.js")
+        lines = re.findall(r'\{id: "(\w+)", group: \d', js)
+        self.assertEqual(len(lines), 11)
+        roles = js[js.index("function roles(st)"):js.index("const POD_TAG")]
+        for line in lines:
+            if line != "open":                     # nobody in: the seats before you folded, the rest wait
+                self.assertIn(f'case "{line}"', roles, line)
+        self.assertIn('data-act="reset"', js)
+        self.assertIn("state = fresh();", js)
+        self.assertIn("const fresh = () => JSON.parse(JSON.stringify(DEFAULTS));", js)
+
     def test_the_page_keeps_its_hands_off_the_table(self):
         """A lookup: it does not read a screen, press a button or hide from anything."""
         js = self.read("guide.js")

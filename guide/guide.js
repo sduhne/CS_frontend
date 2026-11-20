@@ -20,6 +20,9 @@
   const BUBBLE_POINTS = 0.10;           // on the bubble a call of an all-in needs this much equity over the price
   const MARK = '<svg class="mark" viewBox="0 0 40 40" role="img" aria-label="Menlo Bet"><rect width="40" height="40" rx="9" fill="#FFD60A"/>' +
                '<path d="M8 30V11l12 11 12-11v19h-5V22l-7 6.5L13 22v8z" fill="#0A0A0B"/></svg>';
+  const RESET_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+  const PAGE = 2;                       // the page's own number, shown at the foot: which copy of the page is open
+  const UNDO_MS = 8000;                 // how long Reset can be taken back
 
   /* What can have happened before you act.  group 0: your first decision; 1: you raised first; 2: you re-raised. */
   const LINES = [
@@ -381,6 +384,67 @@
       `<button class="chip${small ? " small" : ""}${value === on ? " on" : ""}" aria-pressed="${value === on}"${set({[key]: value})}>${esc(label)}</button>`).join("");
   }
 
+  /* ---------- the table map ---------- */
+
+  /* What each seat is doing in the spot, by its players behind: you / raised / reraised (your own seat),
+     raise, reraise, allin, call, limp, fold, wait (still to act behind you).  The seats are the ones the
+     tables were made for: a second player to raise or move in sits in the seat after the first. */
+  function roles(st) {
+    const n = st.players, h = st.seat, hu = n === 2, out = [];
+    for (let nb = 0; nb < n; nb++) out[nb] = nb > h ? "fold" : nb < h ? "wait" : "you";
+    const mark = (nb, what) => { if (nb !== h && nb >= 0 && nb < n) out[nb] = what; };
+    const mine = (what) => { for (let nb = 0; nb < h; nb++) out[nb] = "fold"; out[h] = what; };
+    switch (st.line) {
+      case "limp":
+        if (hu || (h === 0 && st.limpers === 0)) mark(1, "limp");
+        else if (h === 0) for (let k = 1; k <= st.limpers; k++) mark(1 + k, "limp");      // the small blind folded
+        else for (let k = 1; k <= st.limpers; k++) mark(h + k, "limp");
+        break;
+      case "raise":
+        mark(hu ? 1 : st.from, "raise");
+        if (!hu) for (let k = 1; k <= st.callers; k++) mark(st.from - k, "call");
+        break;
+      case "allin": mark(hu ? 1 : st.from, "allin"); break;
+      case "raise3": mark(st.from, "raise"); mark(st.from - 1, "reraise"); break;
+      case "raise_allin": mark(st.from, "raise"); mark(st.from - 1, "allin"); break;
+      case "two_allin": mark(st.from, "allin"); mark(st.from - 1, "allin"); break;
+      case "re3": mine("raised"); mark(hu ? 0 : st.by3 === 2 ? h - 1 : st.by3, "reraise"); break;
+      case "re_allin": mine("raised"); mark(hu ? 0 : st.byAll, "allin"); break;
+      case "re3_allin": mine("raised"); mark(1, "reraise"); mark(0, "allin"); break;
+      case "sq_allin": mine("reraised"); mark(hu ? 1 : st.from, "allin"); break;
+    }
+    return out;
+  }
+  const POD_TAG = {you: "You", raised: "You raised", reraised: "You re-raised", raise: "Raise", reraise: "Re-raise", allin: "All-in", call: "Call", limp: "Call"};
+
+  /* The table from above, your seat at the bottom, play going clockwise: every seat's name, the dealer
+     button, and who has done what.  A seat the spot asks about ("raise from") can be tapped. */
+  function mapHtml(st) {
+    const n = st.players, h = st.seat, who = roles(st);
+    const pick = st.line === "re_allin" ? {key: "byAll", seats: byAllChoices(st)} : {key: "from", seats: fromSeats(st.line, st)};
+    const dealer = n === 2 ? 1 : 2;
+    const at = (k, reach) => {             // the k-th seat clockwise from yours, as a place on the picture
+      const a = (90 + 360 * k / n) * Math.PI / 180;
+      return `left:${(50 + 40 * reach * Math.cos(a)).toFixed(1)}%;top:${(50 + 36 * reach * Math.sin(a)).toFixed(1)}%`;
+    };
+    let pods = "", chip = "";
+    const said = [];
+    for (let k = 0; k < n; k++) {
+      const nb = ((h - k) % n + n) % n, role = who[nb], name = seatName(nb, n), tag = POD_TAG[role];
+      const inner = `<b>${name}</b>${tag ? `<i>${tag}</i>` : ""}`;
+      if (pick.seats.includes(nb)) {
+        pods += `<button class="pod ${role} can" data-seat="${nb}" style="${at(k, 1)}"${set({[pick.key]: nb})} aria-label="${name}${tag ? ", " + tag.toLowerCase() : ""}: choose this seat">${inner}</button>`;
+      } else pods += `<span class="pod ${role}" data-seat="${nb}" style="${at(k, 1)}">${inner}</span>`;
+      if (nb === dealer) chip = `<span class="dealer" style="${at(k, 0.52)}" title="Dealer button">D</span>`;
+      if (tag && nb !== h) said.push(`${name} ${tag.toLowerCase()}`);
+    }
+    const ask = {raise: "Tap the seat that raised.", sq_allin: "Tap the seat that raised.", raise_allin: "Tap the seat that raised.", raise3: "Tap the seat that raised first.",
+                 allin: "Tap the seat that moved all-in.", two_allin: "Tap the first seat that moved all-in.", re_allin: "Tap the seat that moved all-in."}[st.line];
+    const label = `The table: ${n} players, you are ${seatName(h, n)}` + (said.length ? "; " + said.join(", ") : "");
+    return `<div class="map" role="group" aria-label="${esc(label)}"><span class="felt">${MARK.replace('role="img" aria-label="Menlo Bet"', 'aria-hidden="true"')}</span>${pods}${chip}</div>
+      <p class="hint maphint">Play goes clockwise. D is the dealer button.${pick.seats.length > 1 && ask ? " " + ask : ""}</p>`;
+  }
+
   function inputsHtml(st) {
     const n = st.players;
     const seats = range(n - 1, 0).map((nb) => [nb, seatName(nb, n)]);
@@ -426,6 +490,7 @@
         <div class="head"><span class="eyebrow">Your seat</span>
           <span class="stepper small" role="group" aria-label="Players at the table"><button data-act="fewer" aria-label="One player fewer">&minus;</button><span class="val">${n}</span><button data-act="more" aria-label="One player more">+</button><span class="hint">players</span></span></div>
         <div class="seats">${chipRow(seats, st.seat, "seat")}</div>
+        ${mapHtml(st)}
       </div>
       <div class="field">
         <div class="head"><span class="eyebrow">Stack in big blinds</span><span class="hint">the smaller of yours and theirs</span></div>
@@ -438,6 +503,7 @@
         <div class="sub" style="margin-top:0"><span class="eyebrow">Opponents</span><div class="chips">${chipRow(D.opponents.map((o) => [o, OPP[o] || o]), st.opp, "opp", true)}</div></div>
         <div class="sub"><span class="eyebrow">Style</span><div class="chips">${chipRow(D.styles.map((s) => [s, STYLE[s] || s]), st.style, "style", true)}</div></div>
         <div class="sub"><span class="eyebrow">Stage</span><div class="chips">${chipRow(Object.keys(STAGE).map((s) => [s, STAGE[s]]), st.stage, "stage", true)}</div></div>
+        <button class="resetall${undo ? " undo" : ""}" id="btn-reset-all" data-act="${undo ? "undo" : "reset"}">${undo ? "Undo the reset" : "Reset everything"}</button>
       </div>
     </div>`;
   }
@@ -722,6 +788,27 @@
   const $ = (id) => document.getElementById(id);
   let postOpen = false, notesOpen = false;
 
+  /* Reset puts every choice back to the start.  For a few seconds, or until something else is chosen, the
+     same button takes it back: no question is asked first, and a slip of the finger costs nothing. */
+  let undo = null, undoTimer = null;
+  const fresh = () => JSON.parse(JSON.stringify(DEFAULTS));
+  function forget() { if (undo) { undo = null; clearTimeout(undoTimer); } }
+  function drawReset() {
+    const top = $("btn-reset"), foot = $("btn-reset-all");
+    if (top) {
+      top.className = "reset" + (undo ? " undo" : "");
+      top.dataset.act = undo ? "undo" : "reset";
+      top.title = undo ? "Undo the reset" : "Reset everything";
+      top.setAttribute("aria-label", top.title);
+      top.innerHTML = undo ? "Undo" : `${RESET_ICON}<span>Reset</span>`;
+    }
+    if (foot) {
+      foot.className = "resetall" + (undo ? " undo" : "");
+      foot.dataset.act = undo ? "undo" : "reset";
+      foot.textContent = undo ? "Undo the reset" : "Reset everything";
+    }
+  }
+
   function save() {
     try { localStorage.setItem("menlo-guide", JSON.stringify(state)); } catch (e) { /* private window: nothing is kept */ }
   }
@@ -750,10 +837,12 @@
     if (!$("notes").innerHTML) $("notes").innerHTML = notesHtml(notesOpen);
     const next = $("btn-next");
     if (next) next.innerHTML = `Next hand <b>&rarr; ${seatName((state.seat + 1) % state.players, state.players)}</b>`;
+    drawReset();
     save();
   }
 
   function apply(patch) {
+    forget();
     for (const key in patch) {
       if (key === "post") Object.assign(state.post, patch.post);
       else state[key] = patch[key];
@@ -764,11 +853,13 @@
   }
 
   function pickRank(i) {
+    forget();
     if (state.r1 == null || state.r2 != null) { state.r1 = i; state.r2 = null; state.suited = false; }
     else state.r2 = i;
     render();
   }
   function nextHand() {
+    forget();
     state.seat = (state.seat + 1) % state.players;
     state.r1 = state.r2 = null; state.suited = false;
     state.line = defaultLine(state);
@@ -777,6 +868,20 @@
     window.scrollTo({top: 0});
   }
   function act(name) {
+    if (name === "top") return window.scrollTo({top: 0, behavior: "smooth"});
+    if (name === "reset") {
+      undo = JSON.parse(JSON.stringify(state));
+      state = fresh();
+      clearTimeout(undoTimer);
+      undoTimer = setTimeout(() => { undo = null; drawReset(); }, UNDO_MS);
+      render();
+      return window.scrollTo({top: 0});
+    }
+    if (name === "undo") {
+      if (undo) { state = undo; undo = null; clearTimeout(undoTimer); render(); }
+      return;
+    }
+    forget();
     if (name === "clear") { state.r1 = state.r2 = null; state.suited = false; }
     else if (name === "fewer" || name === "more") {
       const before = state.players;
@@ -785,7 +890,6 @@
       if (!can(state.line, normalize(state))) state.line = defaultLine(state);
     } else if (name === "less" || name === "plus") state.stack = Math.max(1, Math.min(300, Math.round(state.stack) + (name === "plus" ? 1 : -1)));
     else if (name === "next") return nextHand();
-    else if (name === "top") return window.scrollTo({top: 0, behavior: "smooth"});
     render();
   }
 
@@ -797,6 +901,7 @@
     else if (el.dataset.act) act(el.dataset.act);
     else if (el.dataset.hand != null) {
       const h = +el.dataset.hand, i = Math.floor(h / 13), j = h % 13;
+      forget();
       state.r1 = Math.min(i, j); state.r2 = Math.max(i, j); state.suited = i < j;
       render();
     }
@@ -805,6 +910,7 @@
     if (event.target.id !== "stack") return;
     const value = parseFloat(event.target.value);
     if (!(value >= 1)) return;
+    forget();
     state.stack = value;
     render(true);
     document.querySelectorAll(".presets .chip").forEach((chip) => chip.classList.toggle("on", JSON.parse(chip.dataset.set).stack === state.stack));
@@ -834,12 +940,12 @@
     load();
     const root = $("guide");
     root.innerHTML = `<header class="top"><div class="brand">${MARK}<span class="word">Menlo<b>.bet</b></span><span class="sub">Quick guide</span></div>
-        <button class="next" id="btn-next" data-act="next"></button></header>
+        <div class="tools"><button class="reset" id="btn-reset" data-act="reset"></button><button class="next" id="btn-next" data-act="next"></button></div></header>
       <div class="cols">
         <div class="col left"><section id="inputs" aria-label="The spot"></section><section id="post"></section><section id="notes"></section></div>
         <div class="col right"><section id="answer" aria-live="polite" aria-label="The answer"></section><div id="mini" aria-hidden="true"></div><section id="plan"></section><section id="chart"></section></div>
       </div>
-      <p class="foot">Menlo.bet quick guide &middot; a study aid &middot; tables v${D.version}${D.quick || D.partial ? " (trial set)" : ""}</p>`;
+      <p class="foot">Menlo.bet quick guide &middot; a study aid &middot; page ${PAGE} &middot; tables v${D.version}${D.quick || D.partial ? " (trial set)" : ""}</p>`;
     root.addEventListener("click", onClick);
     root.addEventListener("input", onInput);
     root.addEventListener("toggle", onToggle, true);
@@ -865,7 +971,7 @@
       return {fam: res.fam, key: res.key, name: a.name, close: a.close, size: sizeOf(a.name, res.table)};
     },
     equity: (hand, marks) => equity(D.hands.indexOf(hand), marks),
-    postAdvice, state: () => state, seatName,
+    postAdvice, state: () => state, seatName, roles: (st) => roles(normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st))),
   };
 
   function boot() {

@@ -424,6 +424,12 @@ python3 -m unittest tests.test_guide                 # the style, the builder, t
   hand in the chart), what happened before them, their seat and the table
   size (2 to 9), the stack, opponents (Standard, Tight, Loose), style (Play
   to win, Tight), stage (Normal, Bubble). "Next hand" moves the seat on.
+  A map of the table under the seats shows every seat's name with the
+  user's seat at the bottom, the dealer button, and who raised, called or
+  moved all-in (`roles` and `mapHtml` in `guide/guide.js`); a seat the spot
+  asks about can be tapped there. Reset (the round arrow at the top, or
+  "Reset everything" under the choices) puts every choice back; the same
+  button is Undo for eight seconds or until the next choice.
 - **What happened** is one of eleven lines. First decision: nobody in,
   limpers, a raise (with callers), an all-in, a raise and a re-raise, a raise
   and an all-in, two all-ins. After the user's raise: a re-raise, an all-in,
