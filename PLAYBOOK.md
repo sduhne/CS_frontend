@@ -918,12 +918,15 @@ theirs.
 - **13 to 16bb, first in:** a hand of the row that is not a profitable
   all-in is raised to 2bb, and folded to an all-in unless the plan under it
   says call. The tight style folds it.
-- **Big blind against one small raise, 25bb or less:** an all-in must earn
-  more than the call is worth. The call's worth is the share of its equity
-  a hand turns into chips after the flop (suited connectors 95%, other
-  suited hands 88%, two offsuit cards ten or higher 85%, pairs 80%, other
-  offsuit hands 72%) times the pot, less the call. So 76s and A2o call a
-  cutoff raise with 20bb, and 55 and AJo still move all-in.
+- **Against a raise from the cutoff or the button:** more calls and
+  re-raises than the tight chart. Against a raise from the first seats 13%
+  of hands instead of 9% (call JJ-66, AQs-ATs, KQs, KJs, QJs, JTs and AQo;
+  small pairs with 15 times the raise behind; deeper than 45bb re-raise
+  A5s and A4s as a bluff). Against the hijack 16% instead of 12%; on the
+  button against the cutoff 20% instead of 15% (adds 44, A9s, A8s, 87s and
+  KJo to the calls). A solver plays about 25% on the button against a
+  first-seat raise with 100bb: this goes half of the way. The hijack and
+  earlier seats, and the small blind's calls, keep the tight chart.
 - **In position against a raise, 15 to 25bb:** a hand the chart plays that
   is no profitable all-in calls, with 10 points over the price.
 - **You raised and were re-raised:** the all-in needs half as much (0.25bb,
@@ -936,3 +939,79 @@ theirs.
   solved, and nothing here has been measured against results. They are
   right for a table that plays back the way these ranges assume; against
   players who never fold, drop the bottom of each row.
+
+### The big blind against a raise (both styles of the guide)
+
+One test for every hand, at every stack:
+
+    equity against the raiser's range  x  the share of it the hand keeps
+        must be at least  the price of the call + 3 points   (Tight: 5)
+
+- **The price** is the call as a share of the pot after it. With a big
+  blind ante and the small blind out: a raise to 2bb asks for 18%, 2.2bb
+  20%, 2.5bb 23%, 3bb 27%, 4bb 32%. That is the whole effect of the size of
+  the raise, and it is large: the guide asks how much they raised.
+- **The share a hand keeps.** Out of position a hand folds some flops it
+  would have won, so it turns only a part of its equity into chips: more
+  when it is suited, connected or high.
+
+  | Hand | Keeps | Hand | Keeps | Hand | Keeps |
+  |---|---|---|---|---|---|
+  | AA | 100% | AKs, KQs | 105% | KQo | 92% |
+  | 77 | 86% | T9s | 104% | AJo, T9o | 84% |
+  | 22 | 76% | A5s | 95% | K7o | 70% |
+  | | | 76s | 93% | Q5o | 66% |
+  | | | K7s | 90% | 72o | 54% |
+  | | | 32s | 76% | | |
+
+  Offsuit hands keep 2 points less each time the stack doubles over 25bb.
+  Against a raise from the small blind the big blind acts last and every
+  hand keeps 22 points more (110% at most).
+- **Or an all-in.** With 25bb or less a hand moves all-in when that earns
+  0.15bb or more; in Play to win only when it also earns more than the call
+  is worth (the kept equity times the pot, less the call).
+- **Every stack.** The coach's default style calls a raise only when it
+  costs 12% of the stack or less and moves all-in or folds below that: with
+  9bb it folds 63% of hands to a button raise of 2bb. The guide's styles do
+  not. The price is the same 18% at 8bb, the big blind folds the same 16%
+  of hands, and after a call this short the flop decides it: all-in with
+  any pair or any draw, otherwise give up.
+- **Against a solver.** How often the big blind folds: GTO Wizard's numbers
+  as PokerNews printed them in 2026, and the guide's tables.
+
+  | Raise from | to | Stack | Solver | Play to win | Tight |
+  |---|---|---|---|---|---|
+  | First seat of eight | 2bb | 25bb | 27% | 31% | 47% |
+  | First seat of eight | 3bb | 25bb | 71% | 69% | 79% |
+  | First seat of eight | 2bb | 50bb | 32% | 33% | 50% |
+  | First seat of eight | 3bb | 50bb | 73% | 69% | 80% |
+  | First seat of eight | 2.1bb (guide: 2.2bb) | 100bb | 37% | 45% | 62% |
+  | First seat of eight | 3bb | 100bb | 73% | 70% | 82% |
+  | Cutoff | 2.2bb | 100bb | 23% | 33% | 46% |
+  | Cutoff | 3bb | 100bb | 47% | 57% | 69% |
+  | Small blind | 2bb | 25bb | next to none | 1% | 9% |
+  | Small blind | 2bb | 100bb | 1% | 5% | 14% |
+
+  Against the small blind's 3.5bb with 100bb the solver calls 57% and
+  re-raises more; Play to win folds 32% to 3bb and 47% to 4bb. So Play to
+  win is within 4 points of the solver against an early raise with 25 to
+  50bb and folds about 10 points more often against the cutoff with 100bb;
+  Tight folds 10 to 17 points more than Play to win.
+- **At the table.** Q5o in the big blind calls a cutoff raise to 2bb with
+  20bb and folds to 2.5bb. A call that looks too loose is usually the
+  answer for a smaller raise than the one that was made: check the size.
+- **Callers in the pot.** The price counts their chips, so the equity
+  counts their hands: each opponent by his odds against the hand (three
+  hands of the same strength win a third each; against the cards dealt out
+  this is right to a point on average, and 3 points low for suited
+  connectors). The margin shrinks with the fair share of the pot: 2 points
+  with one caller, 1.5 with two. The big blind then folds more than
+  heads-up, although the price is better: with 40bb against a cutoff raise
+  to 2bb Play to win folds 22% of hands, 39% when the button has called,
+  52% when the small blind has called too. What still calls is suited,
+  connected or high; offsuit hands like Q5o and J4o go. A player who
+  called is taken to hold what his seat's chart calls with; a small blind
+  who called, the button's calls (his own chart re-raises or folds).
+- **Limits.** The share is a formula set against those ten numbers, not a
+  solver, and nothing above has been set against a solver for pots with
+  callers in.

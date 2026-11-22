@@ -410,20 +410,28 @@ by asking the engine about each of the 169 hands of every spot before the
 flop.
 
 ```bash
-python3 tools/build_guide.py                         # every table -> guide/data.js (about 45 minutes on four processors)
+python3 tools/build_guide.py                         # every table -> guide/data.js (about 70 minutes on four processors)
 python3 tools/build_guide.py --only open,vsraise --styles win    # some again; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py <folder>           # one HTML file and data.json, to publish as an Artifact
 python3 -m poker_coach quick --hand A7o --stack 40 --pos CO --goal chips --style win   # one of its answers, from the engine
+python3 -m poker_coach quick --hand Q5o --stack 20 --pos BB --facing "CO raise 3bb" --goal chips --style win   # against a raise of a given size
 python3 -m unittest tests.test_guide                 # the style, the builder, the tables against the engine
 ```
 
 - **To open it:** `guide/index.html` in a browser ("Open Quick Guide.bat"),
-  or the folder behind a web server (`deploy/README.md`, for
-  `https://menlo.bet/guide/`). It needs no Python and no network.
+  or the folder behind a web server (`deploy/README.md`; the user's copy is
+  at `https://menlo.bet/poker/`, behind a login). It needs no Python and no
+  network.
 - **What the user sets**, one tap each: two ranks and suited or offsuit (or a
   hand in the chart), what happened before them, their seat and the table
   size (2 to 9), the stack, opponents (Standard, Tight, Loose), style (Play
   to win, Tight), stage (Normal, Bubble). "Next hand" moves the seat on.
+- **How much they raised.** Under a raise: "Raised to" 2bb, 2.2bb, 2.5bb,
+  3bb or 4bb+ (read as 4bb). Until the user picks, it is the engine's usual
+  size for the stack (2bb under 25bb, 2.2bb from there; 2.5bb and 3bb from
+  the small blind); a pick stays for the next hands and goes with Reset.
+  When the user's own raise is re-raised: "Re-raised to", 2.5, 3, 4 or 5
+  times their raise (usual: 3 times from a seat behind, 4 from a blind).
   A map of the table under the seats shows every seat's name with the
   user's seat at the bottom, the dealer button, and who raised, called or
   moved all-in (`roles` and `mapHtml` in `guide/guide.js`); a seat the spot
@@ -439,10 +447,25 @@ python3 -m unittest tests.test_guide                 # the style, the builder, t
 - **The answers are the engine's, on chips:** no prizes, a big blind ante of
   1bb, equal stacks. `Play to win` is `ranges.set_style("win")`: wider
   opening rows (13% first to act at nine players, 36% cutoff, 50% button),
-  the same rows for the opponents, a small raise with 13 to 16bb where the
-  all-in does not earn, the big blind's call where it is worth more than an
-  all-in, wider calls of a re-raise in position. `Tight` is the default
-  style: the ranges of this file. Every other command keeps the default.
+  the same rows for the opponents, more calls and re-raises of a raise from
+  the cutoff and the button, a small raise with 13 to 16bb where the all-in
+  does not earn, wider calls of a re-raise in position. `Tight` is
+  `set_style("tight")`: the opening rows and charts of this file. Every
+  other command keeps the default style (`tag`).
+- **The big blind against a raise** is tested the same way in both of the
+  guide's styles (`preflop.bb_realised`): the hand's equity against the
+  raiser's range, times the share of it the hand keeps after the flop, must
+  beat the price of the call by 3 points (Tight: 5). Suited, connected and
+  high cards keep more; every hand keeps more when the raise came from the
+  small blind, because the big blind then acts last. It holds at every
+  stack: the default style's rule that a call may cost 12% of the stack at
+  most is not used, so with 8bb the big blind still calls a small raise
+  and plays the flop for its stack. With callers in the pot the equity is
+  taken against all of them, so it folds more than heads-up at a better
+  price. Against a solver's published fold rates it folds a few points
+  more often (@PLAYBOOK.md, "Play to win"). So a call with a weak hand is
+  right against 2bb and wrong against 3bb: when the user doubts a big
+  blind call, ask how big the raise was and whether anybody had called.
 - **The page works out three things itself:** how many hands take each
   action; the equity of the hand against the range the table names (from
   the engine's hand-against-hand numbers); and the bubble rule (the close
@@ -455,8 +478,9 @@ python3 -m unittest tests.test_guide                 # the style, the builder, t
   table uses the last seats. Checked: for random spots at 2 to 9 players the
   page's answer equals the engine asked at that table size.
 - **When an answer looks wrong**, ask for the title over the chart (seat,
-  what happened, stack) and the three options, then run `quick` with
-  `--goal chips --style win` (no `--style` for Tight) and `--opponents
+  what happened with the size of the raise, stack) and the three options,
+  then run `quick` with `--goal chips --style win` (`--style tight` for
+  Tight), the raise in `--facing` (`"CO raise 3bb"`) and `--opponents
   tight` or `loose`. If `quick` says the same, the cause is in the engine;
   if not, it is `lookup` in `guide/guide.js`, or the tables are stale.
 - **Tables go stale when the engine changes.**
@@ -466,9 +490,14 @@ python3 -m unittest tests.test_guide                 # the style, the builder, t
   and an all-in, two all-ins, a re-raise and an all-in behind the user's
   raise) are made for the big blind and four first seats; a raise and a
   re-raise for the big blind. A stack between two of the 28 on the grid is
-  read at the nearest. The looser rows are written by hand from standard
-  ranges, not solved. Checked in headless Chromium on Linux only: never on
-  the user's phone or on Windows. Say so.
+  read at the nearest. A raise over 4bb is read as 4bb. A raise of two
+  fifths of the raiser's stack is priced as an all-in; behind callers that
+  size is not offered (the engine needs 14 seconds a spot there) and the
+  page says to read it as two all-ins. The looser rows are written by hand
+  from standard ranges, not solved, and the share a hand keeps in the big
+  blind is a formula set against published solver fold rates. Checked in
+  headless Chromium on Linux only: never on the user's phone or on
+  Windows. Say so.
 - **It is a chart.** Sites forbid charts and outside help during real-money
   play. If the user says they use it there, say so once and offer a review
   instead. Do not add anything that reads the screen or the poker client.
@@ -844,5 +873,5 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   `python3 tools/build_spin.py` (spin tables, about 7 minutes; it reads the
   All-In or Fold tables), then `python3 tools/spin_sim.py` (the whole-game
   simulation, about 6 minutes); `python3 tools/build_guide.py` (the quick
-  guide's tables, about 45 minutes; needed after any change to the engine's
+  guide's tables, about 70 minutes; needed after any change to the engine's
   answers before the flop).

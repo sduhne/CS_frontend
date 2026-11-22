@@ -241,6 +241,73 @@ class Preflop(unittest.TestCase):
         self.assertEqual(self.go("KK", 40, "BTN", "UTG raise 2.2bb, HJ raise 6.5bb").action, "ALL-IN")
         self.assertEqual(self.go("AJo", 40, "BTN", "UTG raise 2.2bb, HJ raise 6.5bb").action, "FOLD")
 
+    def test_a_raiser_who_is_priced_in_is_the_hand_to_beat(self):
+        """An all-in over a raise the raiser has to call anyway.  The solver takes one caller at a time: with the
+        player behind taken first, his call made the raise dead money and fed on itself, and the small blind
+        moved all-in with T4o for 7bb over a first-seat raise to 2.5bb ("40% when called", against a range it
+        has 28% against)."""
+        from poker_coach import preflop
+        from poker_coach.pushfold import Caller
+        for hand, action in (("T4o", "FOLD"), ("K9o", "FOLD"), ("JTs", "FOLD"), ("AJo", "ALL-IN"), ("77", "ALL-IN")):
+            self.assertEqual(self.go(hand, 7, "SB", "UTG raise 2.5bb").action, action, hand)
+        said = " ".join(self.go("T4o", 7, "SB", "UTG raise 2.5bb").numbers)
+        self.assertRegex(said, r"when called you have 2[5-9]%")
+        # who is taken together: the raiser and his callers once he needs a third of the pot or less
+        behind, raiser, flat = (Caller(8, "bb", 0.4, 0.0, 0.0, chip_req=0.36), Caller(0, "utg", 0.3, 0.0, 0.0, chip_req=0.30),
+                                Caller(1, "utg1", 0.3, 0.0, 0.0, chip_req=0.29))
+        group = lambda flats: [c.idx for c in preflop._taken_together(                 # noqa: E731
+            [behind, raiser] + ([flat] if flats else []), 0, flats)]
+        self.assertEqual(group({}), [0])
+        self.assertEqual(group({1: None}), [0, 1])
+        raiser.chip_req = preflop._PRICED_IN + 0.01             # he can still fold: one caller at a time, as before
+        self.assertEqual(group({}), [])
+        self.assertEqual(group({1: None}), [0, 1])              # ... but never with players who called him in the pot
+        raiser.chip_req = 0.0                                   # nothing left to call: placed by the spot itself
+        self.assertEqual(group({}), [])
+        self.assertEqual(group({1: None}), [])
+        # at an ordinary depth nothing moved: the button over a cutoff raise with 20bb
+        self.assertTrue(self.go("AJo", 20, "BTN", "CO raise 2.2bb").action.startswith("ALL-IN"))
+        self.assertEqual(self.go("K9o", 20, "BTN", "CO raise 2.2bb").action, "FOLD")
+
+    def test_callers_who_are_priced_in_have_hands_too(self):
+        """An all-in over a raise and calls, when none of them can fold: the shover has to beat them all.  (Their
+        chips were dead money: the button moved all-in with 62% of hands for 11bb over a raise to 4bb and two
+        calls.)"""
+        from poker_coach.pushfold import beats_all, solve_shove, Caller
+        line = "LJ raise 4bb, HJ call, CO call"
+        for hand, action in (("K9o", "FOLD"), ("98s", "FOLD"), ("A5o", "FOLD"), ("JTs", "FOLD"), ("TT", "ALL-IN"), ("AKo", "ALL-IN")):
+            self.assertEqual(self.go(hand, 11, "BTN", line).action, action, hand)
+        self.assertEqual(self.go("T4o", 16, "SB", "UTG raise 4bb, UTG+1 call, UTG+2 call").action, "FOLD")
+        self.assertEqual(self.go("K9o", 16, "SB", "UTG raise 4bb, UTG+1 call, UTG+2 call").action, "FOLD")
+        # the same a little deeper, where the raiser could fold: 12bb and 13bb are no longer two different games
+        for stack in (12, 13, 16):
+            for hand, action in (("J8o", "FOLD"), ("K9o", "FOLD"), ("QQ", "ALL-IN")):
+                self.assertEqual(self.go(hand, stack, "SB", "HJ raise 2bb, CO call, BTN call").action.split()[0], action.split()[0], (hand, stack))
+        said = " ".join(self.go("TT", 11, "BTN", line).numbers)
+        self.assertRegex(said, r"when called you have [34]\d%")           # against three hands, not 60% against one
+        # the chance against several players, from the equity against each
+        self.assertAlmostEqual(beats_all([0.5, 0.5]), 1 / 3)
+        self.assertAlmostEqual(beats_all([0.5, 0.5, 0.5]), 1 / 4)
+        self.assertAlmostEqual(beats_all([0.4]), 0.4)
+        self.assertAlmostEqual(beats_all([0.85, 0.85]), 0.739, places=3)
+        self.assertEqual(beats_all([0.3, 0.0]), 0.0)
+        # ... is close to the cards dealt out: a cutoff raise and the button's call
+        from poker_coach.equity import preflop_equity
+        from poker_coach.preflop import flat_range
+        from poker_coach.ranges import villain_open_range
+        ranges = [villain_open_range(3, "unknown", 40.0), flat_range(3, 2)]
+        for hand in ("AJo", "77", "Q5o", "T9s"):
+            h = HAND_INDEX[hand]
+            exact = preflop_equity(h, None, ranges, iters=12000)
+            self.assertAlmostEqual(beats_all([eq_vs_range(h, r)[0] for r in ranges]), exact, delta=0.045, msg=hand)
+        # in the solver: one member taken together is the same as that caller taken first
+        one = [Caller(1, "raiser", 0.30, 30.0, 0.0, prior=parse_range("22+, A2s+, KTs+, ATo+, KQo")), Caller(2, "bb", 0.45, 24.0, 0.0)]
+        plain = solve_shove(8.0, 12.5, one)
+        one = [Caller(1, "raiser", 0.30, 30.0, 0.0, prior=parse_range("22+, A2s+, KTs+, ATo+, KQo")), Caller(2, "bb", 0.45, 24.0, 0.0)]
+        grouped = solve_shove(8.0, 12.5, one, together=([one[0]], {1: (30.0, 0.0)}))
+        for h in (0, 50, 100, 168):
+            self.assertAlmostEqual(plain.ev[h], grouped.ev[h], places=9)
+
     def test_a_re_raise_and_an_all_in_behind_my_raise(self):
         """I raise, one player re-raises and another moves all-in over both: the narrowest range before the
         flop.  (It was priced as a plain all-in over my raise, a range four times as wide: tens moved all-in.)"""

@@ -23,8 +23,8 @@ Cards, seat, stack in big blinds, what happened before you: the play, one
 sentence of why, the numbers behind it and the whole chart, at once. Nothing
 is worked out while you play: every answer is read from tables that
 `tools/build_guide.py` made by asking the engine about each of the 169 hands
-of every spot before the flop (37,692 spots, 17,546 different tables: every seat, 28 stack
-sizes, three kinds of opponent, two styles).
+of every spot before the flop (93,780 spots, 39,835 different tables: every seat, 28 stack
+sizes, five sizes of a raise and four of a re-raise, three kinds of opponent, two styles).
 
 **To open it:** double-click `guide/index.html` ("Open Quick Guide.bat" on
 Windows). It is a page on your own computer: no Python, no internet. On a
@@ -39,6 +39,11 @@ web server it is a folder of files (`deploy/README.md`).
   callers), an all-in, a raise and a re-raise, a raise and an all-in, two
   all-ins. If you already raised: a re-raise, an all-in, or a re-raise and
   an all-in behind you. If you re-raised: the raiser moved all-in.
+- **How much they raised:** under a raise, "Raised to" 2bb, 2.2bb, 2.5bb,
+  3bb or 4bb+ (read as 4bb). It starts from the usual size for the stack
+  and stays as you set it for the next hands. When your own raise is
+  re-raised, "Re-raised to" has four sizes: 2.5, 3, 4 and 5 times your
+  raise.
 - **Your seat** and the number of players (2 to 9). "Next hand" moves your
   seat on by one and clears the cards.
 - **The table map** under the seats: the table from above with your seat at
@@ -56,8 +61,10 @@ web server it is a folder of files (`deploy/README.md`).
 **What it shows:**
 
 - The play and its size, and whether it is close.
-- "They raise 36%. You have about 58%. A call needs 18%": the range the
-  table assumes, your equity against it, and the price.
+- "They raise 36%. You have about 37%. The price is 18%. This hand needs
+  32%": the range the table assumes, your equity against it, the price of
+  the call and, in the big blind, what this hand needs once the part of
+  its equity it keeps after the flop is counted.
 - **If the hand goes on:** what to do with the same hand if you are
   re-raised, if a player moves all-in behind you, or both. One tap opens
   that chart.
@@ -67,24 +74,34 @@ web server it is a folder of files (`deploy/README.md`).
   bet you face, the street, the board and the chips behind.
 
 **What the answers are.** The engine's, counting chips only (no prizes), with
-a big blind ante and equal stacks. **Play to win** opens and defends wider
-than the coach's tight ranges (`PLAYBOOK.md`, "Play to win"); **Tight** is
-those ranges. **Bubble** folds the close plays and asks 10 points of equity
-more before calling an all-in: a rule of thumb, not a prize calculation.
-For real stacks and prizes the table app is exact.
+a big blind ante and equal stacks. **Play to win** opens wider than the
+coach's tight ranges and, from the cutoff and the button, calls and
+re-raises a raise with more hands (`PLAYBOOK.md`, "Play to win"); **Tight**
+keeps the tight ranges. In both, the big blind's call of a raise is tested
+hand by hand against its price, at every stack: a small raise is called
+with many hands, a big one with few (the same section, with a solver's
+numbers beside it). **Bubble** folds the close plays and asks 10 points of
+equity more before calling an all-in: a rule of thumb, not a prize
+calculation. For real stacks and prizes the table app is exact.
 
 **Limits.** Stacks are taken as equal. Spots with three players in the pot
 are made for the big blind and four first seats, and the page says so when
 yours is read from a neighbour. A stack between two of the 28 on the grid
-is read at the nearest. The wider opening rows are written by hand from
-standard ranges, not solved. After the flop it is rules, not a solver.
-Checked in headless Chromium on Linux only.
+is read at the nearest. A raise bigger than 4bb is read as 4bb. A raise of
+two fifths of the raiser's stack or more is priced as an all-in, with the
+hands that player moves all-in with, so the answers step there (2bb into a
+5bb stack, against 2bb into 6bb); behind callers the page does not offer
+that size (read it as two all-ins). The
+wider opening rows are written by hand from standard ranges, not solved,
+and the share of its equity a hand keeps in the big blind is a formula set
+against a solver's published fold rates, not a solver. After the flop it is
+rules, not a solver. Checked in headless Chromium on Linux only.
 
 It is a chart. Most real-money sites forbid charts and outside help while
 you play: use it to study, to review hands and where help is allowed.
 
 ```bash
-python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 45 minutes on four processors
+python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 70 minutes on four processors
 python3 tools/build_guide.py --only open --styles win    # some of them; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py out/       # the page as one file, with data.json beside it
 python3 -m unittest tests.test_guide         # about 20 seconds
@@ -750,5 +767,5 @@ python3 tools/build_binary.py       # all-in or fold tournament tables, half a m
 python3 tools/build_tag.py          # tight-aggressive sheet for 6, 7 and 8 players, about a minute and a half
 python3 tools/build_spin.py         # spin tables (3 players and heads-up), about 7 minutes
 python3 tools/spin_sim.py           # whole spin games played with those tables, about 6 minutes
-python3 tools/build_guide.py        # the quick guide's tables (guide/data.js), about 45 minutes; after any change to the engine before the flop
+python3 tools/build_guide.py        # the quick guide's tables (guide/data.js), about 70 minutes; after any change to the engine before the flop
 ```

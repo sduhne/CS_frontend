@@ -117,10 +117,32 @@ class Solution:
         return None
 
 
+def beats_all(equities) -> float:
+    """The chance to win a pot against several players at once, from the equity against each alone.
+
+    Each opponent counts by his odds against the hand: 1 / (1 + the sum of (1 - e) / e).  Three hands of the
+    same strength win a third each (the plain product of the equities would say a quarter), aces that have
+    85% against each of two players win 74% against both, and against one player it is the equity itself."""
+    against = 0.0
+    for e in equities:
+        if e <= 0.0:
+            return 0.0
+        against += (1.0 - e) / e
+    return 1.0 / (1.0 + against)
+
+
 def solve_shove(v_fold: float, v_steal: float, callers: list[Caller],
                 shover_prior: list[float] | None = None, iters: int = 40,
-                unit: float = 1.0) -> Solution:
-    """Fictitious play between the shover's range and every caller's range."""
+                unit: float = 1.0, together: tuple | None = None) -> Solution:
+    """Fictitious play between the shover's range and every caller's range.
+
+    The shover is set against one caller at a time, in the order of ``callers``: when two would call, the
+    first is the hand to beat and the other's chips are dead money.  ``together`` names callers for whom
+    that is not good enough, as ``(members, values)``: they are taken first and as a group.  Each calls or
+    folds on his own, and against those who call the shover has to beat all of them (``beats_all`` of his
+    equities against each); ``values[mask]`` is ``(value when he does, value when he does not)`` for the
+    members whose bit is set in ``mask``, in the order of ``members``.
+    """
     prior = shover_prior or _FULL
     order = allin_order()
     shove = [min(p, w) for p, w in zip(prior, top_percent(35.0, order))]
@@ -134,11 +156,37 @@ def solve_shove(v_fold: float, v_steal: float, callers: list[Caller],
 
     eq_called = [0.5] * 169
 
+    members, group_values = together if together else ([], {})
+    group = [c.idx for c in members]
+
     def shove_ev(use_callers):
         stay = [1.0] * 169
         ev = [0.0] * 169
         eq_num = [0.0] * 169
+        if members:
+            seen = [(all_vs_range(c.call_range), prior_mass[c.idx]) for c in members]
+            k = len(members)
+            for h in range(169):
+                ps, es = [], []
+                for (eqs, probs), pm in seen:
+                    p = probs[h] if pm is None else (probs[h] / pm[h] if pm[h] > 0 else 0.0)
+                    ps.append(1.0 if p > 1.0 else p)
+                    es.append(eqs[h])
+                for mask in range(1, 1 << k):
+                    chance, odds = 1.0, [es[i] for i in range(k) if mask >> i & 1]
+                    for i in range(k):
+                        chance *= ps[i] if mask >> i & 1 else 1.0 - ps[i]
+                    if chance <= 0.0:
+                        continue
+                    win = beats_all(odds)
+                    vw, vl = group_values[mask]
+                    ev[h] += chance * (win * vw + (1.0 - win) * vl)
+                    eq_num[h] += chance * win
+                for p in ps:
+                    stay[h] *= 1.0 - p
         for c in use_callers:
+            if c.idx in group:
+                continue
             eqs, probs = all_vs_range(c.call_range)
             pm = prior_mass[c.idx]
             vw, vl = c.v_win, c.v_lose

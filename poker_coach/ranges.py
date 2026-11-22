@@ -89,7 +89,9 @@ def _ladder(level: int) -> tuple[float, ...]:
 #        guide's tables are built with it (tools/build_guide.py).
 # The style is set for a whole run (``use_style``), not per spot.
 
-STYLES = ("tag", "win")
+STYLES = ("tag", "win", "tight")         # tag: the default.  win and tight are the quick guide's two styles:
+                                        # win has the wider rows; tight has the default rows, and both
+                                        # use the guide's test for the big blind's call (preflop.bb_realised)
 _style = "tag"
 
 # By players behind (8 = first to act at a full table of nine ... 2 = button, 1 = small blind), then two
@@ -338,15 +340,48 @@ _VS_OPEN = {
 }
 
 
+# The looser style's chart against a raise.  Only the rows that differ are written: the big blind's rows
+# are the tight style's (its calls go by the price), and so is the raise from the small blind.  "LATE" is
+# the cutoff and the button, where a call has few players left to act behind it; the seats before them
+# ("IP") keep close to the tight lists.  The widths are about half-way from the tight chart to a solver's
+# (button against a raise from the first seat, 100bb: 9% tight, 13% here, 25% a solver): a solver's calls
+# in position need a solver's play after the flop.
+_VS_OPEN_WIN = {
+    ("EP", "IP"): dict(value="QQ+, AKs, AKo", bluff="A5s",
+                       call="JJ-77, AQs, AJs, KQs", setmine="66-22",
+                       deep="ATs, KJs, QJs, JTs, T9s"),
+    ("EP", "LATE"): dict(value="QQ+, AKs, AKo", bluff="A5s-A4s",
+                         call="JJ-66, AQs-ATs, KQs-KJs, QJs, JTs, AQo", setmine="55-22",
+                         deep="KTs, QTs, T9s, 98s, 87s, KQo"),
+    ("MP", "LATE"): dict(value="JJ+, AKs, AKo, AQs", bluff="A5s-A3s, KTs",
+                         call="TT-66, AJs-A9s, KQs-KJs, QJs-QTs, JTs, T9s, 98s, AQo, KQo", setmine="55-22",
+                         deep="87s, 76s, K9s, J9s, AJo"),
+    ("MP", "SB"): dict(value="JJ+, AKs, AKo, AQs", bluff="A5s-A4s, KJs", call="TT-99, AJs, KQs",
+                       setmine="", deep=""),
+    ("LP", "LATE"): dict(value="TT+, AJs+, AQo+, KQs", bluff="A5s-A2s, K9s, Q9s, J9s, T8s",
+                         call="99-44, ATs-A8s, KJs-KTs, QJs-QTs, JTs, T9s, 98s, 87s, AJo, KQo, KJo",
+                         setmine="33-22", deep="76s, 65s, K8s, ATo, QJo"),
+    ("LP", "SB"): dict(value="TT+, AJs+, AQo+, KQs", bluff="A5s-A2s, ATs, KJs-KTs, QJs, JTs, T9s, 99",
+                       call="", setmine="", deep=""),
+}
+
+
 @lru_cache(maxsize=None)
-def vs_open_chart(opener_n_behind: int, hero_n_behind: int) -> dict:
-    """3-bet / call sets for hero facing an open, as 169-weight ranges."""
+def _vs_open_chart(style_name: str, opener_n_behind: int, hero_n_behind: int) -> dict:
     ocat = opener_category(opener_n_behind)
     hcat = "BB" if hero_n_behind == 0 else "SB" if hero_n_behind == 1 else "IP"
     if ocat == "SB":
         hcat = "BB"
     raw = _VS_OPEN[(ocat, hcat)]
+    if style_name == "win":
+        late = "LATE" if hcat == "IP" and hero_n_behind <= 3 else hcat
+        raw = _VS_OPEN_WIN.get((ocat, late)) or _VS_OPEN_WIN.get((ocat, hcat)) or raw
     return {k: tuple(parse_range(v)) if v else tuple([0.0] * 169) for k, v in raw.items()}
+
+
+def vs_open_chart(opener_n_behind: int, hero_n_behind: int) -> dict:
+    """3-bet / call sets for hero facing an open, as 169-weight ranges (of the style in use)."""
+    return _vs_open_chart(_style, opener_n_behind, hero_n_behind)
 
 
 def threebet_range(opener_n_behind: int, ptype: str = "unknown") -> list[float]:

@@ -1340,8 +1340,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--entrants", type=int)
     p.add_argument("--avg-bb", dest="avg_bb", type=float)
     p.add_argument("--goal", choices=S.GOALS, default="itm")
-    p.add_argument("--style", choices=("tag", "win"), default="tag",
-                   help="tag: the coach's tight ranges (default); win: the wider rows of the quick guide")
+    p.add_argument("--style", choices=("tag", "win", "tight"), default="tag",
+                   help="tag: the coach's ranges (default); win and tight: the quick guide's two styles "
+                        "(win has the wider rows; both test the big blind's call by what the hand realises)")
     p.add_argument("--opponents", choices=sorted(PLAYER_TYPES), help="every opponent is of this type (the quick guide's Opponents)")
     _add_postflop_args(p)
     p.set_defaults(fn=cmd_quick)

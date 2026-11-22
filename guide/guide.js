@@ -15,13 +15,14 @@
   const FIXED = ["BB", "SB", "BTN", "CO", "HJ", "LJ"];
   const PRESETS = [6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 100];
   const OPP = {unknown: "Standard", tight: "Tight", loose: "Loose"};
-  const STYLE = {win: "Play to win", tag: "Tight"};
+  const STYLE = {win: "Play to win", tight: "Tight", tag: "Tight"};
   const STAGE = {chips: "Normal", bubble: "Bubble"};
   const BUBBLE_POINTS = 0.10;           // on the bubble a call of an all-in needs this much equity over the price
   const MARK = '<svg class="mark" viewBox="0 0 40 40" role="img" aria-label="Menlo Bet"><rect width="40" height="40" rx="9" fill="#FFD60A"/>' +
                '<path d="M8 30V11l12 11 12-11v19h-5V22l-7 6.5L13 22v8z" fill="#0A0A0B"/></svg>';
   const RESET_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
-  const PAGE = 2;                       // the page's own number, shown at the foot: which copy of the page is open
+  const PAGE = 3;                       // the page's own number, shown at the foot: which copy of the page is open
+  const TABLES = 2;                     // the oldest tables this page can read (2: the size of a raise is in the keys)
   const UNDO_MS = 8000;                 // how long Reset can be taken back
 
   /* What can have happened before you act.  group 0: your first decision; 1: you raised first; 2: you re-raised. */
@@ -48,6 +49,7 @@
   const DEFAULTS = {
     players: 8, seat: 2, stack: 25, r1: null, r2: null, suited: false,
     line: "open", from: 3, callers: 0, limpers: 1, by3: 0, byAll: 0,
+    size: null, resize: null,           // the raise and the re-raise you face, as places in D.sizes: null is the usual size
     opp: "unknown", style: "win", stage: "chips",
     post: {role: "raiser", n: "hu", pos: "ip", street: "flop", hand: null, board: "dry", facing: "none", spr: "mid"},
   };
@@ -145,12 +147,65 @@
   const byAllChoices = (st) => (st.players === 2 ? [] : range(st.seat - 1, 0));
   const defaultLine = (st) => (st.seat === 0 ? "raise" : "open");
 
+  /* ---------- how much they raised ---------- */
+
+  const gridStack = (stack) => D.stacks.slice().sort((a, b) => Math.abs(a - stack) - Math.abs(b - stack) || a - b)[0];
+  /* Which of the three usual sizes applies: 0 a raiser who is not a blind, 1 the small blind, 2 two players. */
+  function raiserKind(st) { return st.players === 2 ? 2 : st.line === "raise" && st.from === 1 ? 1 : 0; }
+  function heroKind(st) { return st.players === 2 ? 2 : st.seat === 1 ? 1 : 0; }
+  /* The raise sizes there are tables for at this stack (tools/build_guide.py, own_table).  A raise of the
+     whole stack is an all-in.  Behind callers, a raise that commits the raiser has no table either: with 5bb
+     or less every raise does, and the spot is read as two all-ins. */
+  const ownTable = (bb, stack, callers, commit) => bb < stack && !(callers > 0 && (stack <= 5 || bb >= commit * stack));
+  function raiseChoices(st) {
+    if (!D.sizes) return [];
+    const g = gridStack(st.stack), callers = st.players > 2 ? st.callers : 0;
+    return D.sizes.raise.map((bb, i) => [i, bb]).filter(([, bb]) => ownTable(bb, g, callers, D.sizes.commit));
+  }
+  /* The sizes left out because of the callers, for the line under the choice. */
+  function committing(st) {
+    if (!D.sizes || st.players === 2 || !st.callers) return [];
+    const g = gridStack(st.stack);
+    return D.sizes.raise.filter((bb) => ownTable(bb, g, 0, D.sizes.commit) && !ownTable(bb, g, st.callers, D.sizes.commit));
+  }
+  function usualRaise(st) {
+    const usual = D.usual.raise[String(gridStack(st.stack))][raiserKind(st)];
+    const have = raiseChoices(st).map(([i]) => i);
+    return have.includes(usual) ? usual : have.length ? have[0] : usual;
+  }
+  const raiseIndex = (st) => (st.size != null && raiseChoices(st).some(([i]) => i === st.size) ? st.size : usualRaise(st));
+  function usualReraise(st) { return D.usual.reraise[String(st.players === 2 ? 0 : st.by3)]; }
+  const reraiseIndex = (st) => (st.resize != null && st.resize < D.sizes.reraise.length ? st.resize : usualReraise(st));
+  /* Your own raise, in big blinds, as the tables took it: what their re-raise is a multiple of. */
+  const myRaise = (st) => D.usual.open[String(gridStack(st.stack))][heroKind(st)];
+  /* The re-raises of it there are tables for, in big blinds, as the engine was asked. */
+  const reraiseSizes = (st) => D.usual.reraise_to[String(gridStack(st.stack))][heroKind(st)];
+
+  /* The engine's share (preflop.bb_realised): how much of its equity a hand turns into chips when the big
+     blind calls a raise with it.  Kept here to show the number the table's call was tested against. */
+  function realised(h, stack, last) {
+    const row = Math.floor(h / 13), col = h % 13;
+    const hi = 14 - Math.min(row, col), lo = 14 - Math.max(row, col);
+    let share;
+    if (row === col) share = 0.76 + 0.02 * (hi - 2);
+    else {
+      const suited = row < col, gap = hi - lo - 1;
+      const connected = ({0: 1.0, 1: 0.75, 2: 0.45, 3: 0.2}[gap] || 0) * (0.5 + 0.5 * Math.min(1, (lo - 2) / 5));
+      share = 0.46 + 0.20 * (hi - 2) / 12 + 0.14 * (lo - 2) / 12 + 0.16 * connected + (suited ? 0.20 : 0);
+      if (hi === 14 && lo <= 5) share += suited ? 0.05 : 0.03;
+      if (!suited && stack > 25) share -= 0.02 * Math.log2(stack / 25);
+    }
+    if (last) share += 0.22;
+    return Math.min(last ? 1.10 : 1.05, share);
+  }
+
   /* Make every choice fit the table: called after each change. */
   function normalize(st) {
     st.players = Math.max(2, Math.min(9, st.players | 0));
     st.seat = Math.max(0, Math.min(st.players - 1, st.seat | 0));
     st.stack = Math.max(1, Math.min(300, Math.round(+st.stack * 10) / 10 || 1));
     if (!D.opponents.includes(st.opp)) st.opp = D.opponents[0];
+    if (st.style === "tag" && D.styles.includes("tight")) st.style = "tight";      // the name page 2 saved for Tight
     if (!D.styles.includes(st.style)) st.style = D.styles[0];
     if (!STAGE[st.stage]) st.stage = "chips";
     if (!can(st.line, st)) st.line = defaultLine(st);
@@ -192,6 +247,11 @@
     let fam = null, pre = [];
     if (n === 2) {
       fam = {open: "hu_open", re3: "hu_re3", re_allin: "hu_re_allin", limp: "hu_limp", raise: "hu_vsraise", allin: "hu_allin"}[st.line];
+      if (st.line === "raise") {
+        if (raiseChoices(st).length) pre = [raiseIndex(st)];
+        else { fam = "hu_allin"; notes.push("A raise this short is an all-in: read from that table."); }
+      }
+      if (st.line === "re3") pre = [reraiseIndex(st)];
       if (st.line === "sq_allin") { fam = "sq_allin"; pre = [1, 0]; notes.push("Read from the table for three or more players."); }
     } else {
       switch (st.line) {
@@ -201,10 +261,11 @@
           else { fam = "limp"; pre = [h, st.limpers]; }
           break;
         case "raise":
-          if (st.callers > 0 && st.stack <= 5) {
+          if (raiseChoices(st).length) { fam = "vsraise"; pre = [st.from, h, st.callers, raiseIndex(st)]; }
+          else if (st.callers > 0) {
             fam = "two_allin"; pre = [rep(st.from)];
             notes.push("This short, a raise and a call are two all-ins: read from that table (made for the big blind).");
-          } else { fam = "vsraise"; pre = [st.from, h, st.callers]; }
+          } else { fam = "allin"; pre = [st.from, h]; notes.push("A raise this short is an all-in: read from that table."); }
           break;
         case "raise3":
           fam = "raise3"; pre = [st.from];
@@ -215,7 +276,7 @@
           fam = st.line; pre = [rep(st.from)];
           if (h !== 0 || rep(st.from) !== st.from) notes.push(`Made for the big blind, with the first player in ${REP_NAME[rep(st.from)]} and the second in the next seat.`);
           break;
-        case "re3": fam = "re3"; pre = [h, st.by3]; break;
+        case "re3": fam = "re3"; pre = [h, st.by3, reraiseIndex(st)]; break;
         case "re_allin": fam = "re_allin"; pre = [h, st.byAll]; break;
         case "re3_allin":
           fam = "re3_allin"; pre = [rep(h)];
@@ -233,6 +294,13 @@
         if (st.stack < s && (fam === "re3" || fam === "hu_re3" || fam === "sq_allin")) notes.push(`With ${bbText(st.stack)} a re-raise is an all-in. The nearest table is the one for ${s}bb.`);
         else if (st.stack > s && CALL_FAMILIES.concat(["two_allin"]).includes(fam) && s >= 40) notes.push(`An all-in bigger than ${s}bb is read at ${s}bb.`);
         else notes.push(`Read at ${s}bb, the nearest stack with a table.`);
+      }
+      /* the engine prices a raise of two fifths of a stack as an all-in: the answers change there, so say it */
+      if ((fam === "vsraise" || fam === "hu_vsraise") && D.sizes.raise[raiseIndex(st)] >= D.sizes.commit * s) {
+        notes.push("A raise of two fifths of their stack or more is priced as an all-in: they are taken not to fold.");
+      }
+      if ((fam === "re3" || fam === "hu_re3") && reraiseSizes(st)[reraiseIndex(st)] >= D.sizes.commit * s) {
+        notes.push("A re-raise of two fifths of the stack or more is priced as their all-in. A small re-raise where an all-in was open is often a stronger hand than that: fold the close ones.");
       }
       return {fam, key: pre.concat([s]), table, stack: s, notes};
     }
@@ -316,18 +384,50 @@
       case "limp":
         if (n === 2 || (st.seat === 0 && st.limpers === 0)) return "BB, the small blind only called";
         return `${me} behind ${st.limpers} ${st.limpers > 1 ? "limpers" : "limper"}`;
-      case "raise": return n === 2 ? "BB against a raise" : `${me} against a ${from} raise` + (st.callers ? ` and ${st.callers} ${st.callers > 1 ? "callers" : "caller"}` : "");
+      case "raise": {
+        const to = D.sizes ? ` to ${D.sizes.raise[raiseIndex(st)]}bb` : "";
+        return n === 2 ? `BB against a raise${to}` : `${me} against a ${from} raise${to}` + (st.callers ? ` and ${st.callers} ${st.callers > 1 ? "callers" : "caller"}` : "");
+      }
       case "raise3": return `${me} against a ${from} raise and a re-raise`;
       case "allin": return n === 2 ? "BB against an all-in" : `${me} against a ${from} all-in`;
       case "raise_allin": return `${me} against a ${from} raise and an all-in`;
       case "two_allin": return `${me} against two all-ins, the first from ${from}`;
-      case "re3": return n === 2 ? "You raised, the BB re-raised" : `You raised from ${me}, ${who3(st)} re-raised`;
+      case "re3": {
+        const to = D.sizes ? ` to ${bbText(reraiseSizes(st)[reraiseIndex(st)])}` : "";
+        return n === 2 ? `You raised, the BB re-raised${to}` : `You raised from ${me}, ${who3(st)} re-raised${to}`;
+      }
       case "re_allin": return n === 2 ? "You raised, the BB moved all-in" : `You raised from ${me}, the ${seatName(st.byAll, n)} moved all-in`;
       case "re3_allin": return `You raised from ${me}, a re-raise and an all-in`;
       case "sq_allin": return n === 2 ? "You re-raised the SB, who moved all-in" : `You re-raised the ${from}, who moved all-in`;
     }
     return me;
   }
+
+  /* The big blind against a raise: what this hand needed to call, as the table's test has it.
+     -> {price, share, need, eq} or null when the table is not such a spot. */
+  function bbCall(st, res, h) {
+    const f = res.table.f || {};
+    if (h == null || f.p == null || f.m == null || f.v == null) return null;
+    if (res.fam !== "vsraise" && res.fam !== "hu_vsraise") return null;
+    const callers = res.fam === "vsraise" ? res.key[2] : 0;
+    const over = f.m * 2 / (2 + callers);          // the margin shrinks with the fair share of the pot
+    const share = realised(h, res.stack - 1, f.ip === 1);          // the big blind has posted the ante: one less behind
+    const size = D.sizes.raise[res.key[res.fam === "vsraise" ? 3 : 0]];
+    /* with callers the price counts their chips, so the equity counts their hands: each by his odds against the hand */
+    const alone = [equity(h, D.ranges[f.v])].concat((f.cv || []).map((v) => equity(h, D.ranges[v])));
+    const eq = alone.some((e) => e == null) ? null : beatsAll(alone);
+    /* short: the call costs more than an eighth of what is behind, so the flop is played for the stack */
+    return {price: f.p, share, need: (f.p + over) / share, eq, last: f.ip === 1, players: alone.length,
+            short: size - 1 > 0.12 * (res.stack - 1)};
+  }
+  /* The chance to win a pot against several players, from the equity against each alone (pushfold.beats_all). */
+  function beatsAll(equities) {
+    let against = 0;
+    for (const e of equities) { if (e <= 0) return 0; against += (1 - e) / e; }
+    return 1 / (1 + against);
+  }
+
+  const together = (bb) => (bb.players > 2 ? "against the raiser and the callers together" : bb.players === 2 ? "against the raiser and the caller together" : "against their range");
 
   /* One sentence under the answer: why, in the table's own terms. */
   function reason(st, res, a, h, sh) {
@@ -356,6 +456,16 @@
       if (a.name === "RERAISE") return `Re-raise for value: ${hand} is ahead of the raiser's range and can play for the whole stack.` + edge;
       if (a.name === "RERAISE_BLUFF") return "Re-raise as a bluff, with cards that make their best hands less likely. Fold if they move all-in." + edge;
       if (a.name === "ALLIN") return `All-in over the raise: at ${s} it takes the pot down often enough, and ${hand} has real equity when called.` + edge;
+      const bb = bbCall(st, res, h);
+      if (bb && a.name === "CALL") {
+        return `Call: the price is ${pct(bb.price)}. ${hand} keeps about ${pct(bb.share)} of its equity after the flop${bb.last ? ", where you act last" : ""}, so it needs ${pct(bb.need)} ${together(bb)} and has about ${pct(bb.eq)}.` +
+               (bb.short ? " This short the flop decides it: all-in with any pair or any draw, otherwise give up." : "") +
+               (a.close ? ` Close: folding is fine too${bb.last ? "" : ", and better if you would rather not play this hand out of position"}.` : "");
+      }
+      if (bb && a.name === "FOLD") {
+        return `Fold: the price is ${pct(bb.price)}, but ${hand} keeps only about ${pct(bb.share)} of its equity after the flop. It needs ${pct(bb.need)} ${together(bb)} and has about ${pct(bb.eq)}.` +
+               (a.close ? " Close: a call is no mistake against a player who gives up easily." : "");
+      }
       if (a.name === "CALL") return (st.seat === 0 ? "Call: the big blind gets a good price and closes the action." : st.seat === 1 ? "Call from the small blind." : "Call in position: too good to fold, not strong enough to re-raise.") + edge;
       return `Fold: ${playing} of hands play against this raise, and ${hand} is not one of them.` + edge;
     }
@@ -464,6 +574,16 @@
     } else if (st.line === "re_allin" && byAllChoices(st).length > 1) {
       sub = `<div class="sub"><span class="eyebrow">All-in from</span><div class="chips">${chipRow(byAllChoices(st).map((nb) => [nb, seatName(nb, n)]), st.byAll, "byAll", true)}</div></div>`;
     }
+    /* how much: the raise you face, or the re-raise of your raise */
+    if (st.line === "raise" && D.sizes && raiseChoices(st).length) {
+      const last = D.sizes.raise.length - 1, out = committing(st);
+      sub += `<div class="sub"><span class="eyebrow">Raised to</span><div class="chips">${chipRow(raiseChoices(st).map(([i, bb]) => [i, bb + "bb" + (i === last ? "+" : "")]), raiseIndex(st), "size", true)}</div></div>`;
+      if (out.length) sub += `<p class="hint subhint">A raise to ${out[0]}bb or more with ${bbText(gridStack(st.stack))} commits the raiser: with a caller, read it as "Two all-ins".</p>`;
+    } else if (st.line === "re3" && D.sizes) {
+      const last = D.sizes.reraise.length - 1;
+      sub += `<div class="sub"><span class="eyebrow">Re-raised to</span><div class="chips">${chipRow(reraiseSizes(st).map((bb, i) => [i, bbText(bb) + (i === last ? "+" : "")]), reraiseIndex(st), "resize", true)}</div></div>
+        <p class="hint subhint">Your raise is taken as ${bbText(myRaise(st))}: these are ${D.sizes.reraise.join(", ")} times it.</p>`;
+    }
     const mine = LINES.find((l) => l.id === st.line).group;
     const groups = GROUPS.map((title, g) => {
       const chips = LINES.filter((l) => l.group === g && can(l.id, st));
@@ -512,12 +632,15 @@
     const f = res.table.f || {}, out = [];
     const vs = {vsraise: "They raise", hu_vsraise: "They raise", raise3: "The re-raise range", re3: "They re-raise", hu_re3: "They re-raise"}[res.fam] || "Their all-in range";
     if (f.vp != null) out.push(`<span class="fact">${vs}<b>${f.vp >= 10 ? Math.round(f.vp) : f.vp}%</b></span>`);
-    if (h != null && f.v != null) {
+    const bb = bbCall(st, res, h);
+    if (bb && bb.players > 1 && bb.eq != null) out.push(`<span class="fact">Against them all you have<b>${pct(bb.eq)}</b></span>`);
+    else if (h != null && f.v != null) {
       const eq = equity(h, D.ranges[f.v]);
       if (eq != null) out.push(`<span class="fact">You have about<b>${pct(eq)}</b></span>`);
     }
-    const need = f.need != null ? f.need : f.odds;
-    if (need != null) {
+    const need = bb ? bb.need : f.need != null ? f.need : f.odds;
+    if (bb) out.push(`<span class="fact">The price is<b>${pct(bb.price)}</b></span>`, `<span class="fact">This hand needs<b>${pct(bb.need)}</b></span>`);
+    else if (need != null) {
       const more = st.stage === "bubble" && f.need != null && CALL_FAMILIES.includes(res.fam);
       out.push(`<span class="fact">${more ? "On the bubble a call needs" : "A call needs"}<b>${pct(need + (more ? BUBBLE_POINTS : 0))}</b></span>`);
     }
@@ -601,10 +724,10 @@
     } else if (st.line === "open" && (a.name === "RAISE" || a.name === "RAISE_CALL") && st.seat >= 1) {
       if (a.name === "RAISE_CALL") rules.push("Any all-in behind you: call.");
       if (n === 2) {
-        if (st.stack >= 12) row("The BB re-raises", {line: "re3"});
+        if (st.stack >= 12) row("The BB re-raises", {line: "re3", resize: null});
         row("The BB moves all-in", {line: "re_allin"});
       } else {
-        if (st.stack >= 12) for (const w of by3Choices(st)) row(`Re-raised by ${w === 2 ? "a seat behind you" : "the " + seatName(w, n)}`, {line: "re3", by3: w});
+        if (st.stack >= 12) for (const w of by3Choices(st)) row(`Re-raised by ${w === 2 ? "a seat behind you" : "the " + seatName(w, n)}`, {line: "re3", by3: w, resize: null});
         /* an all-in behind: seats with the same answer on one row */
         const groups = [];
         for (const v of byAllChoices(st)) {
@@ -774,7 +897,9 @@
       <div class="body">
         <p><b>Stack</b> is the effective one: the smaller of yours and the biggest stack that can still call you. Against an all-in it is the size of the all-in, or your stack if that is smaller.</p>
         <p><b>The answers</b> are the coach's engine asked about every hand of every spot, counting chips only, with a big blind ante. ${D.tables.length.toLocaleString("en")} tables, nothing is worked out while you play.</p>
-        <p><b>Play to win</b> opens and defends wider than the coach's tight ranges. <b>Tight</b> is those ranges. Both take stacks as equal and know nothing about prizes.</p>
+        <p><b>How much they raised</b> matters most in the big blind, where the call goes by its price: a raise to 2bb asks for about 18% of the pot, a raise to 3bb for 27%. Pick the size under "Raised to": it starts from the usual one for the stack and stays as you set it for the next hands. "4bb+" is read as 4bb: against more, fold the close ones. A bigger raise also makes your own re-raise bigger and a small pair's call rarer.</p>
+        <p><b>The big blind's call</b> is tested hand by hand: its equity against the raiser's range, times the share of that equity the hand keeps when it plays the flop, must beat the price by a margin. Suited, connected and high cards keep more, and every hand keeps more against a raise from the small blind, where the big blind acts last. Against a solver's published fold rates this folds a few points more often at 2bb and at 3bb. It holds at every stack: with 8bb the big blind still calls a small raise at the right price, and then plays the flop for its stack. A call or a fold within 3 points of the line is marked close.</p>
+        <p><b>Play to win</b> opens wider than the coach's tight ranges and, from the cutoff and the button, calls and re-raises a raise with more hands. <b>Tight</b> keeps the tight ranges and asks more of a big blind call. Both take stacks as equal and know nothing about prizes.</p>
         <p><b>Bubble</b> folds the close ones and asks 10 points of equity more before calling an all-in. It is a rule of thumb, not a prize calculation: with the real stacks and prizes, the coach's own table app is exact.</p>
         <p><b>Opponents</b> changes the hands they are taken to raise and move in with: tight players fewer, loose players more.</p>
         <p><b>Three players in the pot</b> (a raise and an all-in, two all-ins, a re-raise and an all-in behind your raise) are made for four seats of the first player, and the first two for the big blind; the chart says so when your spot is read from a neighbour.</p>
@@ -863,6 +988,7 @@
     state.seat = (state.seat + 1) % state.players;
     state.r1 = state.r2 = null; state.suited = false;
     state.line = defaultLine(state);
+    state.resize = null;                   // the size of a raise stays as picked: a table tends to raise one size
     state.post.hand = null; state.post.facing = "none"; state.post.street = "flop";
     render();
     window.scrollTo({top: 0});
@@ -934,6 +1060,10 @@
   }
 
   function start(data) {
+    if (!data || (data.version || 1) < TABLES) {       // a browser's kept copy of the tables, from before this page
+      $("guide").innerHTML = '<p class="loading">This page is newer than the tables your browser kept. Reload the page.</p>';
+      return;
+    }
     D = data;
     const bytes = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
     EQ = bytes(D.eq); PAIRS = bytes(D.pairs);
@@ -948,6 +1078,9 @@
       <p class="foot">Menlo.bet quick guide &middot; a study aid &middot; page ${PAGE} &middot; tables v${D.version}${D.quick || D.partial ? " (trial set)" : ""}</p>`;
     root.addEventListener("click", onClick);
     root.addEventListener("input", onInput);
+    /* typing in the stack field leaves the other choices as drawn (the field keeps the cursor): when the typing
+       is done, draw them again, for a stack changes the sizes of a raise there are */
+    root.addEventListener("change", (event) => { if (event.target.id === "stack") render(); });
     root.addEventListener("toggle", onToggle, true);
     document.addEventListener("keydown", onKey);
     if ("IntersectionObserver" in window) {       // the one-line bar shows while the answer itself is out of sight
@@ -971,7 +1104,13 @@
       return {fam: res.fam, key: res.key, name: a.name, close: a.close, size: sizeOf(a.name, res.table)};
     },
     equity: (hand, marks) => equity(D.hands.indexOf(hand), marks),
-    postAdvice, state: () => state, seatName, roles: (st) => roles(normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st))),
+    postAdvice, state: () => state, seatName, realised, ownTable, beatsAll,
+    bbCall(st, hand) {                  // the numbers under a big blind's answer against a raise, as the page shows them
+      const full = normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st));
+      const res = lookup(full);
+      return res.table ? bbCall(full, res, D.hands.indexOf(hand)) : null;
+    },
+    roles: (st) => roles(normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st))),
   };
 
   function boot() {

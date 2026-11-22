@@ -8,13 +8,15 @@ depth, ICM pressure and reads on the players involved.
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass, field
 
 from .cards import HANDS, format_range, parse_range, range_combos, range_pct, top_percent
 from .equity import all_vs_range, allin_order, eq_vs_range, hand_equity, preflop_equity
 from .icm import Prizes
 from . import pushfold as _solver
-from .pushfold import HandSetup, _call_req, solve_shove, _unit
+from .pushfold import HandSetup, _call_req, beats_all, solve_shove, _unit
 from .ranges import (PLAYER_TYPES, norm_type, open_size_bb, opener_category, position_name,
                      rfi_range, scale_range, threebet_range, villain_limp_range,
                      villain_open_range, vs_open_chart, _ladder, _POSITION_ALIASES,
@@ -84,10 +86,11 @@ def build_shove_spot(setup: HandSetup, shover: int, prizes: Prizes, *, away=None
 _VS_ANY_TWO: list = []          # every hand's equity against a random hand, worked out once
 
 
-def _solve(v_fold: float, v_steal: float, callers: list, swing: float, iters: int, unit: float):
+def _solve(v_fold: float, v_steal: float, callers: list, swing: float, iters: int, unit: float, together=None):
     """``solve_shove``, and then the showdown against the blind who posted all-in, hand by hand: a strong
     hand wins that small pot more often than a weak one."""
-    sol = solve_shove(v_fold, v_steal, callers, iters=iters, unit=unit)
+    sol = solve_shove(v_fold, v_steal, callers, iters=iters, unit=unit, together=together) if together else \
+        solve_shove(v_fold, v_steal, callers, iters=iters, unit=unit)
     if swing:
         if not _VS_ANY_TWO:
             _VS_ANY_TWO.extend(all_vs_range([1.0] * 169)[0])
@@ -121,7 +124,60 @@ def solve_reshove(setup: HandSetup, shover: int, opener: int, raise_to: float, p
         caller_order=behind + [opener] + list(flat_callers), fold_winner=opener,
         extra_req={j: 0.02 for j in behind},        # calling a raise and an all-in cold needs a real hand
         use_types=use_types)
-    return _solve(v_fold, v_steal, callers, swing, iters, _unit(prizes, setup, shover))
+    members = _taken_together(callers, opener, flat_callers)
+    together = (members, _together_values(setup, shover, [c.idx for c in members], bets, prizes)) if members else None
+    return _solve(v_fold, v_steal, callers, swing, iters, _unit(prizes, setup, shover), together=together)
+
+
+# The solver sets the shover against one caller at a time, in the order they act: when two players would
+# call, the first is the hand to beat and the other's chips are dead money.  Players behind come first, and
+# against a raiser who can still fold that is right: a call behind usually ends the raiser's hand.  Two
+# cases are not like that, and there the raiser and the players who called him are taken first and
+# together: each calls or folds on his own, and the shover has to beat every one of them who calls.
+#   - A raiser who needs a third of the pot or less calls with whatever he raised, whoever else comes
+#     along.  (The big blind's call, priced as heads-up with the raise as dead money, fed on itself: over a
+#     2.5bb raise with 7bb the small blind moved all-in with T4o, "40% when called" against a range it has
+#     28% against.)
+#   - Players who called the raise: when the raiser calls the all-in their chips are not dead money, and
+#     neither is his when one of them calls.  (The button moved all-in with 62% of hands for 11bb over a raise
+#     to 4bb and two calls, and the small blind with 44% for 13bb over a raise to 2bb and two calls.)
+_PRICED_IN = 0.34
+
+
+def _taken_together(callers: list, opener: int, flat_callers) -> list:
+    """The raiser and the players who called him, when they are to be taken together (above); [] when the
+    order of the callers is all there is.  A raiser with nothing left to call (0) has been placed by
+    ``_shove_spot``."""
+    raiser = next((c for c in callers if c.idx == opener), None)
+    if raiser is None or raiser.chip_req <= 0.0:
+        return []
+    flats = [c for c in callers if c.idx in flat_callers]
+    if not flats and raiser.chip_req > _PRICED_IN:
+        return []
+    return [raiser] + flats
+
+
+def _together_values(setup: HandSetup, shover: int, members: list, bets, prizes: Prizes) -> dict:
+    """For every part of ``members`` (a bit mask, in their order) that may call: what the shover's stack is
+    worth when he beats them all, and when he does not.  As ``HandSetup.showdown`` for one caller; with more,
+    each puts in what the shover's stack can match, and the pot is won or lost whole."""
+    inv = setup.invested(bets)
+    out = {}
+    for mask in range(1, 1 << len(members)):
+        in_pot = [j for i, j in enumerate(members) if mask >> i & 1]
+        matched = {j: min(setup.live[shover], setup.live[j]) for j in in_pot}
+        mine = max(matched.values())
+        pot = sum(setup.antes) + mine + sum(matched.values()) + \
+            sum(inv[i] for i in range(setup.n) if i != shover and i not in in_pot)
+        after = [setup.live[i] - inv[i] for i in range(setup.n)]
+        for j in in_pot:
+            after[j] = setup.live[j] - matched[j]
+        won, lost = list(after), list(after)
+        won[shover] = setup.live[shover] - mine + pot
+        lost[shover] = setup.live[shover] - mine
+        lost[in_pot[0]] += pot                     # to one of them: the raiser when he is in
+        out[mask] = (prizes.value(won, shover), prizes.value(lost, shover))
+    return out
 
 
 # The looser style of the quick guide ("win", see ranges.py) keeps the engine and changes a few numbers:
@@ -131,21 +187,57 @@ def _win() -> bool:
     return chart_style() == "win"
 
 
+def _guide() -> bool:
+    """The quick guide's two styles: the big blind's call is tested by what the hand realises."""
+    return chart_style() in ("win", "tight")
+
+
 def _bar(tag: float, win: float) -> float:
     return win if _win() else tag
 
 
-_RAISE_FOLD_FROM = 13.0
-# The big blind against one small raise, 25bb or less, in the looser style.  The share of its equity a
-# kind of hand turns into chips after the flop, out of position (small pairs and unconnected offsuit
-# cards the least); the call counts as clear from this margin over its price, and as clearly better
-# than an all-in from this many big blinds.
-_BB_REALISED = {"pair": 0.80, "suited_conn": 0.95, "suited": 0.88, "broadway_off": 0.85, "off": 0.72}
-_BB_CALL_CLEAR = 0.05
-_CALL_OVER_ALLIN_CLEAR = 0.25        # win: from this stack a hand of the opening row that is no all-in raises small
+_RAISE_FOLD_FROM = 13.0            # win: from this stack a hand of the opening row that is no all-in raises small
+_CALL_OVER_ALLIN_CLEAR = 0.25      # win: a big blind call worth this many big blinds more than the all-in is not close
 _CALL_RERAISE_IP = parse_range("77+, ATs+, KTs+, QTs+, JTs")      # win: the hands that may call one re-raise in position
-_FLAT_SHORT_FROM = 15.0        # win: from this stack a strong hand may call a raise in position (25bb or less)
-_FLAT_SHORT_EDGE = 0.10        # ... with this much equity over the price
+_FLAT_SHORT_FROM = 15.0            # win: from this stack a strong hand may call a raise in position (25bb or less)
+_FLAT_SHORT_EDGE = 0.10            # ... with this much equity over the price
+
+# The quick guide's test for the big blind's call of one raise.  A hand does not win its whole share of the
+# pot when it has to play the flop out of position: it turns a part of its equity into chips, more when it
+# is suited, connected or high, less when it is none of them.  The call is right when that part beats the
+# price by a margin.  ``bb_realised`` is that part.  Against a solver's fold rates (GTO Wizard's, as printed
+# by PokerNews in 2026: a raise from the first seat with 25, 50 and 100bb, from the cutoff with 100bb, and
+# from the small blind) it folds a few points more often than the solver at 2bb and at 3bb.  Acting last
+# (the raise came from the small blind) a hand keeps far more: the solver folds 1% of hands to a 2bb raise
+# there and about a quarter to 3.5bb.  (The default test adds points by the kind of hand instead; it calls
+# 32s where it folds T9o, because every suited hand gets the same points.)
+_BB_MARGIN = {"win": 0.03, "tight": 0.05}      # realised equity over the price: the looser style, the tight one
+_BB_OFFSUIT_DEEP = 0.02                        # offsuit hands lose this much of their share each time the stack doubles over 25bb
+_BB_IN_POSITION = 0.22                         # a raise from the small blind: the big blind acts last and keeps this much more
+_BB_SHARE_MOST = 1.05                          # no hand turns more than this share of its equity into chips ...
+_BB_SHARE_MOST_LAST = 1.10                     # ... or this, acting last
+_BB_CLOSE = 0.03                               # a call or a fold within this many points of the line is close
+
+
+def bb_realised(hand: int, eff_bb: float, in_position: bool = False) -> float:
+    """The share of its equity a hand turns into chips when the big blind calls a raise with it."""
+    row, col = divmod(hand, 13)                        # 0 is the ace
+    hi, lo = 14 - min(row, col), 14 - max(row, col)    # ranks, 14 down to 2
+    if row == col:
+        share = 0.76 + 0.02 * (hi - 2)
+    else:
+        suited = row < col
+        gap = hi - lo - 1
+        # cards that make straights, less so the low ones (their straights are the bottom end)
+        connected = {0: 1.0, 1: 0.75, 2: 0.45, 3: 0.2}.get(gap, 0.0) * (0.5 + 0.5 * min(1.0, (lo - 2) / 5))
+        share = 0.46 + 0.20 * (hi - 2) / 12 + 0.14 * (lo - 2) / 12 + 0.16 * connected + (0.20 if suited else 0.0)
+        if hi == 14 and lo <= 5:
+            share += 0.05 if suited else 0.03          # an ace with a wheel card
+        if not suited and eff_bb > 25:
+            share -= _BB_OFFSUIT_DEEP * math.log2(eff_bb / 25)
+    if in_position:                                    # the raise came from the small blind: the big blind acts last
+        share += _BB_IN_POSITION
+    return min(_BB_SHARE_MOST_LAST if in_position else _BB_SHARE_MOST, share)
 
 
 _PREMIUM = parse_range("QQ+, AKs, AKo")
@@ -1039,6 +1131,7 @@ def multi_allin(spot: Spot, allins: list[int], raiser: int | None = None, raise_
 # where T2s folds.
 _BB_CALL_MARGIN = {"pair": 0.02, "suited_conn": 0.06, "suited": 0.06, "broadway_off": 0.08, "off": 0.15}
 _BB_CALL_NET = 0.15
+_BB_CALL_STACK_SHARE = 0.12      # with 25bb or less the default style calls a raise that costs this share of the stack at most
 
 
 def bb_call_points(kind: str, risk_premium: float = 0.0, callers: int = 0, in_position: bool = False) -> float:
@@ -1061,6 +1154,18 @@ def _hand_kind(hand: int) -> str:
     if row < col:
         return "suited_conn" if gap <= 2 and hi >= 1 else "suited"
     return "broadway_off" if lo <= 4 else "off"
+
+
+def flat_range(opener_n_behind: int, caller_n_behind: int) -> list[float]:
+    """What a player is taken to hold who only called a raise: the hands his seat's chart calls with.
+
+    The small blind's chart re-raises or folds (against the first seats it calls JJ, TT and AQs, against the
+    late ones nothing), so a small blind who did call plays another way: he is given the button's calls
+    against that raiser, and against a button raise the button's calls against the cutoff."""
+    if caller_n_behind == 1:
+        opener_n_behind, caller_n_behind = max(opener_n_behind, 3), 2
+    chart = vs_open_chart(opener_n_behind, caller_n_behind)
+    return [max(a, b) for a, b in zip(chart["call"], chart["setmine"])]
 
 
 def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advice:
@@ -1100,18 +1205,36 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
     kind = _hand_kind(hand)
 
     # the big blind closes the action: one price test for every hand, charted or not
-    bb_points = bb_call_points(kind, rp, len(flats), in_position=o_nb == 1 and not flats and n > 2)
+    bb_last = o_nb == 1 and not flats and n > 2          # the raise came from the small blind: the big blind acts last
+    bb_points = bb_call_points(kind, rp, len(flats), in_position=bb_last)
     bb_edge = eq_open - need - bb_points if h_nb == 0 else -1.0
-    if h_nb == 0:
+    bb_share = 1.0
+    eq_pot = eq_open                 # the share of the pot a call plays for: against the raiser, and his callers
+    if flats and _guide():
+        # the price of a call counts the callers' chips, so the equity has to count their hands
+        eq_pot = beats_all([eq_open] + [eq_vs_range(hand, flat_range(o_nb, spot.nb(j)))[0] for j in flats])
+        adv.numbers.append(f"against the raiser and the {'callers' if len(flats) > 1 else 'caller'} together "
+                           f"you have about {_pct(eq_pot)}")
+    if h_nb == 0 and _guide():
+        # the quick guide's test: the part of its equity this hand turns into chips must beat the price
+        bb_share = bb_realised(hand, eff, bb_last)
+        # the margin is a part of a fair share of the pot: with callers the share is smaller, and so is the margin
+        over = _BB_MARGIN[chart_style()] * 2.0 / (2 + len(flats)) + max(0.0, rp) / 2
+        bb_points = (need + over) / bb_share - need
+        bb_edge = eq_pot - need - bb_points
+        adv.numbers.append(f"big blind closing the action: to call you need {_pct(need + bb_points)} (the price "
+                           f"{_pct(need)} plus {100 * over:.0f} pts, over the {_pct(bb_share)} of its equity this "
+                           "hand turns into chips after the flop)")
+        adv.data.update(bb_call_need=need + bb_points, bb_call_edge=bb_edge, bb_realised=bb_share, bb_over=over,
+                        bb_equity=eq_pot)
+    elif h_nb == 0:
         adv.numbers.append(f"big blind closing the action: to call you need {_pct(need + bb_points)} "
                            f"(the price plus {100 * bb_points:.0f} pts for how this hand plays after the flop"
                            + (", ICM included" if rp >= 0.01 and bb_points < _BB_CALL_NET else "") + ")")
         adv.data.update(bb_call_need=need + bb_points, bb_call_edge=bb_edge)
 
     if eff <= 25:
-        flat_rngs = {j: [max(a, b) for a, b in zip(vs_open_chart(o_nb, spot.nb(j))["call"],
-                                                    vs_open_chart(o_nb, spot.nb(j))["setmine"])]
-                     for j in flats}
+        flat_rngs = {j: flat_range(o_nb, spot.nb(j)) for j in flats}
         prizes = Prizes() if spot.desperate else spot.prizes
         sol = solve_reshove(setup, hero, opener, raise_to, prizes, opener_range=open_rng,
                             flat_callers=flat_rngs, caller_prizes=spot.field_prizes,
@@ -1131,13 +1254,19 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
         # The looser style also asks what the big blind's call is worth: the share of its equity this kind of
         # hand turns into chips after the flop, times the pot, less the call.  An all-in that earns less
         # than that is a call.  (Without it a suited connector moved all-in for 20bb to win 0.05bb.)
-        price_call = h_nb == 0 and bb_edge >= 0 and to_call <= 0.12 * live[hero]
-        call_bb = (_BB_REALISED[kind] * eq_open * (pot + to_call) - to_call) / bb if price_call else 0.0
+        # The default style calls a raise in the big blind only when it costs 12% of the stack or less: shorter
+        # than that it moves all-in or folds.  The guide's styles go by the price alone, at every depth: with
+        # 8bb the big blind is not folding half its hands to a raise that asks for 18% of the pot.
+        affordable = _guide() or to_call <= _BB_CALL_STACK_SHARE * live[hero]
+        price_call = h_nb == 0 and bb_edge >= 0 and affordable
+        call_bb = (bb_share * eq_pot * (pot + to_call) - to_call) / bb if price_call else 0.0
+        short_call = to_call > _BB_CALL_STACK_SHARE * live[hero]       # a call the default style does not make
         if _win() and price_call and ev > bar and call_bb >= ev:
             adv.action = "CALL"
             adv.confidence = "close" if call_bb - ev < _CALL_OVER_ALLIN_CLEAR else "standard"
             adv.why.append("the all-in earns, but less than the call is worth at this price: call, and go on "
-                           "with top pair or better or a strong draw")
+                           + ("with any pair or any draw: this short the flop decides it" if short_call else
+                              "with top pair or better or a strong draw"))
             adv.numbers.append(f"the call is worth about {call_bb:+.2f}bb, the all-in {ev:+.2f}bb")
             adv.data.update(call_value_bb=call_bb)
         elif ev > bar:
@@ -1146,7 +1275,7 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
             adv.why.append("re-shoving wins the pot often enough, and you have real equity when called")
             if _TRAP[hand] and eff >= 15:
                 adv.alt.append("with a monster, a small 3-bet or a flat to trap is fine if players behind are aggressive")
-        elif _win() and ip and eff >= _FLAT_SHORT_FROM and eq_open - need >= _FLAT_SHORT_EDGE and \
+        elif _win() and ip and eff >= _FLAT_SHORT_FROM and eq_pot - need >= _FLAT_SHORT_EDGE and \
                 max(chart["value"][hand], chart["call"][hand]) >= 0.5:
             # the looser style: a hand the chart plays against this raise, in position, is not folded
             # because the all-in does not earn; it calls
@@ -1154,12 +1283,15 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
             adv.confidence = "close"
             adv.why.append("not a profitable all-in, and too strong to fold in position: call, and continue "
                            "with top pair or better or a strong draw")
-        elif bb_edge >= 0 and to_call <= 0.12 * live[hero]:
+        elif bb_edge >= 0 and affordable:
             adv.action = "CALL"
-            # the looser style says "close" by the margin; the default says it of every such call
-            adv.confidence = "standard" if _win() and bb_edge >= _BB_CALL_CLEAR else "close"
+            # the guide's styles say "close" by the margin; the default says it of every such call
+            adv.confidence = "standard" if _guide() and bb_edge >= _BB_CLOSE else "close"
             adv.why.append("not a profitable shove, but the big blind is getting the right price to see a flop")
-            adv.warnings.append("play fit-or-fold after the flop: continue with top pair or better, or a strong draw")
+            if short_call:
+                adv.warnings.append("this short the flop decides it: all-in with any pair or any draw, otherwise give up")
+            else:
+                adv.warnings.append("play fit-or-fold after the flop: continue with top pair or better, or a strong draw")
         else:
             adv.confidence = _conf(ev - bar, 0.6, 0.15)
             adv.why.append("at this depth it is re-shove or fold, and this hand does not earn as a shove")
@@ -1217,9 +1349,7 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
                 decided = True
             else:
                 prizes = Prizes() if spot.desperate else spot.prizes
-                flat_rngs = {j: [max(a, b) for a, b in zip(vs_open_chart(o_nb, spot.nb(j))["call"],
-                                                            vs_open_chart(o_nb, spot.nb(j))["setmine"])]
-                             for j in flats}
+                flat_rngs = {j: flat_range(o_nb, spot.nb(j)) for j in flats}
                 sol = solve_reshove(setup, hero, opener, raise_to, prizes, opener_range=open_rng,
                                     flat_callers=flat_rngs, caller_prizes=spot.field_prizes,
                                     types=spot.types, away=spot.away)
@@ -1275,10 +1405,12 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
         adv.alt.append("FOLD is completely fine, and better against a player who never folds")
     elif bb_edge >= 0:
         adv.action = "CALL"
-        adv.confidence = "close"
+        adv.confidence = "standard" if _guide() and bb_edge >= _BB_CLOSE else "close"
         adv.why.append("closing the action in the big blind at a good price")
         adv.warnings.append("play fit-or-fold after the flop")
     else:
+        if _guide() and h_nb == 0 and bb_edge >= -_BB_CLOSE:
+            adv.confidence = "close"            # a fold that is nearly a call
         adv.why.append("not strong enough to continue against this opening range"
                        + (" out of position" if in_blinds else ""))
         if setmine[hand] >= 0.5 and not odds_ok:

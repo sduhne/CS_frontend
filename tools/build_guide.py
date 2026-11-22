@@ -14,6 +14,10 @@ as the character and the count (``pack``).  Tables that turn out equal are store
 by family and by a list of numbers (style, opponents, seats, stack); ``FAMILIES`` below is the one place that
 says what those numbers are, and the page reads the same description from the data file.
 
+A raise before you comes in five sizes (``RAISE_SIZES``) and a re-raise of your raise in four
+(``RERAISE_TIMES``): the size is one of the numbers of the key, and the page starts from the engine's own
+size (``usual_sizes``).
+
 Seats are named by the players still to act behind them, at a table of nine: 8 is the first to act, 2 the
 button, 1 the small blind, 0 the big blind.  A smaller table has the last seats of that row, so one set of
 tables serves every table size from three to nine; two players are a family of their own ("hu").
@@ -38,8 +42,16 @@ from poker_coach import preflop as P                      # noqa: E402
 from poker_coach import ranges as R                       # noqa: E402
 from poker_coach.cards import HANDS, format_range, parse_range, range_pct   # noqa: E402
 
-VERSION = 1
-STYLES = ("win", "tag")                 # the page's "Play to win" and "Tight"
+VERSION = 2                             # of the data file: 2 added the size of a raise and of a re-raise
+# Finished jobs are kept by family and reused: a family whose questions changed gets a new number here,
+# and only its jobs are asked again.
+FAMILY_VERSION = {"vsraise": 2, "hu_vsraise": 2, "re3": 2, "hu_re3": 2}
+RAISE_SIZES = (2.0, 2.2, 2.5, 3.0, 4.0)         # a raise before you, in big blinds: the page lets the user pick
+RERAISE_TIMES = (2.5, 3.0, 4.0, 5.0)            # a re-raise of your raise, as a multiple of your raise
+COMMITS = 0.4                                   # preflop.vs_open: a raise of this share of the raiser's stack is priced as an all-in
+PART = {"vsraise": 3}                           # a big family is asked in parts: one job for each value of this key number
+STYLES = ("win", "tight")               # the page's "Play to win" and "Tight" (ranges.STYLES: both test the big blind's call
+                                        # by what the hand realises; "tight" has the engine's default rows)
 OPPONENTS = ("unknown", "tight", "loose")
 STACKS = (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 25, 28, 30, 35, 40, 50, 60, 80, 100)
 SHORT = tuple(s for s in STACKS if s <= 40)               # an all-in in front: bigger ones are read at 40
@@ -253,18 +265,30 @@ def fam_limp_sb():
         yield (s,), dict(hero_nb=0, stack=s, facing="SB limp")
 
 
+def own_table(size: float, stack: float, callers: int = 0) -> bool:
+    """Does a raise of this size before the user get a table of its own at this stack?
+
+    Not when it is the whole stack: that is an all-in, and the page reads the all-in table.  Not behind callers
+    when it commits the raiser (COMMITS of the stack, which with 5bb or less is every raise): the engine prices
+    that with dealt-out boards, 14 seconds a spot.  The page does not offer such a size there; with 5bb or
+    less it reads a raise and a call as two all-ins."""
+    if size >= stack:
+        return False
+    return not (callers and (stack <= 5 or size >= COMMITS * stack))
+
+
 def fam_vsraise():
     for o in range(8, 0, -1):
         for h in range(o - 1, -1, -1):
             for callers in (0, 1, 2):
                 if o - h - 1 < callers:
                     continue
-                for s in STACKS:
-                    if callers and s <= 5:      # a raise and a call this short are two all-ins: the page reads "two_allin"
-                        continue
-                    size = open_size(s, o)
-                    acts = [f"{seat(o)} raise {size}bb"] + [f"{seat(o - k)} call" for k in range(1, callers + 1)]
-                    yield (o, h, callers, s), dict(hero_nb=h, stack=s, facing=", ".join(acts))
+                for zi, size in enumerate(RAISE_SIZES):
+                    for s in STACKS:
+                        if not own_table(size, s, callers):
+                            continue
+                        acts = [f"{seat(o)} raise {size}bb"] + [f"{seat(o - k)} call" for k in range(1, callers + 1)]
+                        yield (o, h, callers, zi, s), dict(hero_nb=h, stack=s, facing=", ".join(acts))
 
 
 def fam_raise3():
@@ -284,15 +308,16 @@ def fam_re3():
             if who == 2:
                 if h < 3:
                     continue
-                villain, times = h - 1, 3.0
+                villain = h - 1
             else:
                 if h <= who:
                     continue
-                villain, times = who, 3.8
-            for s in DEEP:
-                size = open_size(s, h)
-                yield (h, who, s), dict(hero_nb=h, stack=s,
-                                        facing=f"hero raise {size}bb, {seat(villain)} raise {round(times * size, 1)}bb")
+                villain = who
+            for zi, times in enumerate(RERAISE_TIMES):
+                for s in DEEP:
+                    size = open_size(s, h)
+                    yield (h, who, zi, s), dict(hero_nb=h, stack=s,
+                                                facing=f"hero raise {size}bb, {seat(villain)} raise {round(times * size, 1)}bb")
 
 
 def fam_re_allin():
@@ -347,32 +372,79 @@ def fam_sq_allin():
                                       facing=f"{seat(o)} raise {size}bb, hero raise {round(times * size, 1)}bb, {seat(o)} allin")
 
 
+def hu_open_size(stack: float) -> float:
+    return 2.0 if stack < 25 else 2.2
+
+
 def fam_hu(kind):
     def make():
+        if kind == "vsraise":
+            for zi, size in enumerate(RAISE_SIZES):
+                for s in STACKS:
+                    if own_table(size, s):
+                        yield (zi, s), dict(hero_nb=0, stack=s, facing=f"SB raise {size}bb", players=2, hero_seat="BB")
+            return
+        if kind == "re3":
+            for zi, times in enumerate(RERAISE_TIMES):
+                for s in STACKS:
+                    if s >= 12:
+                        size = hu_open_size(s)
+                        yield (zi, s), dict(hero_nb=1, stack=s, facing=f"hero raise {size}bb, BB raise {round(times * size, 1)}bb",
+                                            players=2, hero_seat="SB")
+            return
         for s in STACKS:
             if kind == "open":
                 yield (s,), dict(hero_nb=1, stack=s, facing="", players=2, hero_seat="SB")
-            elif kind == "vsraise":
-                yield (s,), dict(hero_nb=0, stack=s, facing=f"SB raise {2.0 if s < 25 else 2.2}bb", players=2, hero_seat="BB")
             elif kind == "limp":
                 yield (s,), dict(hero_nb=0, stack=s, facing="SB limp", players=2, hero_seat="BB")
             elif kind == "allin":
                 yield (s,), dict(hero_nb=0, stack=s, facing="SB allin", players=2, hero_seat="BB")
             elif kind == "re_allin" and s >= 4:
-                yield (s,), dict(hero_nb=1, stack=s, facing=f"hero raise {2.0 if s < 25 else 2.2}bb, BB allin", players=2, hero_seat="SB")
-            elif kind == "re3" and s >= 12:
-                size = 2.0 if s < 25 else 2.2
-                yield (s,), dict(hero_nb=1, stack=s, facing=f"hero raise {size}bb, BB raise {round(3.8 * size, 1)}bb", players=2, hero_seat="SB")
+                yield (s,), dict(hero_nb=1, stack=s, facing=f"hero raise {hu_open_size(s)}bb, BB allin", players=2, hero_seat="SB")
     return make
+
+
+def bb_price(family: str, key) -> dict:
+    """The price of the big blind's call of a raise, exactly: {"p": share of the pot after the call, "ip": 1 if it acts last}."""
+    if family == "hu_vsraise":
+        size, callers, small_blind_in, last = RAISE_SIZES[key[0]], 0, True, False
+    else:
+        o, _h, callers, zi = key[:4]
+        size = RAISE_SIZES[zi]
+        small_blind_in = o == 1 or o - callers <= 1 <= o - 1         # the small blind raised, or is one of the callers
+        last = o == 1 and callers == 0
+    pot = 1.0 + (0.0 if small_blind_in else 0.5) + 1.0 + size * (1 + callers)     # the ante, the blinds, the raise and the calls
+    out = {"p": round((size - 1.0) / (pot + size - 1.0), 4)}
+    if last:
+        out["ip"] = 1
+    return out
+
+
+def usual_sizes() -> dict:
+    """The size the page starts from when the user has not picked one: the engine's own, as a place in the lists."""
+    def nearest(value, options):
+        return min(range(len(options)), key=lambda i: (abs(options[i] - value), i))
+    return {
+        # a raise before you, by stack: [from a seat that is not a blind, from the small blind, two players]
+        "raise": {str(s): [nearest(open_size(s, 3), RAISE_SIZES), nearest(open_size(s, 1), RAISE_SIZES),
+                           nearest(hu_open_size(s), RAISE_SIZES)] for s in STACKS},
+        # your own raise, in big blinds, the same three: what a re-raise is a multiple of
+        "open": {str(s): [open_size(s, 3), open_size(s, 1), hu_open_size(s)] for s in STACKS},
+        # ... and the re-raises of it the tables were asked about, in big blinds: one list per kind of raise
+        "reraise_to": {str(s): [[round(times * mine, 1) for times in RERAISE_TIMES]
+                                for mine in (open_size(s, 3), open_size(s, 1), hu_open_size(s))] for s in STACKS},
+        # a re-raise of your raise: from a seat behind you three times, from a blind four times
+        "reraise": {"2": RERAISE_TIMES.index(3.0), "1": RERAISE_TIMES.index(4.0), "0": RERAISE_TIMES.index(4.0)},
+    }
 
 
 FAMILIES = {
     "open": ("you are first in: [players behind you, stack]", fam_open),
     "limp": ("players only called: [players behind you, callers, stack]", fam_limp),
     "limp_sb": ("big blind, the small blind only called: [stack]", fam_limp_sb),
-    "vsraise": ("a raise before you: [players behind the raiser, behind you, callers, stack]", fam_vsraise),
+    "vsraise": ("a raise before you: [players behind the raiser, behind you, callers, size (place in sizes.raise), stack]", fam_vsraise),
     "raise3": ("a raise and a re-raise before you: [players behind the first raiser, stack]", fam_raise3),
-    "re3": ("you raised and were re-raised: [players behind you, by whom (2 a seat behind, 1 small blind, 0 big blind), stack]", fam_re3),
+    "re3": ("you raised and were re-raised: [players behind you, by whom (2 a seat behind, 1 small blind, 0 big blind), size (place in sizes.reraise), stack]", fam_re3),
     "re_allin": ("you raised and a player moved all-in: [players behind you, behind that player, stack]", fam_re_allin),
     "allin": ("an all-in before you: [players behind that player, behind you, stack]", fam_allin),
     "raise_allin": ("a raise and an all-in before you: [players behind the raiser, stack]", fam_raise_allin),
@@ -380,11 +452,11 @@ FAMILIES = {
     "re3_allin": ("you raised, a re-raise and an all-in followed: [players behind you, stack]", fam_re3_allin),
     "sq_allin": ("a raise, you re-raised, the raiser moved all-in: [players behind the raiser, behind you, stack]", fam_sq_allin),
     "hu_open": ("two players, you are the small blind and act first: [stack]", fam_hu("open")),
-    "hu_vsraise": ("two players, the small blind raised: [stack]", fam_hu("vsraise")),
+    "hu_vsraise": ("two players, the small blind raised: [size (place in sizes.raise), stack]", fam_hu("vsraise")),
     "hu_limp": ("two players, the small blind only called: [stack]", fam_hu("limp")),
     "hu_allin": ("two players, the small blind moved all-in: [stack]", fam_hu("allin")),
     "hu_re_allin": ("two players, you raised and the big blind moved all-in: [stack]", fam_hu("re_allin")),
-    "hu_re3": ("two players, you raised and the big blind re-raised: [stack]", fam_hu("re3")),
+    "hu_re3": ("two players, you raised and the big blind re-raised: [size (place in sizes.reraise), stack]", fam_hu("re3")),
 }
 # Families whose answers do not change with the style: only all-ins are in front, and those ranges are
 # solved, not read from an opening row.  (A raise and an all-in is not one of them: the all-in is priced
@@ -392,16 +464,28 @@ FAMILIES = {
 SAME_IN_EVERY_STYLE = {"allin", "two_allin", "hu_allin"}
 
 
-def work(job):
-    style, opp, family, quick = job
-    R.set_style(style)
-    rows = []
-    started = time.time()
+def spots_of(family: str, part, quick: bool = False):
+    """The questions of one job: a family, or one part of a big family."""
     for key, question in FAMILIES[family][1]():
+        if part is not None and key[PART[family]] != part:
+            continue
         if quick and key[-1] not in (10, 20, 40):
             continue
-        rows.append((key, table(opp=opp, **question)))
-    return style, opp, family, rows, time.time() - started
+        yield key, question
+
+
+def parts_of(family: str):
+    if family not in PART:
+        return [None]
+    return sorted({key[PART[family]] for key, _ in FAMILIES[family][1]()})
+
+
+def work(job):
+    style, opp, family, quick, part = job
+    R.set_style(style)
+    started = time.time()
+    rows = [(key, table(opp=opp, **question)) for key, question in spots_of(family, part, quick)]
+    return job, rows, time.time() - started
 
 
 def main() -> int:
@@ -422,12 +506,17 @@ def main() -> int:
             for style in STYLES:
                 if family in SAME_IN_EVERY_STYLE and style != STYLES[0]:
                     continue
-                jobs.append((style, opp, family, a.quick))
+                for part in parts_of(family):
+                    jobs.append((style, opp, family, a.quick, part))
     os.makedirs(a.cache, exist_ok=True)
 
     def cache_path(job):
-        style, opp, family, quick = job
-        return os.path.join(a.cache, f"{family}.{opp}.{style}.{'quick' if quick else 'full'}.v{VERSION}.json")
+        style, opp, family, quick, part = job
+        name = family if part is None else f"{family}-{part}"
+        # "tight" answers as the default style ("tag") does wherever the big blind's call test is not asked:
+        # the jobs finished under that name are those answers
+        kept_as = "tag" if style == "tight" and family not in FAMILY_VERSION else style
+        return os.path.join(a.cache, f"{name}.{opp}.{kept_as}.{'quick' if quick else 'full'}.v{FAMILY_VERSION.get(family, 1)}.json")
 
     todo = [job for job in jobs if not os.path.exists(cache_path(job))]
     if a.styles:
@@ -439,19 +528,33 @@ def main() -> int:
         jobs = [job for job in jobs if os.path.exists(cache_path(job))]
         todo = []
     if todo:
+        size = {job: sum(1 for _ in spots_of(job[2], job[4], job[3])) for job in todo}
         with Pool(a.jobs) as pool:
-            for style, opp, family, rows, seconds in pool.imap_unordered(work, sorted(todo, key=lambda j: -len(list(FAMILIES[j[2]][1]())))):
-                with open(cache_path((style, opp, family, a.quick)), "w") as fh:
+            for job, rows, seconds in pool.imap_unordered(work, sorted(todo, key=lambda j: -size[j])):
+                style, opp, family, quick, part = job
+                with open(cache_path(job), "w") as fh:
                     json.dump([[list(key), tab] for key, tab in rows], fh)
-                print(f"  {family:12s} {opp:8s} {style:4s} {len(rows):5d} tables {seconds:7.1f}s   ({time.time() - started:6.0f}s)", flush=True)
+                name = family if part is None else f"{family}-{part}"
+                print(f"  {name:12s} {opp:8s} {style:4s} {len(rows):5d} tables {seconds:7.1f}s   ({time.time() - started:6.0f}s)", flush=True)
 
     # assemble: equal tables are stored once, and so are the ranges hero is up against
     unique, index, data, ranges, range_index = [], {}, {}, [], {}
+    def marks_id(marks: str) -> int:
+        if marks not in range_index:
+            range_index[marks] = len(ranges)
+            ranges.append(marks)
+        return range_index[marks]
+
+    asked = {}
     for job in jobs:
-        style, opp, family, quick = job
+        style, opp, family, quick, part = job
         with open(cache_path(job)) as fh:
             rows = json.load(fh)
+        if (family, part, quick) not in asked:       # a finished job may hold spots the family no longer asks about
+            asked[family, part, quick] = {key for key, _ in spots_of(family, part, quick)}
         for key, tab in rows:
+            if tuple(key) not in asked[family, part, quick]:
+                continue
             tab["a"] = pack("".join(pairs_in_order(tab["a"])))       # jobs finished before that rule keep raw answers
             facts = tab.get("f") or {}
             if family in ("vsraise", "hu_vsraise") and "vp" in facts and "vr" not in facts:
@@ -460,12 +563,21 @@ def main() -> int:
                 rng = R.villain_open_range(key[0] if family == "vsraise" else 1, opp, float(key[-1]))
                 if abs(range_pct(rng) - facts["vp"]) <= 0.6:
                     facts["vr"] = format_range(rng)
+            raised_to = RAISE_SIZES[key[3] if family == "vsraise" else key[0]] if family in ("vsraise", "hu_vsraise") else 0.0
+            if family in ("vsraise", "hu_vsraise") and (family == "hu_vsraise" or key[1] == 0) and "vp" in facts \
+                    and raised_to < COMMITS * key[-1]:
+                # the big blind's call test (preflop.bb_realised): the page shows what the hand needed, so it is
+                # given the exact price, the margin of the style, whether the big blind acts last, and the
+                # hands of the players who called (their chips are in the price).  Not for a raise that commits
+                # the raiser: that is priced as an all-in, and the page shows what a call of it needs.
+                facts.update(bb_price(family, key))
+                facts["m"] = P._BB_MARGIN[style]
+                if family == "vsraise" and key[2]:
+                    R.set_style(style)
+                    facts["cv"] = [marks_id("".join("1" if w >= 0.5 else "0" for w in P.flat_range(key[0], key[0] - k)))
+                                   for k in range(1, key[2] + 1)]
             if "vr" in facts:               # as 169 marks: the page works hero's equity out of it
-                marks = "".join("1" if w >= 0.5 else "0" for w in parse_range(facts.pop("vr")))
-                if marks not in range_index:
-                    range_index[marks] = len(ranges)
-                    ranges.append(marks)
-                facts["v"] = range_index[marks]
+                facts["v"] = marks_id("".join("1" if w >= 0.5 else "0" for w in parse_range(facts.pop("vr"))))
             text = json.dumps(tab, sort_keys=True)
             if text not in index:
                 index[text] = len(unique)
@@ -482,7 +594,8 @@ def main() -> int:
     doc = {"version": VERSION, "hands": list(HANDS), "codes": CODES, "close": CLOSE, "actions": list(ACTIONS),
            "styles": list(STYLES), "opponents": list(opponents), "stacks": list(STACKS), "seats": list(SEATS),
            "families": {name: FAMILIES[name][0] for name in families}, "tables": unique, "index": data,
-           "ranges": ranges, "eq": eq, "pairs": pairs, "quick": bool(a.quick), "partial": bool(a.assemble_only)}
+           "ranges": ranges, "eq": eq, "pairs": pairs, "quick": bool(a.quick), "partial": bool(a.assemble_only),
+           "sizes": {"raise": list(RAISE_SIZES), "reraise": list(RERAISE_TIMES), "commit": COMMITS}, "usual": usual_sizes()}
     with open(a.out, "w") as fh:
         fh.write("/* Made by tools/build_guide.py: do not edit. */\nwindow.GUIDE_DATA = ")
         json.dump(doc, fh, separators=(",", ":"))

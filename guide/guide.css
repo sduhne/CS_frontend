@@ -143,6 +143,7 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
 .group{margin-top:10px}
 .group:first-of-type{margin-top:0}
 .group > .eyebrow{display:block;margin-bottom:6px;color:var(--grey)}
+.subhint{margin:6px 2px 0}
 .group .sub{padding:8px 10px;border-radius:var(--r-in);background:var(--ink);border:1px solid var(--line)}
 
 .stepper{display:inline-flex;align-items:center;gap:6px}
