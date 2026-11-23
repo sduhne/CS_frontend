@@ -7,7 +7,11 @@
    rule, and the rules of thumb after the flop (POST), which are the playbook's.
 
    Seats are numbers: the players still to act behind you.  0 is the big blind, 1 the small blind, 2 the
-   button.  The tables are made for nine players; a smaller table uses the last seats of that row. */
+   button.  The tables are made for nine players; a smaller table uses the last seats of that row.
+
+   The ante is a choice: one big blind paid by the big blind, or an eighth of a big blind from every player.
+   The second has tables of its own where it changes the answers most ("+each": the stacks solved exactly, at
+   every table size, and two players); the other tables are made with the big blind ante (SOURCES). */
 (function () {
   "use strict";
 
@@ -17,19 +21,23 @@
   const OPP = {unknown: "Standard", tight: "Tight", loose: "Loose"};
   const STYLE = {win: "Play to win", tight: "Tight", tag: "Tight"};
   const STAGE = {chips: "Normal", bubble: "Bubble"};
+  /* Who pays the ante: the big blind, one big blind for the table; or every player, an eighth of a big blind
+     each (D.antes.each), as on GGPoker. */
+  const ANTE = {bb: "Big blind", player: "Every player"};
   /* How fast the blinds go up: hands a level lasts and how much a level adds (the coach's tournament model,
      latereg.SPEEDS).  The play for a stack is the same at every speed; what changes is what folding costs. */
   const SPEED = {regular: {label: "Regular", hands: 12, growth: 1.17, levels: "levels of 10 minutes or more"},
                  turbo: {label: "Turbo", hands: 6.5, growth: 1.20, levels: "5 or 6 minute levels"},
                  hyper: {label: "Hyper", hands: 3.5, growth: 1.22, levels: "3 minute levels"}};
-  const ORBIT = {bb: 2, sb: 0.5};       // what the two blinds cost: the big blind posts the ante with it
+  const ORBIT = {bb: 1, sb: 0.5, ante: 1, each: 0.125};       // what a round costs: the two blinds, and the ante, which the big blind
+                                        // posts for the table or every player posts an eighth of in every hand (latereg.posted)
   const LOW = 6;                        // under this many big blinds an all-in is called far more often than not
   const BUBBLE_POINTS = 0.10;           // on the bubble a call of an all-in needs this much equity over the price
   const MARK = '<svg class="mark" viewBox="0 0 40 40" role="img" aria-label="Menlo Bet"><rect width="40" height="40" rx="9" fill="#FFD60A"/>' +
                '<path d="M8 30V11l12 11 12-11v19h-5V22l-7 6.5L13 22v8z" fill="#0A0A0B"/></svg>';
   const RESET_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
-  const PAGE = 6;                       // the page's own number, shown at the foot: which copy of the page is open
-  const TABLES = 3;                     // the oldest tables this page can read (3: the shortest stacks are the exact solution)
+  const PAGE = 7;                       // the page's own number, shown at the foot: which copy of the page is open
+  const TABLES = 4;                     // the oldest tables this page can read (4: the ante of every player has tables of its own)
   const UNDO_MS = 8000;                 // how long Reset can be taken back
   const BAR = 52;                       // the height of the bar at the top on a phone, in pixels (.top in guide.css), before it is measured
 
@@ -58,7 +66,7 @@
     players: 8, seat: 2, stack: 25, r1: null, r2: null, suited: false,
     line: "open", from: 3, callers: 0, limpers: 1, by3: 0, byAll: 0,
     size: null, resize: null,           // the raise and the re-raise you face, as places in D.sizes: null is the usual size
-    opp: "unknown", style: "win", stage: "chips", speed: "regular", sheet: false,
+    opp: "unknown", style: "win", stage: "chips", speed: "regular", ante: "bb", sheet: false,
     post: {role: "raiser", n: "hu", pos: "ip", street: "flop", hand: null, board: "dry", facing: "none", spr: "mid"},
   };
   let state = JSON.parse(JSON.stringify(DEFAULTS));
@@ -215,10 +223,10 @@
      average over that (latereg.fold_clock is the same sum, and the tests hold the two together).
      -> {hands, atBlind: the stack when the big blind reaches you, orbit: the stack after one whole round of
          folding, back in this seat, gone: true when the blinds take all of it before then} */
-  function clock(stack, players, seat, speed) {
-    const sp = SPEED[speed] || SPEED.regular, n = players;
+  function clock(stack, players, seat, speed, ante) {
+    const sp = SPEED[speed] || SPEED.regular, n = players, each = ante === "player";
     const level = (j) => { const q = Math.floor(j / sp.hands); return Math.pow(sp.growth, q) * (1 + (sp.growth - 1) * (j / sp.hands - q)); };
-    const cost = (nb) => (nb === 0 ? ORBIT.bb : nb === 1 ? ORBIT.sb : 0);
+    const cost = (nb) => (nb === 0 ? ORBIT.bb + (each ? 0 : ORBIT.ante) : nb === 1 ? ORBIT.sb : 0) + (each ? ORBIT.each : 0);
     const hands = (n - seat) % n;
     let chips = stack, atBlind = stack;
     for (let j = 0; j < n; j++) {
@@ -239,6 +247,7 @@
     if (!D.styles.includes(st.style)) st.style = D.styles[0];
     if (!STAGE[st.stage]) st.stage = "chips";
     if (!SPEED[st.speed]) st.speed = "regular";
+    if (!ANTE[st.ante] || !(D.antes && D.antes.kinds.includes(st.ante))) st.ante = "bb";
     st.sheet = !!st.sheet;
     if (!can(st.line, st)) st.line = defaultLine(st);
     if (!can(st.line, st)) st.line = LINES.map((l) => l.id).find((id) => can(id, st)) || "open";
@@ -271,6 +280,23 @@
     const id = o ? o[key.join(",")] : null;
     return id == null ? null : D.tables[id];
   }
+
+  /* SOURCES: the tables a family is read from, the first that has the spot.  With the ante of every player, the
+     family's tables for that ante ("+each": the stacks solved exactly, at this table size, and two players at
+     every stack); with a big blind ante, a small table's own ("@6").  Then the family itself, which is made for
+     nine players and a big blind ante. */
+  function sources(fam, st) {
+    const n = st.players, sh = D.short || {}, out = [];
+    if (st.ante === "player" && D.antes) {
+      if (n === 2) out.push(fam + D.antes.mark);
+      else if ((sh.each || []).includes(n)) out.push(fam + D.antes.mark + (n === D.seats.length ? "" : "@" + n));
+    } else if ((sh.tables || []).includes(n)) out.push(fam + "@" + n);
+    out.push(fam);
+    return out.filter((name) => D.index[name]);
+  }
+  /* Is this table made for the ante the page is set to?  (Not when every player antes and the spot has no
+     table of its own for that: then it is the big blind ante's.) */
+  const ownAnte = (res, st) => st.ante !== "player" || !D.antes || (res.from || "").includes(D.antes.mark);
 
   /* Two all-ins with a stack the exact solution covers: there is a table for your own seat. */
   const twoShort = (st) => !!(D.short && D.index.two_short && gridStack(st.stack) <= D.short.top && tableOf("two_short", [st.from, st.seat, gridStack(st.stack)], st));
@@ -331,11 +357,14 @@
     }
     if (!fam || !D.index[fam]) return {notes: ["There is no table for this spot."]};
     const order = D.stacks.slice().sort((a, b) => Math.abs(a - st.stack) - Math.abs(b - st.stack) || a - b);
-    /* a table of three to six players has tables of its own where the answer is read from the exact solution */
-    const own = D.short && (D.short.tables || []).includes(n) && D.index[fam + "@" + n] ? fam + "@" + n : null;
+    /* the tables of this ante and this table size first, where the spot has them */
+    const names = sources(fam, st);
     for (const s of order) {
-      const mine = own ? tableOf(own, pre.concat([s]), st) : null;
-      const table = mine || tableOf(fam, pre.concat([s]), st);
+      let table = null, from = null;
+      for (const name of names) {
+        table = tableOf(name, pre.concat([s]), st);
+        if (table) { from = name; break; }
+      }
       if (!table) continue;
       if (s !== st.stack) {
         if (st.stack < s && (fam === "re3" || fam === "hu_re3" || fam === "sq_allin")) notes.push(`With ${bbText(st.stack)} a re-raise is an all-in. The nearest table is the one for ${s}bb.`);
@@ -349,7 +378,7 @@
       if ((fam === "re3" || fam === "hu_re3") && reraiseSizes(st)[reraiseIndex(st)] >= D.sizes.commit * s) {
         notes.push("A re-raise of two fifths of the stack or more is priced as their all-in. A small re-raise where an all-in was open is often a stronger hand than that: fold the close ones.");
       }
-      return {fam, key: pre.concat([s]), table, stack: s, notes, from: mine ? own : fam};      // from: the tables it was read from
+      return {fam, key: pre.concat([s]), table, stack: s, notes, from};      // from: the tables it was read from
     }
     return {notes: ["There is no table for this spot."]};
   }
@@ -469,14 +498,15 @@
     if (res.fam !== "vsraise" && res.fam !== "hu_vsraise") return null;
     const callers = res.fam === "vsraise" ? res.key[2] : 0;
     const over = f.m * 2 / (2 + callers);          // the margin shrinks with the fair share of the pot
-    const share = realised(h, res.stack - 1, f.ip === 1);          // the big blind has posted the ante: one less behind
+    const paid = f.an != null ? f.an : 1;          // the big blind has posted the ante: one big blind less behind, or his eighth
+    const share = realised(h, res.stack - paid, f.ip === 1);
     const size = D.sizes.raise[res.key[res.fam === "vsraise" ? 3 : 0]];
     /* with callers the price counts their chips, so the equity counts their hands: each by his odds against the hand */
     const alone = [equity(h, D.ranges[f.v])].concat((f.cv || []).map((v) => equity(h, D.ranges[v])));
     const eq = alone.some((e) => e == null) ? null : beatsAll(alone);
     /* short: the call costs more than an eighth of what is behind, so the flop is played for the stack */
     return {price: f.p, share, need: (f.p + over) / share, eq, last: f.ip === 1, players: alone.length,
-            short: size - 1 > 0.12 * (res.stack - 1)};
+            short: size - 1 > 0.12 * (res.stack - paid)};
   }
   /* The chance to win a pot against several players, from the equity against each alone (pushfold.beats_all). */
   function beatsAll(equities) {
@@ -696,6 +726,7 @@
         <div class="sub"><span class="eyebrow">Style</span><div class="chips">${chipRow(D.styles.map((s) => [s, STYLE[s] || s]), st.style, "style", true)}</div></div>
         <div class="sub"><span class="eyebrow">Stage</span><div class="chips">${chipRow(Object.keys(STAGE).map((s) => [s, STAGE[s]]), st.stage, "stage", true)}</div></div>
         <div class="sub"><span class="eyebrow">Blinds</span><div class="chips">${chipRow(Object.keys(SPEED).map((s) => [s, SPEED[s].label]), st.speed, "speed", true)}</div></div>
+        ${D.antes ? `<div class="sub"><span class="eyebrow">Ante</span><div class="chips">${chipRow(D.antes.kinds.map((a) => [a, ANTE[a] || a]), st.ante, "ante", true)}</div></div>` : ""}
         <button class="resetall${undo ? " undo" : ""}" id="btn-reset-all" data-act="${undo ? "undo" : "reset"}">${undo ? "Undo the reset" : "Reset everything"}</button>
       </div>
     </div>`;
@@ -764,7 +795,8 @@
       if (size != null) label += " to " + bbText(size);
       return `<span><i class="${sh[k].kind}"></i>${esc(label)} ${pct(sh[k].share)}</span>`;
     }).join("");
-    const notes = res.notes.map((t) => `<p class="hint">${esc(t)}</p>`).join("");
+    const other = ownAnte(res, st) ? [] : ["This table counts a big blind ante of 1bb: the ante of every player has tables of its own for the stacks solved exactly and for two players."];
+    const notes = res.notes.concat(other).map((t) => `<p class="hint">${esc(t)}</p>`).join("");
     const mode = `<span class="mode" role="group" aria-label="What the chart shows"><button class="${st.sheet ? "" : "on"}" aria-pressed="${!st.sheet}"${set({sheet: false})}>${res.stack}bb</button>` +
                  `<button class="${st.sheet ? "on" : ""}" aria-pressed="${!!st.sheet}"${set({sheet: true})}>Every stack</button></span>`;
     if (st.sheet) {
@@ -876,7 +908,7 @@
   }
   function clockHtml(st) {
     if (st.speed === "regular") return "";
-    const sp = SPEED[st.speed], n = st.players, c = clock(st.stack, n, st.seat, st.speed);
+    const sp = SPEED[st.speed], n = st.players, c = clock(st.stack, n, st.seat, st.speed, st.ante);
     const one = (x) => (x >= 10 ? Math.round(x) : Math.round(x * 10) / 10) + "bb";
     const steps = [`<span class="step"><b>${one(st.stack)}</b><i>now</i></span>`];
     if (c.hands > 0) steps.push(`<span class="step${c.atBlind < LOW ? " low" : ""}"><b>${one(c.atBlind)}</b><i>at your big blind, ${c.hands === 1 ? "next hand" : "in " + c.hands + " hands"}</i></span>`);
@@ -1094,7 +1126,8 @@
     return `<details class="card notes" id="notes-box"${open ? " open" : ""}><summary><span class="title">How to read it</span><span class="hint">and what it is made of</span></summary>
       <div class="body">
         <p><b>Stack</b> is the effective one: the smaller of yours and the biggest stack that can still call you. Against an all-in it is the size of the all-in, or your stack if that is smaller.</p>
-        <p><b>The answers</b> are the coach's engine asked about every hand of every spot, counting chips only, with a big blind ante. ${D.tables.length.toLocaleString("en")} tables, nothing is worked out while you play.</p>
+        <p><b>The answers</b> are the coach's engine asked about every hand of every spot, counting chips only. ${D.tables.length.toLocaleString("en")} tables, nothing is worked out while you play.</p>
+        <p><b>Ante</b> says who pays it. <b>Big blind</b>: the big blind pays one big blind for the table. <b>Every player</b>: each player pays an eighth of a big blind in every hand, as on GGPoker. At eight players that is the same money; but the big blind keeps one big blind more behind, and a smaller table plays for a smaller pot (0.75bb of ante at six players, 0.375bb at three, a quarter with two). The choice changes the tables where that counts most: the all-ins of ${D.short ? D.short.top : 20}bb or less that are solved exactly (below), at every table size, and every table for two players. All the other tables are made with the big blind ante whichever is chosen, and the chart says so under them. At a table of eight that moves a few hands at the edge of a range, nearly all of them marked close, and most where the big blind's stack is the one played for: you are the big blind, or he moved all-in over your raise, with ${D.short ? D.short.top : 20}bb or less. There he has about one big blind more than the table counts, and the table one big blind deeper is the nearer one. At a short-handed table the pot is smaller than those tables count: fold the close ones. The blinds clock follows the choice.</p>
         <p><b>How much they raised</b> matters most in the big blind, where the call goes by its price: a raise to 2bb asks for about 18% of the pot, a raise to 3bb for 27%. Pick the size under "Raised to": it starts from the usual one for the stack and stays as you set it for the next hands. "4bb+" is read as 4bb: against more, fold the close ones. A bigger raise also makes your own re-raise bigger and a small pair's call rarer.</p>
         <p><b>The big blind's call</b> is tested hand by hand: its equity against the raiser's range, times the share of that equity the hand keeps when it plays the flop, must beat the price by a margin. Suited, connected and high cards keep more, and every hand keeps more against a raise from the small blind, where the big blind acts last. Against a solver's published fold rates this folds a few points more often at 2bb and at 3bb. It holds at every stack: with 8bb the big blind still calls a small raise at the right price, and then plays the flop for its stack. A call or a fold within 3 points of the line is marked close.</p>
         <p><b>Play to win</b> opens wider than the coach's tight ranges and, from the cutoff and the button, calls and re-raises a raise with more hands. <b>Tight</b> keeps the tight ranges and asks more of a big blind call. Both take stacks as equal and know nothing about prizes.</p>
@@ -1102,7 +1135,7 @@
         <p><b>Opponents</b> changes the hands they are taken to raise and move in with: tight players fewer, loose players more.</p>
         <p><b>Blinds</b> (Regular, Turbo, Hyper) does not change the play: with the same stack the right hand to play is the same at every speed. It turns on the blinds clock, which shows what folding costs: your stack when the big blind reaches you and after a whole round, counted in the big blinds of that moment (taken as levels of about 12, 6.5 and 3.5 hands that add about a fifth each). And a close play is taken in a turbo or a hyper, where waiting for a better spot costs more than it is worth.</p>
         <p><b>Every stack</b> turns the chart into a push/fold sheet: for each hand the deepest stack at which it still goes in for everything in this spot. Under the answer, the same hand is shown at every stack; a tap sets that stack.</p>
-        <p><b>All-ins with ${D.short ? D.short.top : 10}bb or less are solved exactly</b>: moving all-in first, and calling one all-in or two. Real cards, every player who can still call, every side pot, for tables of 3, 4, 5, 6 and 9 players (7 and 8 are read from the nine); solved at 2 to 10bb and at 12, 16 and 20bb, with a straight line between. Two things count there that the usual push-or-fold chart leaves out. A short all-in is often called twice. And the players who folded hold mostly middle and low cards, so at a full table a hand like T8o is worth about three points less than its plain odds, and the big blind calls an all-in with far fewer hands than the price alone says. Those tables say "Solved exactly": the calls at every one of these stacks, and first in up to 10bb, where every hand is an all-in or a fold (deeper, the all-in is weighed by its exact number and the small raise by the opening range). They have no one number for what a call needs. Opponents moves the hands an all-in player is taken to hold, so it moves the calls; the all-ins first in are the same against every kind of opponent. With Standard, an all-in of 10bb or less is the solved range itself; deeper, where a player has other plays than the all-in, it is taken a little tighter, a tenth at 20bb, which is what the deeper tables assume. Behind a player who only called with 6bb or less, the answer is the one against his all-in, with a caller's weaker hands in its place.</p>
+        <p><b>All-ins with ${D.short ? D.short.top : 10}bb or less are solved exactly</b>: moving all-in first, and calling one all-in or two. Real cards, every player who can still call, every side pot; solved at 2 to 10bb and at 12, 16 and 20bb, with a straight line between. With a big blind ante: tables of 3, 4, 5, 6 and 9 players (7 and 8 are read from the nine). With the ante of every player: every table from 3 to 9, each solved as such, because there the pot goes with the number of players. Two things count there that the usual push-or-fold chart leaves out. A short all-in is often called twice. And the players who folded hold mostly middle and low cards, so at a full table a hand like T8o is worth about three points less than its plain odds, and the big blind calls an all-in with far fewer hands than the price alone says. Those tables say "Solved exactly": the calls at every one of these stacks, and first in up to 10bb, where every hand is an all-in or a fold (deeper, the all-in is weighed by its exact number and the small raise by the opening range). They have no one number for what a call needs. Opponents moves the hands an all-in player is taken to hold, so it moves the calls; the all-ins first in are the same against every kind of opponent. With Standard, an all-in of 10bb or less is the solved range itself; deeper, where a player has other plays than the all-in, it is taken a little tighter, a tenth at 20bb, which is what the deeper tables assume. Behind a player who only called with 6bb or less, the answer is the one against his all-in, with a caller's weaker hands in its place.</p>
         <p><b>Three players in the pot</b> (a raise and an all-in, two all-ins, a re-raise and an all-in behind your raise) are made for four seats of the first player, and the first two for the big blind; the chart says so when your spot is read from a neighbour.</p>
         <p><b>After the flop</b> is the playbook's rules of thumb with pot-odds arithmetic, not a solver.</p>
         <p>A study aid. Most sites do not allow charts or outside help while you play for real money: check the rules of yours.</p>
@@ -1313,7 +1346,8 @@
       const res = lookup(full);
       if (!res.table) return null;
       const a = answers(res, full)[D.hands.indexOf(hand)];
-      return {fam: res.fam, from: res.from, key: res.key, name: a.name, close: a.close, size: sizeOf(a.name, res.table), exact: (res.table.f || {}).x === 1};
+      return {fam: res.fam, from: res.from, key: res.key, name: a.name, close: a.close, size: sizeOf(a.name, res.table), exact: (res.table.f || {}).x === 1,
+              ante: ownAnte(res, full) ? full.ante : "bb"};      // ante: the one the table read was made for
     },
     equity: (hand, marks) => equity(D.hands.indexOf(hand), marks),
     postAdvice, state: () => state, seatName, realised, ownTable, beatsAll, clock, commits, SPEED,

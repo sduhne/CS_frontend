@@ -559,6 +559,7 @@ def first_in(spot: Spot) -> Advice:
         if sol.exact:
             adv.numbers.append(f"everyone folds {_pct(fe)}; the all-in is solved exactly at this stack, with two and "
                                "three callers and the cards that were folded counted")
+            adv.numbers += _ante_note(setup)
         else:
             adv.numbers.append(f"everyone folds {_pct(fe)}; when called you have {_pct(sol.eq_called[hand])}")
         tight_callers = [c for c in sol.callers if range_pct(c.call_range) > 0]
@@ -750,6 +751,7 @@ def vs_limp(spot: Spot, limpers: list[int]) -> Advice:
                            f"his all-in from the exact solution, with the hands of a caller in place of the hands of an "
                            f"all-in. Moving in earns {exact:+.2f}bb against giving the pot up"
                            + (f"; the free flop is worth about {flop:.1f}bb of that" if is_bb else ""))
+        adv.numbers += _ante_note(setup)
         adv.why.append("good enough against a caller who is not folding" + ("" if is_bb else ", and the players behind you")
                        if exact > flop else
                        "the free flop is worth more than moving in against a caller who is not folding" if is_bb else
@@ -842,7 +844,17 @@ def _shover_solution(spot: Spot, shover: int, opener: int | None, raise_to: floa
 
 _SEVERAL_CALL = ("a stack this short is called by two players as often as by one, and the solver counts one caller at "
                  "a time: it reads weak hands too well here. The exact tables cover this depth only with a big blind "
-                 "ante, chips, and nobody shorter behind")
+                 "ante of one big blind or an ante of about an eighth of a big blind from every player, chips, and "
+                 "nobody shorter behind")
+
+
+def _ante_note(setup: HandSetup) -> list[str]:
+    """Beside an answer read from the exact game when the ante is near the solved one and not it: every
+    player's ante of 0.12 or 0.133 of a big blind is read from the solution for an eighth (``short.ANTE_BAND``)."""
+    if short.ante_kind(setup) != "player" or short.same_ante(setup):
+        return []
+    return [f"read from the solution for an ante of {short.PLAYER_ANTE:g}bb from every player; here it is "
+            f"{setup.antes[0] / setup.bb:.3g}bb, which moves a hand at the edge by a few hundredths of a big blind"]
 
 
 def _several_will_call(setup: HandSetup, actor: int, size: float) -> bool:
@@ -1204,6 +1216,7 @@ def vs_shove(spot: Spot, shover: int, *, raiser: int | None = None, raise_to: fl
     elif exact is not None:
         adv.numbers.append(f"an all-in of this size is solved exactly, with every player who can still call: "
                            f"calling earns {exact:+.2f}bb against folding")
+        adv.numbers += _ante_note(setup)
     else:
         # how wide must the shove be for a call to break even?
         be = None
@@ -1339,6 +1352,7 @@ def multi_allin(spot: Spot, allins: list[int], raiser: int | None = None, raise_
         adv.numbers.append(f"equity vs both ranges about {_pct(eq)}; pot odds {_pct(need_chip)}")
         adv.numbers.append(f"an all-in of this size is solved exactly, with every player who can still call: "
                            f"calling earns {exact:+.2f}bb against folding")
+        adv.numbers += _ante_note(setup)
     else:
         adv.numbers.append(f"equity vs both ranges {_pct(eq)}; need about {_pct(need)} "
                            f"(pot odds {_pct(need_chip)}, ICM/safety +{100 * (need - need_chip):.0f} pts)")
@@ -2200,18 +2214,27 @@ def parse_actions(text: str, setup: HandSetup, hero: int, resolve, chips: bool) 
     return acts
 
 
+QUICK_ANTES = {"bb": (0.0, 1.0), "player": (short.PLAYER_ANTE, 0.0), "none": (0.0, 0.0)}      # (of every player, of the big blind)
+
+
 def quick_spot(hand: int, cards, stack_bb: float, players: int, pos: str, facing: str = "",
                villain_bb: float | None = None, prizes: Prizes | None = None,
-               ante: bool = True, stage: dict | None = None) -> Spot:
-    """A spot without table state: everyone has ``villain_bb`` (default hero's stack)."""
+               ante: bool | str = True, stage: dict | None = None) -> Spot:
+    """A spot without table state: everyone has ``villain_bb`` (default hero's stack).
+
+    ``ante``: "bb" (or True), the big blind pays one big blind for the table; "player", every player pays an
+    eighth of a big blind (``short.PLAYER_ANTE``, as on GGPoker); "none" (or False), no ante."""
     n = max(2, players)
     hero = pos_to_index(pos, n)
     if hero is None:
         raise ValueError(f"unknown position {pos!r}")
+    kind = ("bb" if ante else "none") if isinstance(ante, bool) else ante
+    if kind not in QUICK_ANTES:
+        raise ValueError(f"unknown ante {ante!r}: bb, player or none")
     other = villain_bb if villain_bb else stack_bb
     stacks = [other] * n
     stacks[hero] = stack_bb
-    setup = HandSetup(stacks, 0.5, 1.0, 0.0, 1.0 if ante else 0.0)
+    setup = HandSetup(stacks, 0.5, 1.0, *QUICK_ANTES[kind])
     spot = Spot(setup=setup, hero=hero, hand=hand, cards=cards, prizes=prizes or Prizes(),
                 field_prizes=prizes or Prizes(), stage=stage or {})
     spot.acts = parse_actions(facing, setup, hero, lambda name: pos_to_index(name, n), chips=False)

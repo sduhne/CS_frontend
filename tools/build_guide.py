@@ -21,7 +21,17 @@ size (``usual_sizes``).
 Seats are named by the players still to act behind them, at a table of nine: 8 is the first to act, 2 the
 button, 1 the small blind, 0 the big blind.  A smaller table has the last seats of that row, so one set of
 tables serves every table size from three to nine; two players are a family of their own ("hu").
-The big blind pays an ante of one big blind for the table.  Stacks are equal (the effective stack).
+Stacks are equal (the effective stack).
+
+The ante.  Every family is asked with a big blind ante: the big blind pays one big blind for the table.  The
+page's Ante choice (ANTES) has a second kind, an eighth of a big blind from every player, as on GGPoker.  The
+families whose answers that changes most have a second set of tables asked with it, "name+each" (EACH):
+the stacks read from the exact solution (``short``, 20bb or less: first in, calling one all-in or two, a
+raise that commits the raiser, a caller who is committed), at every table size, since with that ante the
+money in the pot goes with the number of players ("name+each" is the table of nine, "name+each@6" a table of
+six); and the tables for two players, where the pot holds a quarter of a big blind of ante in place of one
+and the engine's own solver is exact.  Every other table is the same for both kinds: ``AnteMoves`` in
+tests/test_guide.py and PLAYBOOK.md say what that leaves out.
 """
 from __future__ import annotations
 
@@ -43,8 +53,9 @@ from poker_coach import ranges as R                       # noqa: E402
 from poker_coach import short                             # noqa: E402
 from poker_coach.cards import COMBO_COUNT, HANDS, format_range, parse_range, range_pct   # noqa: E402
 
-VERSION = 3                             # of the data file: 2 added the size of a raise and of a re-raise; 3 the stacks of a few
-                                        # big blinds from the exact solution, with a family of their own for two all-ins
+VERSION = 4                             # of the data file: 2 added the size of a raise and of a re-raise; 3 the stacks of a few
+                                        # big blinds from the exact solution, with a family of their own for two all-ins;
+                                        # 4 the ante of every player ("name+each")
 # Finished jobs are kept by family and reused: a family whose questions changed gets a new number here,
 # and only its jobs are asked again.
 FAMILY_VERSION = {"vsraise": 2, "hu_vsraise": 2, "re3": 2, "hu_re3": 2}
@@ -56,6 +67,8 @@ BUBBLE = 0.10                                   # the page's Bubble stage: a cal
 PART = {"vsraise": 3}                           # a big family is asked in parts: one job for each value of this key number
 STYLES = ("win", "tight")               # the page's "Play to win" and "Tight" (ranges.STYLES: both test the big blind's call
                                         # by what the hand realises; "tight" has the engine's default rows)
+ANTES = ("bb", "player")                # the page's Ante: the big blind pays one big blind; every player pays an eighth
+EACH = "+each"                          # the mark of a family asked with the ante of every player
 OPPONENTS = ("unknown", "tight", "loose")
 STACKS = (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 25, 28, 30, 35, 40, 50, 60, 80, 100)
 SHORT = tuple(s for s in STACKS if s <= 40)               # an all-in in front: bigger ones are read at 40
@@ -188,10 +201,13 @@ def one_solve_per_spot():
         P._COLD_MEMO.clear()
 
 
-def table(hero_nb: int, stack: float, facing: str, opp: str, players: int = N, hero_seat: str | None = None) -> dict:
-    """Ask the engine about every hand of one spot.  -> {"a": 169 letters, and what the page shows beside them}."""
+def table(hero_nb: int, stack: float, facing: str, opp: str, players: int = N, hero_seat: str | None = None,
+          ante: str = "bb") -> dict:
+    """Ask the engine about every hand of one spot.  -> {"a": 169 letters, and what the page shows beside them}.
+
+    ``ante``: "bb", the big blind pays one big blind for the table; "player", every player pays an eighth."""
     name = hero_seat or seat(hero_nb)
-    spot = P.quick_spot(0, None, float(stack), players, name, facing)
+    spot = P.quick_spot(0, None, float(stack), players, name, facing, ante=ante)
     spot.types = [opp] * players
     letters, sizes, first, through, spare = [], set(), None, [], []
     with one_solve_per_spot():
@@ -461,19 +477,26 @@ def fam_hu(kind):
     return make
 
 
-def bb_price(family: str, key) -> dict:
-    """The price of the big blind's call of a raise, exactly: {"p": share of the pot after the call, "ip": 1 if it acts last}."""
+def bb_price(family: str, key, ante: str = "bb") -> dict:
+    """The price of the big blind's call of a raise, exactly: {"p": share of the pot after the call, "ip": 1 if it acts last}.
+
+    With an ante from every player (two players only: the other tables against a raise are made with the big
+    blind ante) also "an": what the big blind has paid of it, where the big blind ante took one big blind."""
     if family == "hu_vsraise":
         size, callers, small_blind_in, last = RAISE_SIZES[key[0]], 0, True, False
+        antes = 1.0 if ante == "bb" else 2 * short.PLAYER_ANTE
     else:
         o, _h, callers, zi = key[:4]
         size = RAISE_SIZES[zi]
         small_blind_in = o == 1 or o - callers <= 1 <= o - 1         # the small blind raised, or is one of the callers
         last = o == 1 and callers == 0
-    pot = 1.0 + (0.0 if small_blind_in else 0.5) + 1.0 + size * (1 + callers)     # the ante, the blinds, the raise and the calls
+        antes = 1.0
+    pot = antes + (0.0 if small_blind_in else 0.5) + 1.0 + size * (1 + callers)     # the ante, the blinds, the raise and the calls
     out = {"p": round((size - 1.0) / (pot + size - 1.0), 4)}
     if last:
         out["ip"] = 1
+    if ante != "bb":
+        out["an"] = short.PLAYER_ANTE
     return out
 
 
@@ -526,12 +549,32 @@ SAME_IN_EVERY_STYLE = {"allin", "two_allin", "two_short", "hu_allin"}
 # deck: at six players the big blind then calls an all-in about ten points too tight).  Each family whose
 # answers are read from that solution has a second set of tables, "name@players", for those stacks; the
 # page reads it when the table is that size and falls back to the family itself everywhere else.
+#
+# With the ante of every player the same families have tables for every table size the solution has, the
+# nine included ("name+each", "name+each@8"): there the pot goes with the number of players, and no table
+# size can be read from another.  Two players: every family of theirs, at every stack ("hu_open+each").
 SMALL = tuple(n for n in short.games() if n < N)
+EACH_TABLES = short.games("player")                       # 3 to 9
 SIZED = ("open", "limp", "limp_sb", "allin", "two_short", "vsraise")
+HEADS_UP = tuple(name for name in FAMILIES if name.startswith("hu_"))
 
 
-def sized(name: str, players: int):
-    """The spots of a family at a table of ``players``, for the stacks solved exactly."""
+def each_name(name: str, players: int = N) -> str:
+    """The family ``name`` asked with the ante of every player, at a table of ``players``."""
+    return name + EACH + ("" if players in (N, 2) else f"@{players}")
+
+
+def base_of(family: str) -> str:
+    """"open+each@6" and "open@6" -> "open"."""
+    return family.split("@")[0].split(EACH)[0]
+
+
+def ante_of(family: str) -> str:
+    return "player" if EACH in family else "bb"
+
+
+def sized(name: str, players: int, ante: str = "bb"):
+    """The spots of a family at a table of ``players``, for the stacks solved exactly with that ante."""
     def make():
         global _table
         _table = players
@@ -540,7 +583,7 @@ def sized(name: str, players: int):
         finally:
             _table = N
         for key, question in spots:
-            if key[-1] > short.top() or question["hero_nb"] >= players or "?" in question["facing"]:
+            if key[-1] > short.top(ante) or question["hero_nb"] >= players or "?" in question["facing"]:
                 continue
             # against a raise only one that commits the raiser is read from the exact game (as his all-in), and a
             # player who only called with a stack he is committed with.  (A raise that commits and an all-in are
@@ -549,7 +592,18 @@ def sized(name: str, players: int):
                 continue
             if name in ("limp", "limp_sb") and key[-1] > P._LIMP_COMMITS:
                 continue
-            yield key, dict(question, players=players, hero_seat=R.position_name(question["hero_nb"], players))
+            question = dict(question, players=players, hero_seat=R.position_name(question["hero_nb"], players))
+            if ante != "bb":
+                question["ante"] = ante
+            yield key, question
+    return make
+
+
+def with_ante(name: str, ante: str):
+    """Every spot of a family, asked with another ante."""
+    def make():
+        for key, question in FAMILIES[name][1]():
+            yield key, dict(question, ante=ante)
     return make
 
 
@@ -558,6 +612,15 @@ for _name in SIZED:
         FAMILIES[f"{_name}@{_n}"] = (f"{FAMILIES[_name][0]}, at a table of {_n}", sized(_name, _n))
         if _name in SAME_IN_EVERY_STYLE:
             SAME_IN_EVERY_STYLE.add(f"{_name}@{_n}")
+    for _n in EACH_TABLES:
+        FAMILIES[each_name(_name, _n)] = (f"{FAMILIES[_name][0]}, every player antes" + ("" if _n == N else f", at a table of {_n}"),
+                                          sized(_name, _n, "player"))
+        if _name in SAME_IN_EVERY_STYLE:
+            SAME_IN_EVERY_STYLE.add(each_name(_name, _n))
+for _name in HEADS_UP:
+    FAMILIES[each_name(_name, 2)] = (f"{FAMILIES[_name][0]}, every player antes", with_ante(_name, "player"))
+    if _name in SAME_IN_EVERY_STYLE:
+        SAME_IN_EVERY_STYLE.add(each_name(_name, 2))
 
 
 def spots_of(family: str, part, quick: bool = False):
@@ -653,10 +716,14 @@ def main() -> int:
                 continue
             tab["a"] = pack("".join(pairs_in_order(tab["a"])))       # jobs finished before that rule keep raw answers
             facts = tab.get("f") or {}
+            stored, ante = family, ante_of(family)
+            if family == each_name("hu_vsraise", 2):        # two players with the ante of every player: the same facts, its own price
+                family = "hu_vsraise"
             if family in ("vsraise", "hu_vsraise") and "vp" in facts and "vr" not in facts:
                 # the engine prints the size of the raiser's range, not the hands: ask for them the way it does
                 R.set_style(style)
-                rng = R.villain_open_range(key[0] if family == "vsraise" else 1, opp, float(key[-1]))
+                rng = R.villain_open_range(key[0] if family == "vsraise" else 1, opp,
+                                           float(key[-1]) - (short.PLAYER_ANTE if ante == "player" else 0.0))
                 if abs(range_pct(rng) - facts["vp"]) <= 0.6:
                     facts["vr"] = format_range(rng)
             raised_to = RAISE_SIZES[key[3] if family == "vsraise" else key[0]] if family in ("vsraise", "hu_vsraise") else 0.0
@@ -666,7 +733,7 @@ def main() -> int:
                 # given the exact price, the margin of the style, whether the big blind acts last, and the
                 # hands of the players who called (their chips are in the price).  Not for a raise that commits
                 # the raiser: that is priced as an all-in, and the page shows what a call of it needs.
-                facts.update(bb_price(family, key))
+                facts.update(bb_price(family, key, ante))
                 facts["m"] = P._BB_MARGIN[style]
                 if family == "vsraise" and key[2]:
                     R.set_style(style)
@@ -678,6 +745,7 @@ def main() -> int:
             if text not in index:
                 index[text] = len(unique)
                 unique.append(tab)
+            family = stored
             styles = STYLES if family in SAME_IN_EVERY_STYLE else (style,)
             for st in styles:
                 data.setdefault(family, {}).setdefault(st, {}).setdefault(opp, {})[",".join(str(k) for k in key)] = index[text]
@@ -692,8 +760,11 @@ def main() -> int:
            "families": {name: FAMILIES[name][0] for name in families}, "tables": unique, "index": data,
            "ranges": ranges, "eq": eq, "pairs": pairs, "quick": bool(a.quick), "partial": bool(a.assemble_only),
            "sizes": {"raise": list(RAISE_SIZES), "reraise": list(RERAISE_TIMES), "commit": COMMITS}, "usual": usual_sizes(),
-           "short": {"top": short.top(), "tables": list(SMALL)}}      # stacks up to this are read from the exact solution;
-                                                                      # tables of these sizes have "family@size" tables there
+           # stacks up to "top" are read from the exact solution; tables of the sizes in "tables" have "family@size"
+           # tables there; with the ante of every player, the sizes in "each" have "family+each" tables ("+each@size"
+           # under nine players), and two players have every family of theirs again ("hu_open+each")
+           "short": {"top": short.top(), "tables": list(SMALL), "each": list(EACH_TABLES)},
+           "antes": {"kinds": list(ANTES), "each": short.PLAYER_ANTE, "mark": EACH}}
     with open(a.out, "w") as fh:
         fh.write("/* Made by tools/build_guide.py: do not edit. */\nwindow.GUIDE_DATA = ")
         json.dump(doc, fh, separators=(",", ":"))

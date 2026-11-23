@@ -552,7 +552,7 @@ def cmd_quick(a) -> int:
                 _out(f"  rng: {v.label}: {range_pct(v.weights):.0f}% preflop [{format_range(v.weights)}]")
             return 0
         spot = quick_spot(hand, cards, a.stack, a.players, a.pos, a.facing or "",
-                          a.villain_stack_bb, prizes, not a.no_ante, stage)
+                          a.villain_stack_bb, prizes, "none" if a.no_ante else a.ante, stage)
         if not prizes.chip_ev:
             spot.field_prizes = _field_prizes(prizes)
         if a.villain_type:
@@ -1358,7 +1358,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--facing")
     p.add_argument("--villain-stack-bb", dest="villain_stack_bb", type=float,
                    help="everyone else's stack in bb (default: same as yours)")
-    p.add_argument("--no-ante", action="store_true")
+    p.add_argument("--ante", choices=["bb", "player", "none"], default="bb",
+                   help="bb = the big blind pays one big blind for the table (default); player = every player antes "
+                        "an eighth of a big blind (GGPoker); none = no ante")
+    p.add_argument("--no-ante", action="store_true", help="the same as --ante none")
     p.add_argument("--remaining", type=int)
     p.add_argument("--paid", type=int)
     p.add_argument("--entrants", type=int)
