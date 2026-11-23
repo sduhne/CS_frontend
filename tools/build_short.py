@@ -78,6 +78,18 @@ def read(path: str) -> dict:
         return json.load(fh)
 
 
+_compiled: set[str] = set()
+
+
+def ready(solver: str) -> str:
+    """The solver, compiled when it is first needed: a build from kept output runs nothing and needs no compiler."""
+    if solver not in _compiled:
+        subprocess.check_call(["gcc", "-O3", "-march=native", "-fopenmp", "-o", solver,
+                               os.path.join(ROOT, "tools", "aof_solver.c"), "-lm"])
+        _compiled.add(solver)
+    return solver
+
+
 def solve(solver: str, stack: int, work: str, quick: bool, players: int = S.PLAYERS) -> tuple[dict, str]:
     path = os.path.join(work, f"n{players}_s{stack}.json")
     train, refine = (TRAIN // 20, PASSES[0]["samples"] // 10) if quick else (TRAIN, PASSES[0]["samples"])
@@ -85,7 +97,7 @@ def solve(solver: str, stack: int, work: str, quick: bool, players: int = S.PLAY
         stacks = ",".join([str(stack)] * players)
         # stacks, fee, fee mode, training deals, evaluation deals, samples a hand, ante of every player,
         # ante of the big blind, precision pass up to this many all-ins
-        raw = subprocess.check_output([solver, stacks, "0", "1", str(train), str(EVAL), str(refine), "0", "1",
+        raw = subprocess.check_output([ready(solver), stacks, "0", "1", str(train), str(EVAL), str(refine), "0", "1",
                                        str(PASSES[0]["all_ins"])])
         with open(path + ".tmp", "wb") as fh:
             fh.write(raw)
@@ -154,7 +166,7 @@ def sample(solver: str | None, sol: dict, base: str, number: int, spec: dict, ha
         stacks = ",".join(f"{x:g}" for x in sol["stacks"])
         # br: stacks, fee, fee mode, samples a hand, the strategies, ante of every player, ante of the big blind,
         # decision points with at most this many all-ins, the hands, the stream of random numbers (one a pass)
-        raw = subprocess.check_output([solver, "br", stacks, "0", "1", str(samples), base + ".strategy.txt",
+        raw = subprocess.check_output([ready(solver), "br", stacks, "0", "1", str(samples), base + ".strategy.txt",
                                        "0", "1", str(spec["all_ins"]), listed, str(number)])
         with open(out + ".tmp", "wb") as fh:
             fh.write(raw)
@@ -294,9 +306,7 @@ def main() -> int:
         return report(a.work, a.quick) if a.report else pack(a.work)
     work = a.work or tempfile.mkdtemp(prefix="short-")
     os.makedirs(work, exist_ok=True)
-    solver = os.path.join(work, "aof_solver")
-    subprocess.check_call(["gcc", "-O3", "-march=native", "-fopenmp", "-o", solver,
-                           os.path.join(ROOT, "tools", "aof_solver.c"), "-lm"])
+    solver = os.path.join(work, "aof_solver")           # compiled when something has to be run (``ready``)
     t0 = time.time()
     quick = 10 if a.quick else 1
 
