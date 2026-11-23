@@ -7,7 +7,13 @@
  * Arguments: stacks in big blinds, in acting order (first to act ... SB, BB);
  * fee in big blinds; fee mode (1 = taken from every pot, 0 = only when two or
  * more players are all-in); training deals; evaluation deals; samples per
- * hand class in the precision pass (default 20000); optional ante.
+ * hand class in the precision pass (default 20000); optional ante paid by
+ * every player; optional ante paid by the big blind alone (it comes out of
+ * his stack before his blind, so a big blind with two big blinds and an ante
+ * of one is all-in by posting); optional limit on the precision pass: only
+ * decision points with at most that many players all-in before them (with
+ * nine players there are 511 decision points, and nobody needs the answer
+ * to five all-ins to a twentieth of a big blind).
  *
  * Method: chance-sampled counterfactual regret minimisation.  Every iteration
  * deals real cards to all players plus a board, so card removal and multi-way
@@ -28,8 +34,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAXN 6
-#define MAXMASK 64
+#define MAXN 9
+#define MAXMASK 512
 
 /* ---------------------------------------------------------------- evaluator */
 static int8_t straight_hi[8192];
@@ -106,8 +112,8 @@ static inline int class_of(int c1, int c2) {
 
 /* ------------------------------------------------------------------- game */
 static int N;
-static double live[MAXN], blind[MAXN], ante_v = 0.0, fee = 0.0;
-static int fee_mode = 1;
+static double live[MAXN], blind[MAXN], ante_v = 0.0, bb_ante_v = 0.0, fee = 0.0;
+static int fee_mode = 1, refine_bits = MAXN;
 
 typedef struct {
     int npots;
@@ -124,8 +130,9 @@ static void build_masks(void) {
         for (int k = 0; k < N; k++) contrib[k] = ((mask >> k) & 1) ? live[k] : blind[k];
         mi->npots = 0;
         if (mask == 0) {                       /* everyone folds: the big blind takes it */
-            double pot = N * ante_v;
+            double pot = N * ante_v + bb_ante_v;
             for (int k = 0; k < N; k++) { pot += contrib[k]; mi->base[k] = -contrib[k] - ante_v; }
+            mi->base[N - 1] -= bb_ante_v;
             if (fee_mode == 1) pot -= fee;
             mi->npots = 1; mi->amt[0] = pot > 0 ? pot : 0; mi->elig[0] = 1 << (N - 1);
             continue;
@@ -149,7 +156,7 @@ static void build_masks(void) {
                 if (((mask >> k) & 1) && live[k] >= L - 1e-9) elig |= 1 << k;
             }
             if (j == 0) {
-                pot += N * ante_v;
+                pot += N * ante_v + bb_ante_v;
                 if (fee_mode == 1 || __builtin_popcount(mask) >= 2) pot -= fee;
                 if (pot < 0) pot = 0;
             }
@@ -158,6 +165,7 @@ static void build_masks(void) {
         }
         for (int k = 0; k < N; k++)
             mi->base[k] = -(contrib[k] < top ? contrib[k] : top) - ante_v;
+        mi->base[N - 1] -= bb_ante_v;
     }
 }
 
@@ -272,14 +280,22 @@ static void run(long iters, int mode) {
  */
 static double ev_ref[MAXN][MAXMASK][169];
 static long n_ref[MAXN][MAXMASK][169];
+/* br mode: when a list of hands is given, only those are sampled (the hands near zero, with many more
+   samples than the first pass could afford for every hand) */
+static int only_set = 0;
+static unsigned char only[MAXN][MAXMASK][169];
 
 static void refine(long samples) {
     for (int i = 0; i < N; i++) {
         for (int m = 0; m < (1 << i); m++) {
             if (i == N - 1 && m == 0) continue;
+            if (__builtin_popcount(m) > refine_bits) continue;
             #pragma omp parallel for schedule(dynamic, 4)
             for (int c = 0; c < 169; c++) {
-                uint64_t seed = 0xA0761D6478BD642FULL ^ ((uint64_t)(c + 1 + 169 * (m + 64 * i)) * 0xE7037ED1A0B428DBULL);
+                if (only_set && !only[i][m][c]) continue;
+                /* one stream of random numbers for each decision point (masks under 64 keep the seeds they always had) */
+                uint64_t seed = 0xA0761D6478BD642FULL
+                    ^ ((uint64_t)(c + 1 + 169 * (m + 64 * i) + 1000003 * (m >> 6)) * 0xE7037ED1A0B428DBULL);
                 int row = c / 13, col = c % 13;
                 int combos[12][2], nc = 0;
                 int hi = 12 - (row < col ? row : col), lo = 12 - (row < col ? col : row);
@@ -387,9 +403,13 @@ static int load_strategy(const char *path, double dst[MAXN][MAXMASK][169]) {
 
 int main(int argc, char **argv) {
     /* Extra modes:
-     *   aof_solver br   stacks fee fee_mode samples opp_file
+     *   aof_solver br   stacks fee fee_mode samples opp_file [ante] [bb_ante] [all_ins] [hands_file]
      *       best response: EV of shoving minus folding at every decision
-     *       point when every other player follows opp_file;
+     *       point (with at most all_ins players all-in before) when every
+     *       other player follows opp_file.  With more samples than the solve
+     *       used, this is the precision pass again with less noise; with
+     *       hands_file ("player mask hand" lines after their count), for
+     *       those hands only, the others are printed as 0;
      *   aof_solver eval stacks fee fee_mode deals hero_file opp_file
      *       average result and standard deviation per hand, seat by seat,
      *       for one player on hero_file against three on opp_file.
@@ -401,8 +421,8 @@ int main(int argc, char **argv) {
         argc--;
     }
     if (argc < 6 || (strcmp(mode, "eval") == 0 && argc < 7)) {
-        fprintf(stderr, "usage: %s stacks(csv) fee fee_mode train_iters eval_iters [refine_samples] [ante]\n"
-                        "       %s br stacks fee fee_mode samples opp_file\n"
+        fprintf(stderr, "usage: %s stacks(csv) fee fee_mode train_iters eval_iters [refine_samples] [ante] [bb_ante] [refine_all_ins]\n"
+                        "       %s br stacks fee fee_mode samples opp_file [ante] [bb_ante] [all_ins] [hands_file]\n"
                         "       %s eval stacks fee fee_mode deals hero_file opp_file\n", argv[0], argv[0], argv[0]);
         return 2;
     }
@@ -416,12 +436,36 @@ int main(int argc, char **argv) {
     long train = atol(argv[4]), evals = atol(argv[5]);
     long refine_samples = argc > 6 ? atol(argv[6]) : 20000;
     if (strcmp(mode, "solve") == 0 && argc > 7) ante_v = atof(argv[7]);
+    if (strcmp(mode, "solve") == 0 && argc > 8) bb_ante_v = atof(argv[8]);
+    if (strcmp(mode, "solve") == 0 && argc > 9) refine_bits = atoi(argv[9]);
+    /* br: the antes and the limit of the precision pass follow the file */
+    if (strcmp(mode, "br") == 0 && argc > 6) ante_v = atof(argv[6]);
+    if (strcmp(mode, "br") == 0 && argc > 7) bb_ante_v = atof(argv[7]);
+    if (strcmp(mode, "br") == 0 && argc > 8) refine_bits = atoi(argv[8]);
+    if (strcmp(mode, "br") == 0 && argc > 9) {
+        /* a file of "player mask hand" lines, after their count: the hands to sample */
+        FILE *f = fopen(argv[9], "r");
+        long count;
+        if (!f || fscanf(f, "%ld", &count) != 1) { fprintf(stderr, "cannot read %s\n", argv[9]); return 2; }
+        for (long q = 0; q < count; q++) {
+            int i, m, c;
+            if (fscanf(f, "%d %d %d", &i, &m, &c) != 3 || i < 0 || i >= MAXN || m < 0 || m >= MAXMASK || c < 0 || c >= 169) {
+                fprintf(stderr, "%s: line %ld is not a decision point and a hand\n", argv[9], q + 2);
+                return 2;
+            }
+            only[i][m][c] = 1;
+        }
+        fclose(f);
+        only_set = 1;
+    }
     double stacks[MAXN];
     for (int k = 0; k < N; k++) {
         stacks[k] = live[k];
         live[k] -= ante_v;
         blind[k] = 0.0;
     }
+    if (bb_ante_v > live[N - 1]) bb_ante_v = live[N - 1];
+    live[N - 1] -= bb_ante_v;
     blind[N - 2] = live[N - 2] < 0.5 ? live[N - 2] : 0.5;
     blind[N - 1] = live[N - 1] < 1.0 ? live[N - 1] : 1.0;
 
@@ -484,7 +528,7 @@ int main(int argc, char **argv) {
     long evals_done = (evals / nth) * nth;
     printf("{\"n\": %d, \"stacks\": [", N);
     for (int k = 0; k < N; k++) printf("%s%g", k ? "," : "", stacks[k]);
-    printf("], \"fee\": %g, \"fee_mode\": %d, \"ante\": %g, \"train\": %ld, \"eval\": %ld,\n", fee, fee_mode, ante_v, train, evals);
+    printf("], \"fee\": %g, \"fee_mode\": %d, \"ante\": %g, \"bb_ante\": %g, \"train\": %ld, \"eval\": %ld,\n", fee, fee_mode, ante_v, bb_ante_v, train, evals);
     printf("\"value\": [");
     for (int k = 0; k < N; k++) printf("%s%.4f", k ? "," : "", evals_done ? value_sum[k] / evals_done : 0.0);
     printf("],\n\"nodes\": [\n");
@@ -499,7 +543,7 @@ int main(int argc, char **argv) {
             long least = -1;
             for (int c = 0; c < 169; c++) {
                 double e = evden[i][m][c] > 0 ? evnum[i][m][c] / evden[i][m][c] : 0.0;
-                if (refine_samples > 0) {
+                if (refine_samples > 0 && __builtin_popcount(m) <= refine_bits) {
                     e = ev_ref[i][m][c];
                     if (least < 0 || n_ref[i][m][c] < least) least = n_ref[i][m][c];
                 }

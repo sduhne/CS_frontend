@@ -836,6 +836,30 @@ def cmd_latereg_safe(a) -> int:
     return 0
 
 
+def cmd_clock(a) -> int:
+    """The blinds clock: what folding costs at this speed, from this seat."""
+    if a.speed not in L.SPEEDS:
+        raise ValueError(f"--speed is one of {', '.join(L.SPEEDS)}")
+    n = a.players
+    from .preflop import pos_to_index
+    index = pos_to_index(a.pos, n)
+    if index is None:
+        raise ValueError(f"no seat {a.pos!r} at a table of {n}")
+    seat = n - 1 - index
+    c = L.fold_clock(a.stack, n, seat, a.speed)
+    sp = L.SPEEDS[a.speed]
+    _out(f"{position_name(seat, n)} with {a.stack:g}bb, {n} players, {sp['label']}: "
+         f"about {sp['hands_per_level']:g} hands a level, each level {round(100 * (sp['growth'] - 1))}% more")
+    when = "now" if c["hands"] == 0 else "next hand" if c["hands"] == 1 else f"in {c['hands']} hands"
+    if c["hands"]:
+        _out(f"  the big blind reaches you {when}: the stack is then {c['at_blind']:.1f}bb")
+    else:
+        _out("  you are the big blind now")
+    _out(f"  after a round of folding: {'nothing left' if c['gone'] else format(c['orbit'], '.1f') + 'bb'}")
+    _out("  (the play for a stack is the same at every speed; this is what waiting costs)")
+    return 0
+
+
 def cmd_latereg_chart(a) -> int:
     """The charts of the plan: wide, short-stack and tight, by seat."""
     charts = L.reference_charts(a.players, 10.0, a.callers, a.speed)
@@ -1438,6 +1462,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--speed", choices=list(L.SPEEDS), default="turbo")
     p.add_argument("--callers", choices=list(L.CALLERS), default="normal")
     p.set_defaults(fn=cmd_latereg_chart)
+
+    p = sub.add_parser("clock", help="blinds clock: the stack when the big blind comes and after a round of folding")
+    p.add_argument("--stack", type=float, required=True, help="your stack in big blinds")
+    p.add_argument("--pos", required=True, help="your seat: UTG ... BTN, SB or BB")
+    p.add_argument("--players", type=int, default=8)
+    p.add_argument("--speed", default="turbo", help="hyper, turbo, fast, regular or slow (default turbo)")
+    p.set_defaults(fn=cmd_clock)
 
     p = sub.add_parser("latereg-safe", help="sit-out signal: can this stack fold into the money?")
     p.add_argument("--stack", help="your stack in chips (default: the tracked table)")

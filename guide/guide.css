@@ -85,10 +85,13 @@ html{scroll-padding-top:calc(64px + env(safe-area-inset-top,0px))}       /* what
   .minibar .where{display:inline;margin-left:4px}
 }
 #inputs{order:2}
-#plan{order:3}
-#chart{order:4}
-#post{order:5}
-#notes{order:6}
+#clock{order:3}
+#plan{order:4}
+#strip{order:5}
+#chart{order:6}
+#post{order:7}
+#notes{order:8}
+.cols section:empty{display:none}                 /* a part with nothing to say takes no room, and no gap */
 
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:12px}
 .card > .eyebrow:first-child{margin-bottom:10px}
@@ -205,6 +208,28 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
 .planrow .go{width:8px;height:8px;border-right:2px solid var(--grey);border-top:2px solid var(--grey);transform:rotate(45deg);flex:none}
 .plan .rule{font-size:13px;color:var(--soft);padding:2px 2px 0}
 
+/* ---------- 7b. The blinds clock, and one hand at every stack ---------- */
+.clock .steps{display:flex;align-items:stretch;gap:8px}
+.clock .step{flex:1 1 0;min-width:0;padding:8px 10px;border-radius:var(--r-in);background:var(--raised);border:1px solid var(--line)}
+.clock .step b{display:block;font:800 26px/1 var(--display);font-variant-numeric:tabular-nums lining-nums}
+.clock .step i{display:block;margin-top:4px;font:600 11px/1.25 var(--body);font-style:normal;color:var(--grey)}
+.clock .step.low{border-color:var(--hot)}
+.clock .step.low b{color:var(--hot)}
+.clock .to{flex:none;align-self:center;width:7px;height:7px;border-right:2px solid var(--grey);border-top:2px solid var(--grey);transform:rotate(45deg)}
+.clock .rule{font-size:13px;color:var(--soft);padding:8px 2px 0}
+.strip .runs{display:flex;flex-wrap:wrap;gap:6px}
+.run{display:flex;align-items:center;gap:8px;min-height:36px;padding:4px 10px 4px 8px;border-radius:var(--r-in);border:1px solid var(--line);background:var(--raised)}
+.run::before{content:"";flex:none;width:10px;height:22px;border-radius:3px;background:var(--ink);border:1px solid var(--line-strong)}
+.run.r::before,.run.rc::before{background:var(--yellow);border-color:var(--yellow)}
+.run.j::before{background:var(--hot);border-color:var(--hot)}
+.run.c::before{background:var(--white);border-color:var(--white)}
+.run.k::before{background:#34343B}
+.run.b::before{background:var(--yellow-deep);border-color:var(--yellow)}
+.run .bbs{font:800 15px/1 var(--display);font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.run .what{font:600 12px/1.2 var(--body);color:var(--soft);white-space:nowrap}
+.run.on{border-color:var(--white)}
+.run.on .what{color:var(--white)}
+
 /* ---------- 8. The chart ---------- */
 .chart .head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px}
 .chart .title{font:800 18px/1.15 var(--display);text-transform:uppercase;letter-spacing:.01em}
@@ -230,6 +255,27 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
 .legend i.k{background:#34343B}.legend i.b{background:var(--yellow-deep);border:1px solid var(--yellow)}
 .legend i.f{background:var(--ink);border:1px solid var(--line-strong)}.legend i.rc{background:var(--yellow);box-shadow:inset 0 -3px 0 var(--hot)}
 .chart .foot{margin-top:8px}
+/* the chart of one stack, or the sheet of every stack: a switch in the head of the card */
+.chart .head{align-items:center}
+.mode{flex:none;display:inline-flex;border-radius:8px;overflow:hidden;border:1px solid var(--line-strong)}
+.mode button{min-height:30px;padding:0 9px;font:600 12px/1 var(--body);color:var(--soft);background:var(--raised);white-space:nowrap}
+.mode button + button{border-left:1px solid var(--line-strong)}
+.mode button.on{background:var(--yellow);color:var(--ink);font-weight:700}
+/* the sheet: the deepest stack at which a hand goes in, darker for the shallow ones */
+.cell.num{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:10.5px;font-variant-numeric:tabular-nums lining-nums}
+.cell.num i{font:600 7px/1 var(--body);font-style:normal;opacity:.75;letter-spacing:0}
+.cell.s0{background:var(--ink);color:#6E6E78}
+.cell.s1,.legend i.s1{background:#3A1D15}.cell.s1{color:var(--soft)}
+.cell.s2,.legend i.s2{background:#5C2A1C}.cell.s2{color:var(--white)}
+.cell.s3,.legend i.s3{background:#8A3B25}.cell.s3{color:var(--white)}
+.cell.s4,.legend i.s4{background:#B84C30}.cell.s4{color:var(--white)}
+.cell.s5,.legend i.s5{background:#E05D3D}.cell.s5{color:var(--ink)}
+.cell.s6,.legend i.s6{background:var(--yellow)}.cell.s6{color:var(--ink)}
+.cell.gap::after{content:"";position:absolute;top:2px;right:2px;width:4px;height:4px;border-radius:50%;background:currentColor}
+.cell.num.more{box-shadow:inset 0 -3px 0 var(--yellow)}
+.cell.num.more.me{box-shadow:inset 0 -3px 0 var(--yellow),0 0 0 2px var(--ink),0 0 0 4px var(--white)}
+.legend i.more{background:var(--ink);border:1px solid var(--line-strong);box-shadow:inset 0 -3px 0 var(--yellow)}
+.legend.bands{margin:8px 0 0}
 
 /* ---------- 9. After the flop ---------- */
 .post summary,.notes summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -266,6 +312,8 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
   .clear:hover{color:var(--white)}
   .key:hover{border-color:var(--grey)}
   button.planrow:hover{border-color:var(--grey)}
+  .run:hover{border-color:var(--grey)}
+  .mode button:not(.on):hover{color:var(--white)}
   .reset:hover,.resetall:hover{border-color:var(--white);color:var(--white)}
   .reset.undo:hover,.resetall.undo:hover{border-color:var(--yellow);color:var(--yellow)}
   button.pod.can:hover{border-color:var(--white);opacity:1}
@@ -287,6 +335,8 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
   .key.back{display:none}
   .presets{grid-template-columns:repeat(12,1fr)}
   .cell{font-size:12px}
+  .cell.num{font-size:12px}
+  .cell.num i{font-size:8px}
 }
 @media (min-width:960px){
   html{scroll-padding-top:calc(72px + env(safe-area-inset-top,0px))}
@@ -304,6 +354,8 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
   .slab .size{font-size:28px}
   .slab .why{font-size:14px}
   .cell{font-size:13px;aspect-ratio:1/.8}
+  .cell.num{font-size:13px}
+  .cell.num i{font-size:9px}
   .grid{gap:3px}
   .plan .rows{display:grid;grid-template-columns:1fr 1fr}        /* two side by side: the chart keeps its place in the window */
 }

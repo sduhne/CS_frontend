@@ -183,6 +183,21 @@ def _shift_level(n_behind: int, shift: int) -> int:
     return max(_LADDER_MIN, level)
 
 
+SHORT_ROWS = 25.0       # with this stack or less the rows lose their speculative hands
+
+
+def _short_button(shift: int) -> tuple[float, ...]:
+    """Play to win, the button with 25bb or less: the tight row (41% of hands).
+
+    The full row (50%) is what a button opens with a deep stack.  With 20bb a solver opens 41.5% there
+    (9 players, a big blind ante, chips only: 36.1% as a raise and 5.4% as an all-in), 31.2% from the
+    cutoff and 15.6% from the first seat; the rows of the seats before the button already shrink to
+    that with 25bb or less, the button's did not.  One notch wider than this row is the full row."""
+    if shift == 0:
+        return _ladder(2)
+    return _win_row(2, shift + 1 if shift < 0 else shift)
+
+
 def rfi_range(n_behind: int, eff_bb: float = 100.0, shift: int = 0) -> list[float]:
     """Hero's open-raise range first in.
 
@@ -190,8 +205,10 @@ def rfi_range(n_behind: int, eff_bb: float = 100.0, shift: int = 0) -> list[floa
     about 25bb the speculative part of the range is dropped: those hands are
     either shoves (decided by the solver) or folds.
     """
+    if _style == "win" and eff_bb <= SHORT_ROWS and n_behind == 2:
+        return list(_short_button(shift))
     weights = list(_row(n_behind, shift))
-    if eff_bb <= 25 and n_behind >= 3:
+    if eff_bb <= SHORT_ROWS and n_behind >= 3:
         drop = "98s, 87s, 76s, 65s, 54s, 97s, 86s, 75s, T8s, J8s"
         if _style == "win":             # the wider rows hold more of them: every small suited hand goes
             drop += ", J7s-J2s, T7s-T2s, 96s-92s, 85s-82s, 74s-72s, 64s-62s, 53s-52s, 43s-42s, 32s"
@@ -256,8 +273,16 @@ def norm_type(ptype: str | None) -> str:
 
 
 def villain_open_range(n_behind: int, ptype: str = "unknown", eff_bb: float = 100.0) -> list[float]:
-    """Estimated open-raise range of an opponent from a given seat."""
+    """Estimated open-raise range of an opponent from a given seat.
+
+    It is the seat's full row at every stack, with one exception.  In the looser style ("win") the
+    opponents open hero's rows, and the full rows of the cutoff and the button (36% and 50%) are deep-stack
+    rows: with 25bb or less a raise from those two seats is read as the row hero opens there (32% and 41%,
+    a solver's 31% and 41.5% with 20bb).  The seats before them keep their full rows, which are no wider
+    than a solver's at that depth (13% from the first seat against 15.6%)."""
     shift = PLAYER_TYPES[norm_type(ptype)]["open_shift"]
+    if _style == "win" and eff_bb <= SHORT_ROWS and n_behind in (2, 3):
+        return rfi_range(n_behind, eff_bb, shift)
     return list(_row(max(1, n_behind), shift))
 
 

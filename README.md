@@ -23,7 +23,7 @@ Cards, seat, stack in big blinds, what happened before you: the play, one
 sentence of why, the numbers behind it and the whole chart, at once. Nothing
 is worked out while you play: every answer is read from tables that
 `tools/build_guide.py` made by asking the engine about each of the 169 hands
-of every spot before the flop (93,780 spots, 39,835 different tables: every seat, 28 stack
+of every spot before the flop (109,188 spots, 42,905 different tables: every seat, 28 stack
 sizes, five sizes of a raise and four of a re-raise, three kinds of opponent, two styles).
 
 **To open it:** double-click `guide/index.html` ("Open Quick Guide.bat" on
@@ -60,6 +60,8 @@ web server it is a folder of files (`deploy/README.md`).
   can still call you. Against an all-in, its size.
 - **Opponents** (Standard, Tight, Loose), **Style** (Play to win, Tight) and
   **Stage** (Normal, Bubble).
+- **Blinds** (Regular, Turbo, Hyper): how fast the levels go. It changes no
+  answer (see "Turbo and hyper-turbo" below); it turns on the blinds clock.
 
 **What it shows:**
 
@@ -71,8 +73,19 @@ web server it is a folder of files (`deploy/README.md`).
 - **If the hand goes on:** what to do with the same hand if you are
   re-raised, if a player moves all-in behind you, or both. One tap opens
   that chart.
+- **The blinds clock** (Turbo and Hyper): your stack now, when the big
+  blind reaches you, and after a whole round of folding, each counted in
+  the big blinds of that moment; and how often an all-in from your seat
+  gets through now and then.
+- **Your hand at every stack:** under the answer, the same hand in the same
+  spot from 2bb to 100bb ("2 to 15bb all-in, 16bb and more raise"). A tap
+  sets that stack.
 - **The chart:** all 169 hands of the spot, coloured by play, with the share
-  of hands for each. A cut corner marks a close one.
+  of hands for each. A cut corner marks a close one. **Every stack** turns
+  it into a push/fold sheet: for each hand the deepest stack at which it
+  still goes in for everything (moves all-in, or calls an all-in). A dot
+  marks a hand that folds at some shorter stack too, a yellow line one that
+  is still played with a deeper stack, by a raise or a call.
 - **After the flop:** rules of thumb from the playbook, by your hand, the
   bet you face, the street, the board and the chips behind.
 
@@ -87,27 +100,85 @@ numbers beside it). **Bubble** folds the close plays and asks 10 points of
 equity more before calling an all-in: a rule of thumb, not a prize
 calculation. For real stacks and prizes the table app is exact.
 
+**Turbo and hyper-turbo.** With the same stack, seat and action in front,
+the right play is the same in a hyper-turbo as in a slow tournament: the
+cards, the blinds and the antes of the hand are the same. So there is one
+set of tables for every speed, and the Blinds choice changes no answer.
+What a fast structure changes is which stacks you play (short ones), what a
+fold costs, and how much a thin edge is worth passing. The guide answers
+each of the three:
+
+- **Short stacks are where the tables had to be right, and under 10bb they
+  were not.** The engine's solver, like the usual push-or-fold chart, sets
+  an all-in against one caller at a time and deals every opponent a hand
+  from a full deck. With a few big blinds neither holds. A short all-in is
+  often called twice: with 3bb and nine players the tables moved all-in
+  first to act with 84% of hands where the exact answer is 26%. And the
+  players who folded hold mostly middle and low cards, which are then
+  rarer on the board: with 6bb the big blind called a cutoff all-in with
+  65% of hands where the answer is 47%. All-ins of 20bb or less are now
+  read from an exact solution of the game (real cards, every showdown and
+  side pot, tables of 3, 4, 5, 6 and 9 players, solved at 2 to 10bb and at
+  12, 16 and 20bb: `poker_coach/short.py`, `tools/build_short.py`). Up to
+  10bb, where every hand is an all-in or a fold, that is the whole answer;
+  from 11 to 20bb it is what an all-in earns first in and every call of an
+  all-in. Those tables say "Solved exactly".
+- **The clock.** A round of folding costs the two blinds and the ante, and
+  the blinds rise meanwhile: 12bb on the button of an eight-handed table is
+  8.3bb a round later at regular speed, 7.2bb in a turbo and 5.3bb in a
+  hyper. The levels are taken as about 12, 6.5 and 3.5 hands, each about a
+  fifth higher (the coach's tournament model, fitted to GGPoker fields;
+  hyper-turbos were not measured).
+- **Close plays.** A play the tables mark close is worded "take it" in a
+  turbo or a hyper: there is no better spot to wait for.
+
+`PLAYBOOK.md`, "Turbo and hyper-turbo", has the numbers and what they were
+checked against.
+
 **Limits.** Stacks are taken as equal. Spots with three players in the pot
 are made for the big blind and four first seats, and the page says so when
-yours is read from a neighbour. A stack between two of the 28 on the grid
-is read at the nearest. A raise bigger than 4bb is read as 4bb. A raise of
-two fifths of the raiser's stack or more is priced as an all-in, with the
-hands that player moves all-in with, so the answers step there (2bb into a
-5bb stack, against 2bb into 6bb); behind callers the page does not offer
-that size (read it as two all-ins). The
-wider opening rows are written by hand from standard ranges, not solved,
-and the share of its equity a hand keeps in the big blind is a formula set
-against a solver's published fold rates, not a solver. After the flop it is
-rules, not a solver. Checked in headless Chromium on Linux only.
+yours is read from a neighbour; two all-ins with 20bb or less have a table
+for every seat, from the exact solution. A stack between two of the 28 on
+the grid is read at the nearest. A raise bigger than 4bb is read as 4bb. A
+raise of two fifths of the raiser's stack or more is priced as an all-in,
+with the hands that player moves all-in with, so the answers step there (2bb
+into a 5bb stack, against 2bb into 6bb); behind callers the page does not
+offer that size (read it as two all-ins). The wider opening rows are written
+by hand from standard ranges, not solved, and the share of its equity a hand
+keeps in the big blind is a formula set against a solver's published fold
+rates, not a solver. After the flop it is rules, not a solver. The exact
+answers for all-ins of 20bb or less are for a big blind ante (GGPoker's ante
+is paid by every player: the same money at eight players, a slightly
+different game with 2 to 4bb and at a short-handed table). First in they are
+for players who call correctly: the Opponents choice does not move them. It
+moves the calls, through the hands an all-in player is taken to hold: with
+Standard the solved range itself up to 10bb, and a little tighter from
+there, a tenth at 20bb, as the deeper tables assume. Their numbers come from
+dealing cards: every hand 10,000 times, and the hands that came out near
+zero another 100,000 times, which leaves those good to about 0.02bb with
+6bb, 0.03bb with 10bb and 0.06bb with 20bb. A play within 0.05bb (0.1bb with
+20bb) is marked close, and inside that band a hand can still be in from one
+seat and out from the next. With two players all-in before you only the
+first pass was run: those numbers are good to 0.05bb with a few big blinds
+and 0.2bb with 20, and a play within 0.15bb or more is marked close. Between
+two solved stacks (11, 13 to 15, 17 and 18bb) the numbers are read off a
+straight line. Tables of 7 and 8 players are read from the nine-player
+solution (at eight that costs about 0.001bb a hand). Behind a player who
+only called with 6bb or less, they are that player's all-in with a caller's
+hands in its place. On the Bubble stage a call read from them must have 10
+points of equity to spare, hand by hand. Checked in headless Chromium on
+Linux only.
 
 It is a chart. Most real-money sites forbid charts and outside help while
 you play: use it to study, to review hands and where help is allowed.
 
 ```bash
-python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 70 minutes on four processors
+python3 tools/build_short.py                 # the exact answers for all-ins of 2 to 20bb -> poker_coach/data/short.json, about four hours (needs gcc)
+python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 40 minutes on four processors
 python3 tools/build_guide.py --only open --styles win    # some of them; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py out/       # the page as one file, with data.json beside it
-python3 -m unittest tests.test_guide         # about 20 seconds
+python3 -m unittest tests.test_guide tests.test_short   # about a minute
+python3 -m poker_coach clock --stack 12 --pos BTN --players 8 --speed hyper    # the blinds clock in words
 ```
 
 ## The table app
@@ -770,5 +841,5 @@ python3 tools/build_binary.py       # all-in or fold tournament tables, half a m
 python3 tools/build_tag.py          # tight-aggressive sheet for 6, 7 and 8 players, about a minute and a half
 python3 tools/build_spin.py         # spin tables (3 players and heads-up), about 7 minutes
 python3 tools/spin_sim.py           # whole spin games played with those tables, about 6 minutes
-python3 tools/build_guide.py        # the quick guide's tables (guide/data.js), about 70 minutes; after any change to the engine before the flop
+python3 tools/build_guide.py        # the quick guide's tables (guide/data.js), about 40 minutes; after any change to the engine before the flop
 ```

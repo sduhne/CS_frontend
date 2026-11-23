@@ -302,7 +302,7 @@ class TheBuildScript(unittest.TestCase):
         self.assertEqual(len([name for name in fonts if name.startswith("OFL-")]), 2)    # the fonts' licences travel with them
         tables = os.listdir(data["poker_coach/data"])
         for name in ("aof.json", "binary.json", "latereg.json", "nash_push.json", "preflop_equity.json",
-                     "spin.json", "tag.json"):
+                     "short.json", "spin.json", "tag.json"):
             self.assertIn(name, tables)
 
     def test_no_file_of_the_package_is_left_out(self):

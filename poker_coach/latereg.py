@@ -153,6 +153,33 @@ def fold_cost(hands: int, blinds: Blinds, players: int = 8, seat: int | None = N
     return total
 
 
+def level_ahead(hands: float, speed: str = "turbo") -> float:
+    """The big blind ``hands`` hands from now, as a multiple of today's, when nobody says where in the
+    level the table is: the average over that (between two levels it rises in a straight line)."""
+    sp = SPEEDS[speed]
+    levels = hands / sp["hands_per_level"]
+    whole = int(levels + 1e-12)
+    return sp["growth"] ** whole * (1.0 + (sp["growth"] - 1.0) * (levels - whole))
+
+
+def fold_clock(stack_bb: float, players: int = 8, seat: int = 2, speed: str = "turbo", ante: str = "bb") -> dict:
+    """What folding costs: the stack when the big blind reaches the seat, and after a whole round.
+
+    ``seat`` is the number of players still to act behind (0 = big blind now).  A blind is paid at the
+    level of the hand it is paid in, and a stack is counted in the big blinds of the hand it is counted
+    at.  ``hands``: hands until the big blind; ``at_blind``: the stack then, before posting; ``orbit``:
+    the stack after ``players`` hands of folding, back in the same seat; ``gone``: the blinds took all
+    of it.  The quick guide shows these numbers (``clock`` in guide/guide.js is the same sum)."""
+    hands = (players - seat) % players
+    chips, at_blind = float(stack_bb), float(stack_bb)
+    for j in range(players):
+        if j == hands:
+            at_blind = chips / level_ahead(j, speed)
+        chips -= posted((seat + j) % players, players, ante) * level_ahead(j, speed)
+    return {"hands": hands, "at_blind": max(0.0, at_blind), "orbit": max(0.0, chips / level_ahead(players, speed)),
+            "gone": chips <= 0}
+
+
 # --------------------------------------------------------------------------
 # Field: how long until the bubble bursts
 # --------------------------------------------------------------------------

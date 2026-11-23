@@ -4,7 +4,7 @@ The quick guide is a page that answers a spot before the flop at once: seat, sta
 It computes nothing: every answer is looked up in tables made here, by asking the engine
 (``poker_coach.preflop.advise``, on chips) about each of the 169 hands of every spot.
 
-    python3 tools/build_guide.py                 # everything, about an hour on four processors
+    python3 tools/build_guide.py                 # everything, about 40 minutes on four processors
     python3 tools/build_guide.py --quick         # a small set (three stacks, one opponent type), a few minutes
     python3 tools/build_guide.py --only open,vsraise --jobs 4
 
@@ -40,15 +40,19 @@ sys.path.insert(0, ROOT)
 
 from poker_coach import preflop as P                      # noqa: E402
 from poker_coach import ranges as R                       # noqa: E402
-from poker_coach.cards import HANDS, format_range, parse_range, range_pct   # noqa: E402
+from poker_coach import short                             # noqa: E402
+from poker_coach.cards import COMBO_COUNT, HANDS, format_range, parse_range, range_pct   # noqa: E402
 
-VERSION = 2                             # of the data file: 2 added the size of a raise and of a re-raise
+VERSION = 3                             # of the data file: 2 added the size of a raise and of a re-raise; 3 the stacks of a few
+                                        # big blinds from the exact solution, with a family of their own for two all-ins
 # Finished jobs are kept by family and reused: a family whose questions changed gets a new number here,
 # and only its jobs are asked again.
 FAMILY_VERSION = {"vsraise": 2, "hu_vsraise": 2, "re3": 2, "hu_re3": 2}
 RAISE_SIZES = (2.0, 2.2, 2.5, 3.0, 4.0)         # a raise before you, in big blinds: the page lets the user pick
 RERAISE_TIMES = (2.5, 3.0, 4.0, 5.0)            # a re-raise of your raise, as a multiple of your raise
 COMMITS = 0.4                                   # preflop.vs_open: a raise of this share of the raiser's stack is priced as an all-in
+BUBBLE = 0.10                                   # the page's Bubble stage: a call of an all-in needs this much equity to spare
+                                                # (guide.js, BUBBLE_POINTS; a test holds the two together)
 PART = {"vsraise": 3}                           # a big family is asked in parts: one job for each value of this key number
 STYLES = ("win", "tight")               # the page's "Play to win" and "Tight" (ranges.STYLES: both test the big blind's call
                                         # by what the hand realises; "tight" has the engine's default rows)
@@ -66,8 +70,12 @@ CODES = "fxclrRtbaiI"                   # lower-case letters; the same letter in
 CLOSE = "FXCLQWTBAJK"                   # the same eleven actions when the answer is close
 
 
+_table = N          # the table the family generators name their seats at (``sized`` below changes it for a moment)
+
+
 def seat(nb: int) -> str:
-    return SEATS[8 - nb]
+    """The name of the seat with ``nb`` players behind; "?" for a seat the table does not have."""
+    return R.position_name(nb, _table) if nb < _table else "?"
 
 
 def open_size(stack: float, nb: int) -> float:
@@ -185,13 +193,17 @@ def table(hero_nb: int, stack: float, facing: str, opp: str, players: int = N, h
     name = hero_seat or seat(hero_nb)
     spot = P.quick_spot(0, None, float(stack), players, name, facing)
     spot.types = [opp] * players
-    letters, sizes, first = [], set(), None
+    letters, sizes, first, through, spare = [], set(), None, [], []
     with one_solve_per_spot():
         for h in range(169):
             adv = P.advise(dataclasses.replace(spot, hand=h))
             letters.append(code_of(adv))
             if first is None:
                 first = adv
+            if "fold_equity" in adv.data:
+                through.append((COMBO_COUNT[h], adv.data["fold_equity"]))
+            if "exact_edge" in adv.data:
+                spare.append(adv.data["exact_edge"] >= BUBBLE)
             for word in adv.action.replace("(", " ").split():
                 if word.endswith("bb") and word[:-2].replace(".", "", 1).isdigit():
                     sizes.add((adv.action.split()[0].upper(), float(word[:-2])))
@@ -202,8 +214,37 @@ def table(hero_nb: int, stack: float, facing: str, opp: str, players: int = N, h
     if by_kind:
         out["z"] = by_kind              # the size of a raise or a re-raise, in big blinds
     facts = P_facts(first)
+    if len(through) == 169:             # first in with a stack that can move all-in: how often everybody folds
+        facts["fe"] = round(sum(c * fe for c, fe in through) / 1326.0, 3)
+    if len(spare) == 169:
+        # a call read from the exact solution has no one number for what it needs, so the page cannot add the
+        # bubble's points to it: the table says hand by hand which calls have them to spare
+        facts["bk"] = mask(pairs_with_spare(spare))
     if facts:
         out["f"] = facts
+    return out
+
+
+def mask(flags) -> str:
+    """169 yes-or-no answers as base64 of 22 bytes: hand h is bit h % 8 of byte h // 8."""
+    raw = bytearray(22)
+    for h, yes in enumerate(flags):
+        if yes:
+            raw[h >> 3] |= 1 << (h & 7)
+    return base64.b64encode(bytes(raw)).decode()
+
+
+def unmask(text: str) -> list[bool]:
+    raw = base64.b64decode(text)
+    return [bool(raw[h >> 3] >> (h & 7) & 1) for h in range(169)]
+
+
+def pairs_with_spare(flags) -> list[bool]:
+    """``pairs_in_order`` for the bubble's mask: a pair has the points to spare where a lower pair has them."""
+    out = list(flags)
+    for i in range(11, -1, -1):
+        if out[14 * (i + 1)]:
+            out[14 * i] = True
     return out
 
 
@@ -230,6 +271,11 @@ def P_facts(adv) -> dict:
         facts["vp"] = float(found.group(1))
         if found.group(2):
             facts["vr"] = found.group(2)
+    if adv.data.get("exact"):
+        # a stack of a few big blinds, read from the exact solution: what a call needs there is not one
+        # number (it is the price and the players who can still call, hand by hand), so none is given
+        facts["x"] = 1
+        return facts
     if "need" in adv.data and "equity" in adv.data:
         facts["need"] = round(adv.data["need"], 3)
     found = re.search(r"pot odds(?: to call)? (\d+)%", text)
@@ -350,6 +396,17 @@ def fam_two_allin():
             yield (o, s), dict(hero_nb=0, stack=s, facing=f"{seat(o)} allin, {seat(o - 1)} allin")
 
 
+def fam_two_short():
+    """Two all-ins before you with a stack the exact game answers: there your own seat matters (the big
+    blind has most of his stack in already, the button has nothing in and players behind), and the exact
+    answers have every seat.  The second all-in is the seat after the first, as the page draws it."""
+    for o in range(8, 1, -1):
+        for h in range(o - 2, -1, -1):
+            for s in STACKS:
+                if s <= short.top():
+                    yield (o, h, s), dict(hero_nb=h, stack=s, facing=f"{seat(o)} allin, {seat(o - 1)} allin")
+
+
 def fam_re3_allin():
     # hero raised, one player re-raised and another moved all-in
     for h in (8, 5, 3, 2):
@@ -449,6 +506,7 @@ FAMILIES = {
     "allin": ("an all-in before you: [players behind that player, behind you, stack]", fam_allin),
     "raise_allin": ("a raise and an all-in before you: [players behind the raiser, stack]", fam_raise_allin),
     "two_allin": ("two all-ins before you: [players behind the first, stack]", fam_two_allin),
+    "two_short": ("two all-ins before you, a stack solved exactly: [players behind the first, behind you, stack]", fam_two_short),
     "re3_allin": ("you raised, a re-raise and an all-in followed: [players behind you, stack]", fam_re3_allin),
     "sq_allin": ("a raise, you re-raised, the raiser moved all-in: [players behind the raiser, behind you, stack]", fam_sq_allin),
     "hu_open": ("two players, you are the small blind and act first: [stack]", fam_hu("open")),
@@ -461,7 +519,45 @@ FAMILIES = {
 # Families whose answers do not change with the style: only all-ins are in front, and those ranges are
 # solved, not read from an opening row.  (A raise and an all-in is not one of them: the all-in is priced
 # against the raiser's row.  A test asks a sample of every family again in a style drawn at random.)
-SAME_IN_EVERY_STYLE = {"allin", "two_allin", "hu_allin"}
+SAME_IN_EVERY_STYLE = {"allin", "two_allin", "two_short", "hu_allin"}
+
+# Tables of three to six players have an exact solution of their own for the stacks ``short`` covers
+# (the nine-player one counts the missing seats as players who folded, and what they folded is out of the
+# deck: at six players the big blind then calls an all-in about ten points too tight).  Each family whose
+# answers are read from that solution has a second set of tables, "name@players", for those stacks; the
+# page reads it when the table is that size and falls back to the family itself everywhere else.
+SMALL = tuple(n for n in short.games() if n < N)
+SIZED = ("open", "limp", "limp_sb", "allin", "two_short", "vsraise")
+
+
+def sized(name: str, players: int):
+    """The spots of a family at a table of ``players``, for the stacks solved exactly."""
+    def make():
+        global _table
+        _table = players
+        try:
+            spots = list(FAMILIES[name][1]())
+        finally:
+            _table = N
+        for key, question in spots:
+            if key[-1] > short.top() or question["hero_nb"] >= players or "?" in question["facing"]:
+                continue
+            # against a raise only one that commits the raiser is read from the exact game (as his all-in), and a
+            # player who only called with a stack he is committed with.  (A raise that commits and an all-in are
+            # two all-ins: the page reads that family.)
+            if name == "vsraise" and (key[2] or RAISE_SIZES[key[3]] < COMMITS * key[4]):
+                continue
+            if name in ("limp", "limp_sb") and key[-1] > P._LIMP_COMMITS:
+                continue
+            yield key, dict(question, players=players, hero_seat=R.position_name(question["hero_nb"], players))
+    return make
+
+
+for _name in SIZED:
+    for _n in SMALL:
+        FAMILIES[f"{_name}@{_n}"] = (f"{FAMILIES[_name][0]}, at a table of {_n}", sized(_name, _n))
+        if _name in SAME_IN_EVERY_STYLE:
+            SAME_IN_EVERY_STYLE.add(f"{_name}@{_n}")
 
 
 def spots_of(family: str, part, quick: bool = False):
@@ -595,7 +691,9 @@ def main() -> int:
            "styles": list(STYLES), "opponents": list(opponents), "stacks": list(STACKS), "seats": list(SEATS),
            "families": {name: FAMILIES[name][0] for name in families}, "tables": unique, "index": data,
            "ranges": ranges, "eq": eq, "pairs": pairs, "quick": bool(a.quick), "partial": bool(a.assemble_only),
-           "sizes": {"raise": list(RAISE_SIZES), "reraise": list(RERAISE_TIMES), "commit": COMMITS}, "usual": usual_sizes()}
+           "sizes": {"raise": list(RAISE_SIZES), "reraise": list(RERAISE_TIMES), "commit": COMMITS}, "usual": usual_sizes(),
+           "short": {"top": short.top(), "tables": list(SMALL)}}      # stacks up to this are read from the exact solution;
+                                                                      # tables of these sizes have "family@size" tables there
     with open(a.out, "w") as fh:
         fh.write("/* Made by tools/build_guide.py: do not edit. */\nwindow.GUIDE_DATA = ")
         json.dump(doc, fh, separators=(",", ":"))

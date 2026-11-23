@@ -909,12 +909,21 @@ Opening ranges, folded to you, 30bb or more:
 
 With 25bb or less every seat up to the cutoff loses its small suited
 connectors and weakest suited hands (the cutoff keeps J9s and T9s and drops
-J8s, T8s, 97s, 86s, 76s and below); the button and the small blind keep
-theirs.
+J8s, T8s, 97s, 86s, 76s and below). The button opens the tight row there:
+22+, A2s+, K2s+, Q5s+, J7s+, T7s+, 96s+, 86s+, 75s+, 65s, 54s, A2o+, K8o+,
+Q9o+, J9o+, T9o (41%). The small blind keeps its row.
+
+Why the button: a solver's opening width with 20bb (nine players, a big
+blind ante, chips only) is 15.6% from the first seat, 31.2% from the cutoff
+and 41.5% from the button (36.1% as a raise, 5.4% as an all-in). The rows
+give 12%, 32% and 41%; the full button row made it 50%.
 
 - **Opponents are taken to open the same rows.** So re-raises and all-ins
   over their raises get wider with them: there is more to fold out. Against
-  a table that opens tighter than this, set Opponents to Tight.
+  a table that opens tighter than this, set Opponents to Tight. With 25bb
+  or less a raise from the cutoff or the button is read as that seat's
+  short row (32% and 41%), not the deep one (36% and 50%); the seats before
+  them keep their full rows, which are no wider than a solver's with 20bb.
 - **13 to 16bb, first in:** a hand of the row that is not a profitable
   all-in is raised to 2bb, and folded to an all-in unless the plan under it
   says call. The tight style folds it.
@@ -1015,3 +1024,315 @@ One test for every hand, at every stack:
 - **Limits.** The share is a formula set against those ten numbers, not a
   solver, and nothing above has been set against a solver for pots with
   callers in.
+
+## Turbo and hyper-turbo
+
+The quick guide has a Blinds choice (Regular, Turbo, Hyper) and one set of
+tables behind all three. This section says why, what the fast formats do
+change, and what the tables were checked against.
+
+### The play does not change with the speed
+
+With the same stack, seat and action in front of you, the right play is the
+same in a hyper-turbo as in a slow tournament: the cards, the blinds and the
+antes of the hand are the same, and so is what each play wins and loses.
+There are no "turbo ranges" for 15bb on the button that differ from the
+regular ones. Published advice says the same: "we play the same range we
+always do, but the faster the structure, the less we should pass marginal
+spots". What the speed changes is around the hand:
+
+- **The stacks you play.** A regular tournament is played at 30bb and more
+  for hours. A turbo is at 15 to 25bb within an hour, a hyper at 5 to 15bb
+  nearly from the start. The tables that matter are the short ones.
+- **What a fold costs.** Blinds paid, and blinds grown by the time you play
+  again (the clock, below).
+- **Close plays.** Passing a thin edge to wait for a better one only makes
+  sense when there is time to wait. In a turbo or a hyper, take the plays
+  the guide marks close.
+- **Prizes come sooner and with shorter stacks.** The bubble of a hyper is
+  played with 5 to 10bb. The guide's Bubble stage is a rule of thumb
+  (fold the close ones, 10 points more to call an all-in); with the stacks
+  and prizes entered, `advise` or the table app is exact.
+
+### What folding costs: the blinds clock
+
+Eight players, from the button. One round of folding costs the two blinds
+and the ante (2.5bb), and the blinds rise while it is paid. The stack after
+that round, counted in the big blinds of that moment:
+
+| Stack now | Regular | Turbo | Hyper |
+|---|---|---|---|
+| 30bb | 24.5bb | 21.5bb | 16.7bb |
+| 20bb | 15.5bb | 13.6bb | 10.4bb |
+| 15bb | 11.0bb | 9.6bb | 7.2bb |
+| 12bb | 8.3bb | 7.2bb | 5.3bb |
+| 10bb | 6.5bb | 5.6bb | 4.1bb |
+| 8bb | 4.7bb | 4.0bb | 2.8bb |
+| 6bb | 2.9bb | 2.4bb | 1.5bb |
+| 4bb | 1.2bb | 0.8bb | 0.3bb |
+
+Levels are taken as about 12 hands (regular, 10 to 12 minutes), 6.5 hands
+(turbo, 5 to 6 minutes) and 3.5 hands (hyper, 3 minutes), each 17%, 20% and
+22% higher than the one before: the coach's tournament model, fitted to
+GGPoker fields. Hyper-turbos were not measured. `python3 -m poker_coach
+clock --stack 12 --pos BTN --players 8 --speed hyper` gives the numbers for
+any seat; the guide shows them under the answer.
+
+What it means at the table:
+
+- **A stack is worth what it will be when you next want to use it.** 12bb
+  on the button of a hyper is 5bb a round later. First in from the button,
+  an all-in gets through 56% of the time with 12bb and 18% with 5bb.
+- **Under about 6bb the fold is gone.** The big blind has a third of the
+  pot or less to call and calls with most of his hands. From there a hand
+  has to win at a showdown, so the ranges below are tighter from the first
+  seats than most players expect, and far wider from the small blind.
+- **Do not pass a play the chart gives you** when a round of folding would
+  leave less than 10bb. The plays are already the ones that earn chips;
+  what waits behind a fold is a smaller stack, not a better spot.
+
+### All-ins of 20bb or less: solved exactly
+
+The usual push-or-fold chart, and the engine's own solver, leave two things
+out, and with a short stack both count:
+
+- **A short all-in is often called twice.** The solver sets the player who
+  moves in against one caller at a time: when two would call, the first is
+  the hand to beat and the other's chips are dead money. With a few big
+  blinds the big blind calls with nearly everything and a second caller is
+  the rule. With 3bb and nine players the old tables moved all-in first to
+  act with 84% of hands where the answer is 26%, called an all-in on the
+  button with 76% where it is 23%, and moved in behind a player who only
+  called with 98%.
+- **What was folded is out of the deck.** The solver deals every opponent
+  from a full deck. But at a full table seven players have folded, and what
+  they folded is mostly middle and low cards: those cards are rarer on the
+  board and in the hands still to come, the aces and kings are not. Against
+  an all-in a hand like T8o or 87o is about three points worse than its
+  plain odds say, a small pair a little worse, a small ace a little better.
+  With 6bb and nine players the old tables had the big blind call a cutoff
+  all-in with 65% of hands where the answer is 47%. From 12bb up the two are
+  within about 4 points of hands everywhere but the small blind first in
+  (70% of hands for 63% with 12bb, 55% for 48% with 20bb).
+
+So these all-ins are not left to that solver. The game (equal stacks, a
+small blind of half a big blind, a big blind ante of one, every player
+all-in or fold) is solved with real cards, every showdown and every side
+pot (`tools/aof_solver.c`, the solver of the All-In or Fold tables, run by
+`tools/build_short.py`), for tables of 9, 6, 5, 4 and 3 players, at every
+stack from 2 to 10bb and at 12, 16 and 20bb (a stack between two of them is
+read off the straight line between). Tables of 7 and 8 are read from the
+last seats of the nine; two players are left to the engine's solver, which
+is exact heads-up.
+
+The numbers come from dealing cards, so they carry noise, and the hands a
+chart is read for are the ones near zero. Each solution is therefore made in
+two passes: every hand of every decision point is dealt 10,000 times, and
+then every hand that came out near zero (within about four times the noise:
+one hand in seven) is dealt another 100,000 times against the same solved
+strategies. At a full table the second pass moved about a hundred hands a
+stack to the other side of zero (1,140 over the twelve stacks). The hands
+that were in from one seat and out from the next, three to eleven a stack
+after the first pass, were gone with 7bb or less, and one to three were left
+with 8 to 12bb, each inside the band where either play is right. After it a
+number near zero is good to about 0.02bb with 6bb, 0.03bb with 10bb and
+0.06bb with 20bb.
+
+What the engine takes from the solution:
+
+- **Up to 10bb, the whole answer.** Every hand is an all-in or a fold, and
+  the solved game is the game.
+- **From 11 to 20bb, the all-in.** There are small raises as well, and
+  which hands raise is the opening range's business; but what an all-in
+  earns first in, and whether to call one or two, is read from the exact
+  numbers.
+- **Who moved in.** With 10bb or less an all-in is the solved range itself.
+  Deeper a player has other plays, and his all-in is taken a little
+  tighter: a tenth tighter at 20bb, which is what the deeper tables have
+  always assumed of a player with no read. Opponents (Tight, Loose) moves
+  that range and so the calls; the all-ins first in are the same against
+  everybody.
+
+First in at a table of nine: the share of hands that are a profitable
+all-in.
+
+| Seat | 2bb | 3bb | 4bb | 5bb | 6bb | 7bb | 8bb | 9bb | 10bb |
+|---|---|---|---|---|---|---|---|---|---|
+| UTG | 29% | 26% | 23% | 21% | 20% | 18% | 17% | 16% | 15% |
+| UTG+1 | 31% | 28% | 25% | 24% | 22% | 20% | 20% | 18% | 17% |
+| UTG+2 | 36% | 30% | 28% | 28% | 24% | 23% | 22% | 20% | 19% |
+| LJ | 39% | 33% | 31% | 29% | 29% | 27% | 25% | 24% | 22% |
+| HJ | 41% | 36% | 33% | 32% | 32% | 30% | 29% | 28% | 25% |
+| CO | 48% | 42% | 40% | 37% | 35% | 33% | 33% | 31% | 32% |
+| BTN | 57% | 51% | 48% | 46% | 46% | 43% | 41% | 40% | 38% |
+| SB | 100% | 96% | 85% | 79% | 76% | 75% | 73% | 67% | 68% |
+
+With 3bb, the hands:
+
+| Seat | All-in with |
+|---|---|
+| UTG | 44+, A2s+, K6s+, Q8s+, J9s+, T8s+, 98s, A7o+, A5o, KTo+, QTo+, JTo |
+| UTG+1 | 44+, A2s+, K5s+, Q8s+, J8s+, T8s+, 98s, A7o+, A5o-A4o, KTo+, QTo+, JTo |
+| UTG+2 | 44+, A2s+, K4s+, Q8s+, J8s+, T8s+, 98s, A4o+, K9o+, QTo+, JTo |
+| LJ | 33+, A2s+, K3s+, Q8s+, J8s+, T8s+, 98s, A2o+, K9o+, Q9o+, JTo |
+| HJ | 33+, A2s+, K2s+, Q6s+, J7s+, T8s+, 98s, A2o+, K8o+, Q9o+, J9o+ |
+| CO | 22+, A2s+, K2s+, Q4s+, J7s+, T7s+, 97s+, A2o+, K5o+, Q8o+, J9o+, T9o |
+| BTN | 22+, A2s+, K2s+, Q2s+, J4s+, T6s+, 97s+, 87s, A2o+, K2o+, Q6o+, J8o+, T8o+ |
+| SB | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 92s+, 82s+, 72s+, 62s+, 52s+, 42s+, 32s, A2o+, K2o+, Q2o+, J2o+, T2o+, 92o+, 82o+, 72o+, 63o+, 53o+, 43o |
+
+With 6bb:
+
+| Seat | All-in with |
+|---|---|
+| UTG | 33+, A2s+, K9s+, Q9s+, J9s+, T9s, A8o+, KJo+, QJo |
+| UTG+1 | 22+, A2s+, K9s+, Q9s+, J9s+, T9s, A7o+, KTo+, QJo |
+| UTG+2 | 22+, A2s+, K9s+, Q9s+, J9s+, T9s, A5o+, KTo+, QJo |
+| LJ | 22+, A2s+, K7s+, Q9s+, J9s+, T9s, A2o+, KTo+, QTo+, JTo |
+| HJ | 22+, A2s+, K5s+, Q8s+, J8s+, T8s+, A2o+, K9o+, QTo+, JTo |
+| CO | 22+, A2s+, K2s+, Q7s+, J8s+, T8s+, 98s, A2o+, K8o+, Q9o+, JTo |
+| BTN | 22+, A2s+, K2s+, Q3s+, J7s+, T7s+, 97s+, 87s, A2o+, K2o+, Q8o+, J9o+, T9o |
+| SB | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 92s+, 84s+, 74s+, 64s+, 53s+, 43s, A2o+, K2o+, Q2o+, J2o+, T3o+, 96o+, 86o+, 76o |
+
+With 10bb:
+
+| Seat | All-in with |
+|---|---|
+| UTG | 44+, A7s+, A5s, K9s+, Q9s+, J9s+, T9s, ATo+, KQo |
+| UTG+1 | 33+, A3s+, K9s+, Q9s+, J9s+, T9s, ATo+, KJo+ |
+| UTG+2 | 22+, A3s+, K9s+, Q9s+, J9s+, T9s, A9o+, KJo+ |
+| LJ | 22+, A2s+, K8s+, Q9s+, J9s+, T8s+, 98s, A8o+, KTo+, QJo |
+| HJ | 22+, A2s+, K9s+, Q9s+, J9s+, T9s, A4o+, KTo+, QJo |
+| CO | 22+, A2s+, K5s+, Q8s+, J8s+, T8s+, 98s, 87s, A2o+, KTo+, QTo+, JTo |
+| BTN | 22+, A2s+, K2s+, Q5s+, J7s+, T7s+, 97s+, 87s, 76s, A2o+, K9o+, Q9o+, J9o+, T9o |
+| SB | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 94s+, 84s+, 74s+, 64s+, 53s+, 43s, A2o+, K2o+, Q2o+, J5o+, T7o+, 97o+, 87o, 76o |
+
+Calling one all-in at a table of nine: the share of hands that call, in the
+solved game.
+
+| You, and the all-in from | 2bb | 3bb | 4bb | 5bb | 6bb | 7bb | 8bb | 9bb | 10bb | 12bb | 16bb | 20bb |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| UTG+1, UTG | 23% | 17% | 14% | 12% | 11% | 9% | 8% | 8% | 8% | 6% | 4% | 4% |
+| BTN, UTG | 30% | 23% | 20% | 16% | 13% | 11% | 10% | 10% | 8% | 6% | 5% | 5% |
+| BTN, CO | 38% | 31% | 29% | 24% | 22% | 19% | 18% | 17% | 16% | 15% | 12% | 10% |
+| SB, BTN | 77% | 55% | 44% | 36% | 33% | 31% | 29% | 26% | 26% | 22% | 18% | 15% |
+| BB, UTG | 100% | 100% | 95% | 60% | 36% | 27% | 21% | 17% | 12% | 10% | 5% | 5% |
+| BB, CO | 100% | 100% | 95% | 67% | 47% | 36% | 31% | 28% | 27% | 25% | 18% | 13% |
+| BB, BTN | 100% | 100% | 96% | 73% | 52% | 45% | 36% | 33% | 31% | 28% | 23% | 18% |
+| BB, SB | 100% | 100% | 97% | 79% | 70% | 61% | 56% | 50% | 48% | 43% | 34% | 30% |
+
+The same seats at a smaller table, where fewer players have folded. The
+big blind against an all-in from the button:
+
+| Players | 2bb | 3bb | 4bb | 5bb | 6bb | 7bb | 8bb | 9bb | 10bb | 12bb | 16bb | 20bb |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 9 | 100% | 100% | 96% | 73% | 52% | 45% | 36% | 33% | 31% | 28% | 23% | 18% |
+| 6 | 100% | 100% | 100% | 82% | 61% | 47% | 43% | 38% | 33% | 29% | 23% | 18% |
+| 5 | 100% | 100% | 100% | 85% | 63% | 50% | 45% | 37% | 35% | 29% | 24% | 21% |
+| 4 | 100% | 100% | 100% | 86% | 66% | 54% | 46% | 39% | 36% | 31% | 24% | 18% |
+| 3 | 100% | 100% | 100% | 89% | 70% | 56% | 48% | 41% | 37% | 31% | 25% | 20% |
+
+- **The first seats are tight and stay tight.** A quarter of the hands with
+  3bb: pairs from 44, any suited ace, the big offsuit aces and kings, the
+  suited cards that make straights. 7-2, 9-4 and their like are folds
+  with any stack: they do not win a three-way pot often enough.
+- **The small blind moves in with almost anything** up to 4bb, and with
+  three hands in four up to 8bb: only the big blind is left, and he has a
+  large part of his stack in already.
+- **The big blind calls nearly every all-in up to 4bb** (he has two of his
+  big blinds in), and from there his calls shrink fast: at a full table
+  with 8bb about a third of his hands against the button.
+- **Everybody between them calls far tighter than the price says.** On the
+  button against a first-seat all-in of 3bb the price is 35%, and a hand
+  needs 40 to 45% against the all-in alone: the blinds behind come along
+  too often.
+- **Short-handed, everybody plays more hands**, the big blind most of all:
+  fewer players have folded, so more of the middle cards are still in the
+  deck.
+- **A player who only calls with 6bb or less is not folding.** The spot is
+  answered as his all-in, with a caller's weaker hands in place of the
+  hands of an all-in. In the big blind the other choice is a free flop,
+  worth about a fifth of the pot: the weakest hands check.
+- **On the bubble** (the guide's Bubble stage) a call read from these
+  tables must have 10 points of equity to spare over everything it needs,
+  hand by hand; the close ones are folded as everywhere.
+
+### What it was checked against
+
+- **The solver against a second program.** `tools/check_short.py` plays the
+  same game out in plain Python (its own pot and side-pot arithmetic, the
+  engine's hand evaluator, the other players following the solver's
+  strategy) and compares what a hand earns with the solver's figure: at 71
+  decision points (tables of four, six and nine players, 3 to 16bb) the two
+  agree within the noise of both: 0.1bb with 6,000 deals up to 8bb, where
+  the one gap of 0.2bb closed to 0.03bb with 40,000 deals; with 16bb, on
+  hands far from zero, which only the first pass sampled, gaps of 0.3bb,
+  which is that pass's noise there.
+- **The solver against itself.** At every decision point with nobody or one
+  player all-in, the strategy it trained gives up 0.001 to 0.004bb each time
+  the decision comes up (0.01 to 0.03bb with two players all-in, where a
+  spot comes up rarely) to the best reply.
+- **A straight line between stacks.** The answers at 10bb, drawn from 8bb
+  and 12bb as if 10bb had not been solved: 1.4% of hands change sides first
+  in and 0.7% of the calls, all of them at the edge of a range (0.0005bb a
+  decision). That gap is the widest there is below 12bb and the same as
+  between 12, 16 and 20bb.
+- **Heads-up, against the published equilibrium** (HoldemResources, no ante,
+  1.5 to 20bb): the engine's all-in range differs on 0.3% of hands and its
+  calling range on 0.1%.
+- **Two to four players, against the exact solver** (no ante, 4 to 20bb): 2
+  to 4% of hands differ, each worth 0.15bb at most to either side.
+- **The engine's own solver against it**, nine players with the ante, at the
+  stacks where both can be asked: first in it was within 4 points of hands
+  from the first five seats at every stack from 8 to 20bb, and too wide from
+  the cutoff, the button and the small blind: by 4 to 10 points with 7 to
+  9bb (the button 50% of hands for 43% with 7bb), by up to 7 points with 12
+  to 20bb. Its calls of an all-in were 5 to 9 points too wide in the big
+  blind with 7 and 8bb and within 4 points from 9bb up.
+- **Against a solver's opening widths with 20bb** (nine players, a big blind
+  ante, chips only): 15.6% from the first seat, 31.2% from the cutoff, 41.5%
+  from the button, where the guide's Play to win opened 12%, 31% and 50%.
+  The button now opens 41% with 25bb or less, and a raise from the cutoff or
+  the button at those stacks is read as 32% and 41%, not as the deep 36% and
+  50%. Against the button's 2bb raise with 20bb the solver's big blind folds
+  15.5% of hands; the guide's folds 19.9% in Play to win and 27% in Tight.
+- **The tables against the engine, and the page against the tables.** The
+  tests ask a sample of every family again and compare; a browser run asks
+  the page 700 random spots at their real table size and compares each
+  answer with the engine's.
+
+### Limits
+
+- The exact tables are for a big blind ante. GGPoker's ante is paid by every
+  player: the same money at eight players, but the big blind keeps one big
+  blind more behind, which matters a little with 2 to 4bb, and at a
+  short-handed table there is less ante in the pot than the tables count.
+- They are for equal stacks, or for players behind who cover you. With a
+  shorter stack still to act, with prizes counted, or with a strong read on
+  a player, the engine's solver answers as before and says in a warning that
+  it reads weak hands too well at this depth.
+- First in they are an equilibrium: every player calls correctly, and the
+  Opponents choice does not move them.
+- Above 10bb the solved game is not the whole game: its all-in ranges stand
+  for players who, in a real game, also raise small. That is the same
+  reading of an all-in as before, with better arithmetic.
+- Tables of 7 and 8 players are read from the nine: the seats that are not
+  there count as players who folded. At eight players that costs about
+  0.001bb a hand (the big blind calls 2 to 6 points of hands too few).
+- Their numbers carry noise from dealing cards. After the second pass a
+  number near zero is good to about 0.02bb with 6bb, 0.03bb with 10bb and
+  0.06bb with 20bb; a play within 0.05bb (0.1bb with 20bb) is marked close,
+  and inside that band a hand can be in at one stack and out at the next.
+  With two players all-in before you only the first pass was run: those
+  numbers are good to 0.05bb with a few big blinds and 0.2bb with 20, and a
+  play within 0.15bb or more is marked close.
+- Against a raise that does not commit the raiser, and behind a player who
+  only called with 7bb or more, the engine's solver answers, with neither of
+  the two effects above. What that costs can be read off the check above: a
+  few points of hands too wide from the late seats and in the big blind.
+- The small blind first in with 13 to 20bb moves all-in or folds, half its
+  hands at 20bb. That is the equilibrium for a seat that may only do that; a
+  solver with every play open moves all-in with a tenth of its hands there
+  and calls or raises small with most of the rest. The all-in is the best
+  play the guide has for those hands, and it swings.
+- The clock's levels are averages. A real structure has its own steps.
+- Nothing here has been measured against results at the table.
