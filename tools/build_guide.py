@@ -599,6 +599,23 @@ def sized(name: str, players: int, ante: str = "bb"):
     return make
 
 
+def at_table(name: str, key, players: int, ante: str = "bb") -> dict | None:
+    """One spot of a family as the question for a table of ``players``: the same seats (players behind), named
+    as that table names them, with that ante.  None when the table has not got the seats."""
+    global _table
+    _table = players
+    try:
+        found = next((question for k, question in FAMILIES[name][1]() if k == tuple(key)), None)
+    finally:
+        _table = N
+    if found is None or found["hero_nb"] >= players or "?" in found["facing"]:
+        return None
+    found = dict(found, players=players, hero_seat=R.position_name(found["hero_nb"], players))
+    if ante != "bb":
+        found["ante"] = ante
+    return found
+
+
 def with_ante(name: str, ante: str):
     """Every spot of a family, asked with another ante."""
     def make():

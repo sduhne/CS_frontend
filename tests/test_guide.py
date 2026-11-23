@@ -23,9 +23,9 @@ from poker_coach.cards import HANDS, parse_hand, range_pct     # noqa: E402
 GUIDE = os.path.join(ROOT, "guide")
 
 
-def go(hand, stack, pos, facing="", players=9, opp=None):
+def go(hand, stack, pos, facing="", players=9, opp=None, ante="bb"):
     h, cards = parse_hand(hand)
-    spot = P.quick_spot(h, cards, stack, players, pos, facing)
+    spot = P.quick_spot(h, cards, stack, players, pos, facing, ante=ante)
     if opp:
         spot.types = [opp] * players
     return P.advise(spot)
@@ -339,6 +339,15 @@ class RaiseSizes(unittest.TestCase):
             given = B.bb_price(family, key)
             self.assertAlmostEqual(given["p"], price, places=3, msg=(family, key))
             self.assertEqual(given.get("ip", 0), 1 if facing.startswith("SB raise") and players > 2 else 0, (family, key))
+            self.assertNotIn("an", given)
+        # two players with an eighth of a big blind from each: a quarter of a big blind of ante in the pot, not one
+        for key, facing in (((2, 30), "SB raise 2.5bb"), ((0, 12), "SB raise 2.0bb"), ((3, 60), "SB raise 3.0bb")):
+            adv = go("AA", key[-1], "BB", facing, players=2, ante="player")
+            price = adv.data["bb_call_need"] * adv.data["bb_realised"] - adv.data["bb_over"]
+            given = B.bb_price("hu_vsraise", key, "player")
+            self.assertAlmostEqual(given["p"], price, places=3, msg=str(key))
+            self.assertGreater(given["p"], B.bb_price("hu_vsraise", key)["p"] + 0.01, key)      # a smaller pot: a worse price
+            self.assertEqual(given["an"], 0.125)                # what the big blind has paid of it: the page counts his stack from there
 
 
 class BigBlindCall(unittest.TestCase):
@@ -734,7 +743,7 @@ class Tables(unittest.TestCase):
     def test_small_tables_have_tables_of_their_own_where_the_answer_is_exact(self):
         """Three to six players: "family@players", read from that table's own solution."""
         from poker_coach import short as S
-        self.assertEqual(self.d["short"], {"top": S.top(), "tables": [3, 4, 5, 6]})
+        self.assertEqual(self.d["short"], {"top": S.top(), "tables": [3, 4, 5, 6], "each": [3, 4, 5, 6, 7, 8, 9]})
         self.assertEqual(B.SMALL, (3, 4, 5, 6))
         for n in B.SMALL:
             for name in B.SIZED:
@@ -924,6 +933,267 @@ class Tables(unittest.TestCase):
                 self.assertNotIn(a[0], "fF", (name, key, "aces are folded"))
 
 
+@unittest.skipUnless(tables() and not tables().get("quick") and not tables().get("partial"), "guide/data.js is not built")
+class Ante(unittest.TestCase):
+    """The page's Ante choice: one big blind from the big blind, or an eighth of a big blind from every player.
+
+    The second has tables of its own ("name+each") where it changes the answers most: the stacks read from the
+    exact solution, at every table size from three to nine, and the tables for two players.  Every other table
+    is the big blind ante's whichever is chosen; ``AnteMoves`` measures what that leaves out."""
+
+    table = Tables.table
+    node_call = Tables.node_call
+    node_answers = Tables.node_answers
+
+    @classmethod
+    def setUpClass(cls):
+        cls.d = tables()
+
+    def tearDown(self):
+        R.set_style("tag")
+
+    def test_what_the_data_says_of_the_antes(self):
+        from poker_coach import short as S
+        self.assertEqual(B.ANTES, S.KINDS)
+        self.assertEqual(self.d["antes"], {"kinds": ["bb", "player"], "each": S.PLAYER_ANTE, "mark": "+each"})
+        self.assertEqual(B.EACH_TABLES, (3, 4, 5, 6, 7, 8, 9))
+        self.assertEqual(self.d["short"]["each"], list(B.EACH_TABLES))
+        self.assertEqual((B.each_name("open"), B.each_name("open", 8), B.each_name("hu_open", 2)), ("open+each", "open+each@8", "hu_open+each"))
+        self.assertEqual((B.base_of("open+each@8"), B.base_of("open@6"), B.base_of("hu_re3+each")), ("open", "open", "hu_re3"))
+        self.assertEqual((B.ante_of("open+each@8"), B.ante_of("open@6"), B.ante_of("open")), ("player", "bb", "bb"))
+
+    def test_the_families_that_have_tables_for_the_ante_of_every_player(self):
+        from poker_coach import short as S
+        each = sorted(name for name in self.d["index"] if B.EACH in name)
+        want = sorted([B.each_name(name, n) for name in B.SIZED for n in B.EACH_TABLES] + [name + B.EACH for name in B.HEADS_UP])
+        self.assertEqual(each, want)
+        self.assertEqual(len(B.HEADS_UP), 6)
+        short_stacks = [s for s in B.STACKS if s <= S.top("player")]
+        # three to six players: the spots a small table has tables of its own for with a big blind ante
+        for name in B.SIZED:
+            for n in B.SMALL:
+                self.assertEqual(set(self.d["index"][B.each_name(name, n)]["win"]["unknown"]),
+                                 set(self.d["index"][f"{name}@{n}"]["win"]["unknown"]), (name, n))
+        # seven, eight and nine: every seat of the table at every stack solved
+        for n in (7, 8, 9):
+            self.assertEqual(set(self.d["index"][B.each_name("open", n)]["win"]["unknown"]),
+                             {f"{nb},{s}" for nb in range(1, n) for s in short_stacks}, n)
+            self.assertEqual(set(self.d["index"][B.each_name("allin", n)]["win"]["unknown"]),
+                             {f"{o},{h},{s}" for o in range(1, n) for h in range(o) for s in short_stacks}, n)
+            self.assertEqual(set(self.d["index"][B.each_name("two_short", n)]["win"]["unknown"]),
+                             {f"{o},{h},{s}" for o in range(2, n) for h in range(o - 1) for s in short_stacks}, n)
+            for key in self.d["index"][B.each_name("vsraise", n)]["win"]["unknown"]:
+                o, h, callers, zi, stack = (int(x) for x in key.split(","))
+                self.assertTrue(callers == 0 and B.RAISE_SIZES[zi] >= B.COMMITS * stack and o < n, (n, key))
+            for key in self.d["index"][B.each_name("limp", n)]["win"]["unknown"]:
+                self.assertLessEqual(int(key.split(",")[-1]), P._LIMP_COMMITS, (n, key))
+        # two players: every spot of every family of theirs
+        for name in B.HEADS_UP:
+            for style in B.STYLES:
+                self.assertEqual(set(self.d["index"][name + B.EACH][style]["unknown"]), set(self.d["index"][name][style]["unknown"]), name)
+
+    def test_they_are_the_exact_solution_of_that_game(self):
+        """As for the big blind ante: calling one all-in or two at every stack solved, and first in up to 10bb."""
+        from poker_coach import short as S
+        rng = random.Random(8)
+        seen = 0
+        for _ in range(120):
+            n = rng.choice((9, 8, 8, 7, 6, 4, 3))
+            stack = rng.choice([s for s in B.STACKS if s <= S.top("player")])
+            hero = rng.randrange(0, n - 1)                           # players behind you
+            kind = rng.choice(("open", "allin", "two"))
+            place = lambda nb: n - 1 - nb                            # noqa: E731   a seat's place in acting order at this table
+            if kind == "open" and hero >= 1:
+                t, evs = self.table(B.each_name("open", n), "win", "unknown", (hero, stack)), S.node(stack, place(hero), 0, n, "player")
+                played = "aA"
+                if stack > 10:
+                    letters = B.unpack(t["a"])
+                    self.assertNotIn("x", t.get("f", {}), (n, hero, stack))
+                    self.assertEqual([HANDS[h] for h in range(169) if letters[h] in played and evs[h] <= 0], [], (n, hero, stack))
+                    continue
+            elif kind == "allin":
+                first = rng.randrange(hero + 1, n)
+                t = self.table(B.each_name("allin", n), "win", "unknown", (first, hero, stack))
+                evs = S.node(stack, place(hero), 1 << place(first), n, "player")
+                played = "cCaAiIjJkK"
+            elif kind == "two" and hero <= n - 3:
+                first = rng.randrange(hero + 2, n)
+                t = self.table(B.each_name("two_short", n), "win", "unknown", (first, hero, stack))
+                evs = S.node(stack, place(hero), (1 << place(first)) | (1 << place(first - 1)), n, "player")
+                played = "cCaA"
+            else:
+                continue
+            seen += 1
+            self.assertEqual(t["f"].get("x"), 1, (kind, n, hero, stack))
+            self.assertNotIn("need", t["f"])
+            letters = B.unpack(t["a"])
+            wrong = [h for h in range(169) if (letters[h] in played) != (evs[h] > 0) and h % 14 != 0]      # pairs are put in order
+            if stack <= 10:
+                self.assertEqual([HANDS[h] for h in wrong], [], (kind, n, hero, stack))
+            else:
+                self.assertEqual([HANDS[h] for h in wrong if letters[h] in played and evs[h] < -0.1], [], (kind, n, hero, stack))
+                self.assertEqual([HANDS[h] for h in wrong if abs(evs[h]) > 1.5], [], (kind, n, hero, stack))
+                self.assertLess(sum(B.COMBO_COUNT[h] for h in wrong), 0.08 * 1326, (kind, n, hero, stack))
+        self.assertGreater(seen, 60)
+
+    def test_the_two_antes_have_two_tables_where_the_game_is_two(self):
+        calls = lambda t: sum(c for c, ch in zip(B.COMBO_COUNT, B.unpack(t["a"])) if ch in "cC") / 13.26      # noqa: E731
+        # eight players, the big blind against a button all-in of 5bb: he has one more big blind behind
+        every = calls(self.table("allin+each@8", "win", "unknown", (2, 0, 5)))
+        his = calls(self.table("allin", "win", "unknown", (2, 0, 5)))
+        self.assertLess(every + 10, his, (every, his))
+        # six players, the button first in with 8bb: less ante in the pot
+        moves = lambda t: sum(c for c, ch in zip(B.COMBO_COUNT, B.unpack(t["a"])) if ch in "aA") / 13.26      # noqa: E731
+        self.assertLess(moves(self.table("open+each@6", "win", "unknown", (2, 8))), moves(self.table("open@6", "win", "unknown", (2, 8))) + 0.5)
+        # two players: a quarter of a big blind of ante.  The small blind moves all-in with fewer hands at 10bb
+        self.assertLess(moves(self.table("hu_open+each", "win", "unknown", (10,))) + 3, moves(self.table("hu_open", "win", "unknown", (10,))))
+        # ... and the table against a raise carries its own price, and what the big blind has paid of the ante
+        every, his = self.table("hu_vsraise+each", "win", "unknown", (1, 30))["f"], self.table("hu_vsraise", "win", "unknown", (1, 30))["f"]
+        self.assertEqual(every["p"], B.bb_price("hu_vsraise", (1, 30), "player")["p"])
+        self.assertEqual((every["an"], every["m"]), (0.125, his["m"]))
+        self.assertNotIn("an", his)
+        self.assertGreater(every["p"], his["p"])
+        self.assertRegex(self.d["ranges"][every["v"]], r"^[01]{169}$")
+
+    def test_the_page_reads_the_tables_of_the_ante_it_is_set_to(self):
+        """The spot as the page has it, the hand, the tables it must be read from, whether they are the exact
+        solution, and the ante they were made with (which the chart names when it is not the chosen one)."""
+        import shutil
+        if not shutil.which("node"):
+            self.skipTest("node is not installed")
+        every = {"ante": "player"}
+        cases = [({"players": 8, "seat": 2, "stack": 5, "line": "open", **every}, "K9o", "open+each@8", True, "player"),
+                 ({"players": 9, "seat": 2, "stack": 5, "line": "open", **every}, "K9o", "open+each", True, "player"),
+                 ({"players": 8, "seat": 2, "stack": 5, "line": "open"}, "K9o", "open", True, "bb"),
+                 ({"players": 8, "seat": 2, "stack": 5, "line": "open", "ante": "nobody"}, "K9o", "open", True, "bb"),
+                 ({"players": 6, "seat": 2, "stack": 5, "line": "open", **every}, "K9o", "open+each@6", True, "player"),
+                 ({"players": 6, "seat": 2, "stack": 12, "line": "open", **every}, "K9o", "open+each@6", False, "player"),
+                 ({"players": 6, "seat": 2, "stack": 22, "line": "open", **every}, "K9o", "open", False, "bb"),
+                 ({"players": 8, "seat": 0, "stack": 16, "line": "allin", "from": 2, **every}, "A7o", "allin+each@8", True, "player"),
+                 ({"players": 8, "seat": 0, "stack": 25, "line": "allin", "from": 2, **every}, "A7o", "allin", False, "bb"),
+                 ({"players": 3, "seat": 0, "stack": 4, "line": "allin", "from": 2, **every}, "T7o", "allin+each@3", True, "player"),
+                 ({"players": 7, "seat": 0, "stack": 6, "line": "two_allin", "from": 3, **every}, "A8s", "two_short+each@7", True, "player"),
+                 ({"players": 8, "seat": 0, "stack": 4, "line": "raise", "from": 3, "size": 0, **every}, "Q7s", "vsraise+each@8", True, "player"),
+                 ({"players": 8, "seat": 0, "stack": 9, "line": "raise", "from": 3, "size": 0, **every}, "Q7s", "vsraise", False, "bb"),
+                 ({"players": 4, "seat": 1, "stack": 5, "line": "limp", **every}, "K8o", "limp+each@4", True, "player"),
+                 ({"players": 8, "seat": 2, "stack": 30, "line": "re3", "by3": 0, **every}, "AQs", "re3", False, "bb"),
+                 ({"players": 2, "seat": 1, "stack": 12, "line": "open", **every}, "K8o", "hu_open+each", False, "player"),
+                 ({"players": 2, "seat": 0, "stack": 30, "line": "raise", **every}, "K8o", "hu_vsraise+each", False, "player"),
+                 ({"players": 2, "seat": 0, "stack": 12, "line": "allin", **every}, "K8o", "hu_allin+each", False, "player"),
+                 ({"players": 2, "seat": 0, "stack": 12, "line": "allin"}, "K8o", "hu_allin", False, "bb")]
+        for (st, hand, where, exact, ante), mine in zip(cases, self.node_answers(cases)):
+            self.assertEqual(mine["from"], where, (st, hand))
+            self.assertEqual(mine["exact"], exact, (st, hand))
+            self.assertEqual(mine["ante"], ante, (st, hand))
+            letters = B.unpack(self.table(where, "win", "unknown", mine["key"])["a"])
+            self.assertEqual(B.ACTIONS[(B.CODES + B.CLOSE).index(letters[HANDS.index(hand)]) % len(B.CODES)], mine["name"], (st, hand))
+        js = open(os.path.join(GUIDE, "guide.js")).read()
+        self.assertIn("This table counts a big blind ante of 1bb", js)
+        self.assertIn('chipRow(D.antes.kinds.map((a) => [a, ANTE[a] || a]), st.ante, "ante", true)', js)
+        self.assertIn('const ANTE = {bb: "Big blind", player: "Every player"};', js)
+
+    def test_the_page_and_the_engine_say_the_same_with_the_ante_of_every_player(self):
+        """Random spots where the ante has tables of its own, at their real table size: first in, against one
+        all-in and against two, with 20bb or less; and two players at any stack."""
+        import shutil
+        if not shutil.which("node"):
+            self.skipTest("node is not installed")
+        rng = random.Random(31)
+        R.set_style("win")
+        cases, asked = [], []
+        for _ in range(70):
+            n = rng.choice((9, 8, 8, 7, 6, 5, 4, 3, 2))
+            hand = HANDS[rng.randrange(169)]
+            name = lambda nb: R.position_name(nb, n)                 # noqa: E731
+            if n == 2:
+                stack = rng.choice(B.STACKS)
+                line = rng.choice(("open", "allin"))
+                st = {"players": 2, "seat": 1 if line == "open" else 0, "stack": stack, "line": line, "ante": "player"}
+                asked.append((hand, stack, "SB" if line == "open" else "BB", "" if line == "open" else "SB allin", 2))
+            else:
+                stack = rng.choice([s for s in B.STACKS if s <= 20])
+                line = rng.choice(("open", "allin", "two_allin"))
+                if line == "open":
+                    seat = rng.randrange(1, n)
+                    st, facing = {"players": n, "seat": seat, "stack": stack, "line": line, "ante": "player"}, ""
+                elif line == "allin" or n == 3:
+                    line, seat = "allin", rng.randrange(0, n - 1)
+                    first = rng.randrange(seat + 1, n)
+                    st, facing = {"players": n, "seat": seat, "stack": stack, "line": line, "from": first, "ante": "player"}, f"{name(first)} allin"
+                else:
+                    seat = rng.randrange(0, n - 2)
+                    first = rng.randrange(seat + 2, n)
+                    st = {"players": n, "seat": seat, "stack": stack, "line": line, "from": first, "ante": "player"}
+                    facing = f"{name(first)} allin, {name(first - 1)} allin"
+                asked.append((hand, stack, name(seat), facing, n))
+            cases.append((st, hand))
+        for (st, hand), mine, (hand_, stack, pos, facing, n) in zip(cases, self.node_answers(cases), asked):
+            self.assertEqual(mine["ante"], "player", st)
+            adv = go(hand_, stack, pos, facing, players=n, ante="player")
+            letter = B.code_of(adv)
+            want = B.ACTIONS[(B.CODES + B.CLOSE).index(letter) % len(B.CODES)]
+            if hand[0] == hand[1] and want != mine["name"]:
+                continue                                    # pairs are put in order: a higher pair takes a lower pair's play
+            self.assertEqual(mine["name"], want, (st, hand, adv.action))
+            self.assertEqual(mine["close"], letter in B.CLOSE, (st, hand))
+
+
+class AnteMoves(unittest.TestCase):
+    """What the Ante choice does not change: the tables that are not read from the exact solution, at three
+    players and more, are made with the big blind ante.  Here a sample of them is asked again with an eighth of
+    a big blind from every player, at a table of eight (GGPoker's), and held to what the page and the playbook
+    say of the difference: a few hands at the edge, nearly all of them marked close.  (Measured over 300 spots
+    a table size: 1.2% of hands at eight and nine players, 2.4% at six, 4.4% at three; under 1% not marked
+    close.  Most where the big blind's stack is the one played for, and less one big blind deeper.)"""
+
+    def tearDown(self):
+        R.set_style("tag")
+
+    @staticmethod
+    def moved(a, b):
+        act = lambda ch: (B.CODES + B.CLOSE).index(ch) % len(B.CODES)      # noqa: E731
+        hands = [h for h in range(169) if act(a[h]) != act(b[h])]
+        return (sum(B.COMBO_COUNT[h] for h in hands) / 13.26,
+                sum(B.COMBO_COUNT[h] for h in hands if a[h] in B.CODES and b[h] in B.CODES) / 13.26)
+
+    def test_at_eight_players_the_other_tables_move_at_the_edge(self):
+        R.set_style("win")
+        rng = random.Random(2)
+        # (the family, the spots of it that are not read from the exact solution and fit a table of eight)
+        fit = lambda key, n_seats: all(x < 8 for x in key[:n_seats])       # noqa: E731
+        groups = {
+            "vsraise": [(k, q) for k, q in B.fam_vsraise() if fit(k, 2) and not (k[2] == 0 and B.RAISE_SIZES[k[3]] >= B.COMMITS * k[4])],
+            "re_allin": [(k, q) for k, q in B.fam_re_allin() if fit(k, 2)],
+            "open": [(k, q) for k, q in B.fam_open() if fit(k, 1) and k[1] >= 22],
+            "re3": [(k, q) for k, q in B.fam_re3() if fit(k, 1)],
+            "allin": [(k, q) for k, q in B.fam_allin() if fit(k, 2) and k[2] >= 22],
+        }
+        total = firm = count = 0.0
+        for name, spots in groups.items():
+            for key, question in rng.sample(spots, 5):
+                page = B.table(opp="unknown", **question)["a"]                      # what the page shows: nine seats, a big blind ante
+                again = B.table(opp="unknown", **B.at_table(name, key, 8, "player"))["a"]      # the game itself, as far as the engine goes
+                moved, not_close = self.moved(page, again)
+                self.assertLess(moved, 25.0, (name, key))
+                self.assertLess(not_close, 3.0, (name, key))
+                total, firm, count = total + moved, firm + not_close, count + 1
+        self.assertLess(total / count, 3.0)                 # of all hands, on average
+        self.assertLess(firm / count, 0.5)                  # ... and those not marked close
+        # first in above 20bb nothing moves at all: the opening rows do not look at the ante
+        for key, question in rng.sample(groups["open"], 3):
+            self.assertEqual(B.table(opp="unknown", **question)["a"],
+                             B.table(opp="unknown", **dict(question, ante="player"))["a"], key)
+
+    def test_two_players_are_another_game_and_have_their_own_tables(self):
+        """A quarter of a big blind of ante in place of one: a tenth of the hands or more change, at every depth
+        against a raise.  That is why the tables for two players are made twice."""
+        R.set_style("win")
+        for name, key in (("hu_open", (10,)), ("hu_allin", (8,)), ("hu_vsraise", (0, 30))):
+            question = next(q for k, q in B.FAMILIES[name][1]() if k == key)
+            moved, _ = self.moved(B.table(opp="unknown", **question)["a"], B.table(opp="unknown", **dict(question, ante="player"))["a"])
+            self.assertGreater(moved, 8.0, (name, key))
+
+
 class Speed(unittest.TestCase):
     """Regular, turbo, hyper: the play is the same, what folding costs is not."""
 
@@ -954,6 +1224,26 @@ class Speed(unittest.TestCase):
             self.assertEqual(mine["gone"], want["gone"], case)
             self.assertAlmostEqual(mine["atBlind"], want["at_blind"], places=9, msg=str(case))
             self.assertAlmostEqual(mine["orbit"], want["orbit"], places=9, msg=str(case))
+
+    def test_the_clock_follows_the_ante(self):
+        """An eighth of a big blind in every hand in place of a whole one in the big blind: at eight players the
+        same money a round, paid earlier; at a smaller table less."""
+        from poker_coach import latereg as L
+        from poker_coach import short as S
+        self.assertEqual(L.PLAYER_ANTE, S.PLAYER_ANTE)
+        cases = [(stack, players, seat, speed, ante) for stack in (2, 4.5, 8, 12, 25) for players in (2, 3, 6, 8, 9)
+                 for seat in range(players) for speed in ("regular", "hyper") for ante in ("bb", "player")]
+        got = self.node(f"console.log(JSON.stringify({json.dumps(cases)}.map((c) => window.MenloGuide.clock(...c))));")
+        for case, mine in zip(cases, got):
+            want = L.fold_clock(*case)
+            self.assertEqual((mine["hands"], mine["gone"]), (want["hands"], want["gone"]), case)
+            self.assertAlmostEqual(mine["atBlind"], want["at_blind"], places=9, msg=str(case))
+            self.assertAlmostEqual(mine["orbit"], want["orbit"], places=9, msg=str(case))
+        his, every = L.fold_clock(12, 8, 2, "regular", "bb"), L.fold_clock(12, 8, 2, "regular", "player")
+        self.assertLess(every["at_blind"], his["at_blind"] - 0.5)       # six hands of an eighth paid before the big blind comes
+        self.assertAlmostEqual(every["orbit"], his["orbit"], delta=0.15)       # the same 2.5bb a round
+        self.assertGreater(L.fold_clock(12, 6, 2, "regular", "player")["orbit"], L.fold_clock(12, 6, 2, "regular", "bb")["orbit"] + 0.2)
+        self.assertIn("clock(st.stack, n, st.seat, st.speed, st.ante)", open(os.path.join(GUIDE, "guide.js")).read())
 
     def test_what_the_clock_says(self):
         from poker_coach import latereg as L
@@ -998,7 +1288,7 @@ class PageFiles(unittest.TestCase):
         self.assertNotIn("speed", answers)
         for part in ('id="clock"', 'id="strip"', "function clockHtml(st)", "function sheetHtml(st, res)", 'chipRow(Object.keys(SPEED)'):
             self.assertIn(part, js, part)
-        self.assertIn('speed: "regular", sheet: false', js)
+        self.assertIn('speed: "regular", ante: "bb", sheet: false', js)
         css = self.read("guide.css")
         for rule in ("#clock{order:3}", "#strip{order:5}", ".cols section:empty{display:none}"):
             self.assertIn(rule, css, rule)
@@ -1047,8 +1337,9 @@ class PageFiles(unittest.TestCase):
     def test_the_page_knows_every_family_of_the_builder(self):
         js = self.read("guide.js")
         for name in B.FAMILIES:
-            self.assertIn(f'"{name.split("@")[0]}"', js, name)       # "open@6": the family "open" at a table of six
-        self.assertIn('fam + "@" + n', js)
+            self.assertIn(f'"{B.base_of(name)}"', js, name)          # "open@6": the family "open" at a table of six;
+        self.assertIn('fam + "@" + n', js)                           # "open+each@6": the same with an ante from every player
+        self.assertIn('fam + D.antes.mark', js)
         for action in B.ACTIONS:
             self.assertIn(action, js, action)
 

@@ -846,10 +846,11 @@ def cmd_clock(a) -> int:
     if index is None:
         raise ValueError(f"no seat {a.pos!r} at a table of {n}")
     seat = n - 1 - index
-    c = L.fold_clock(a.stack, n, seat, a.speed)
+    c = L.fold_clock(a.stack, n, seat, a.speed, a.ante)
     sp = L.SPEEDS[a.speed]
     _out(f"{position_name(seat, n)} with {a.stack:g}bb, {n} players, {sp['label']}: "
-         f"about {sp['hands_per_level']:g} hands a level, each level {round(100 * (sp['growth'] - 1))}% more")
+         f"about {sp['hands_per_level']:g} hands a level, each level {round(100 * (sp['growth'] - 1))}% more"
+         + ("; every player antes an eighth of a big blind" if a.ante == "player" else ""))
     when = "now" if c["hands"] == 0 else "next hand" if c["hands"] == 1 else f"in {c['hands']} hands"
     if c["hands"]:
         _out(f"  the big blind reaches you {when}: the stack is then {c['at_blind']:.1f}bb")
@@ -1471,6 +1472,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pos", required=True, help="your seat: UTG ... BTN, SB or BB")
     p.add_argument("--players", type=int, default=8)
     p.add_argument("--speed", default="turbo", help="hyper, turbo, fast, regular or slow (default turbo)")
+    p.add_argument("--ante", choices=["bb", "player"], default="bb",
+                   help="bb = the big blind pays one big blind for the table (default); player = every player antes "
+                        "an eighth of a big blind in every hand (GGPoker)")
     p.set_defaults(fn=cmd_clock)
 
     p = sub.add_parser("latereg-safe", help="sit-out signal: can this stack fold into the money?")

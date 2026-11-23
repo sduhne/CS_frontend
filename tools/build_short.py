@@ -9,6 +9,14 @@
     python3 tools/build_short.py --work DIR      # keeps the solver's own output there, and uses what is there already
     python3 tools/build_short.py --work DIR --ante player   # that kind only: the other is kept as the data file has it
     python3 tools/build_short.py --work DIR --fine-only     # the second pass for the solutions that are in DIR, no more
+    python3 tools/build_short.py --work DIR --pack          # the finished tables of DIR, packed into tools/short_work/
+
+The solver's own output is kept, packed, in tools/short_work/ (one archive for each kind of ante and table:
+both passes of every stack, 4 MB in all for the ante of every player; the big blind ante's was not kept when
+it was solved).  A run unpacks what is there into its work folder first and solves only what is missing, so
+with the archives the ante of every player is assembled in a minute; ``--fresh`` leaves them alone and solves
+again, which is what a change to the solver or to the game asks for.  tools/check_short.py reads the same
+files.
 
 Equal stacks and a small blind of half a big blind; every player moves all-in or folds.  Two games, one
 for each kind of ante (ANTES): the big blind pays one big blind for the table ("bb"), or every player
@@ -162,6 +170,54 @@ def build(solver: str, kind: str, work: str, quick: bool, tables=None, started: 
             "fine": {"samples": FINE // slow, "all_ins": FINE_ALL_INS, "band": list(BAND)}, "games": games}
 
 
+KEPT = os.path.join(ROOT, "tools", "short_work")      # the solver's own answers, packed: "<kind>_n<players>.tar.xz"
+PACKED = (".json", ".fine.json", ".hands.txt")        # of each stack: the first pass, the second, and the hands the second sampled
+
+
+def table_done(work: str, kind: str, players: int) -> bool:
+    """Are both passes of every stack of one table in the work folder?"""
+    return all(os.path.exists(work_path(work, kind, players, stack)[:-len(".json")] + end) for stack in STACKS for end in PACKED)
+
+
+def pack(work: str, kind: str, players: int) -> str:
+    """One table's answers from the work folder into its archive.  The same files give the same archive."""
+    import io
+    import lzma
+    import tarfile
+    os.makedirs(KEPT, exist_ok=True)
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for stack in STACKS:
+            for end in PACKED:
+                path = work_path(work, kind, players, stack)[:-len(".json")] + end
+                info = tarfile.TarInfo(os.path.basename(path))
+                info.size, info.mtime, info.mode = os.path.getsize(path), 0, 0o644
+                with open(path, "rb") as fh:
+                    tar.addfile(info, fh)
+    out = os.path.join(KEPT, f"{kind}_n{players}.tar.xz")
+    with open(out, "wb") as fh:
+        fh.write(lzma.compress(raw.getvalue(), preset=9 | lzma.PRESET_EXTREME))
+    return out
+
+
+def unpack(work: str) -> int:
+    """The kept answers into the work folder, where a file is not there yet.  -> how many files that was."""
+    import tarfile
+    count = 0
+    for name in sorted(os.listdir(KEPT)) if os.path.isdir(KEPT) else []:
+        if not name.endswith(".tar.xz"):
+            continue
+        with tarfile.open(os.path.join(KEPT, name)) as tar:
+            for member in tar.getmembers():
+                target = os.path.join(work, os.path.basename(member.name))
+                if member.isfile() and not os.path.exists(target):
+                    with tar.extractfile(member) as src, open(target + ".tmp", "wb") as dst:
+                        dst.write(src.read())
+                    os.replace(target + ".tmp", target)
+                    count += 1
+    return count
+
+
 def kept_from_file(kind: str) -> dict:
     """A kind of ante as the data file has it now, for a run that solves the other one only."""
     try:
@@ -182,12 +238,26 @@ def main() -> int:
     ap.add_argument("--quick", action="store_true", help="a coarse run for testing: a twentieth of the deals")
     ap.add_argument("--fine-only", action="store_true",
                     help="run the second pass for the solutions that are in the work folder, write nothing else")
+    ap.add_argument("--pack", action="store_true",
+                    help="pack the finished tables of the work folder into tools/short_work/, write nothing else")
+    ap.add_argument("--fresh", action="store_true", help="do not use the answers kept in tools/short_work/: solve again")
     a = ap.parse_args()
     wanted = [k.strip() for k in a.ante.split(",") if k.strip()]
     if not wanted or any(k not in S.KINDS for k in wanted):
         raise SystemExit(f"--ante: one or more of {', '.join(S.KINDS)}")
     work = a.work or tempfile.mkdtemp(prefix="short-")
     os.makedirs(work, exist_ok=True)
+    if a.pack:
+        for kind in wanted:
+            for players in GAMES[kind]:
+                if table_done(work, kind, players):
+                    out = pack(work, kind, players)
+                    print(f"{kind} ante, {players} players: {out} ({os.path.getsize(out) / 1024:.0f} KB)")
+        return 0
+    if not a.fresh and not a.quick:
+        count = unpack(work)
+        if count:
+            print(f"{count} files of the solver's kept answers unpacked into {work}", flush=True)
     solver = os.path.join(work, "aof_solver")
     subprocess.check_call(["gcc", "-O3", "-march=native", "-fopenmp", "-o", solver,
                            os.path.join(ROOT, "tools", "aof_solver.c"), "-lm"])

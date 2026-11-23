@@ -107,9 +107,8 @@ def stacks(players: int = PLAYERS, kind: str = "bb") -> tuple[float, ...]:
 
 
 def top(kind: str = "bb") -> float:
-    """The deepest stack with an exact answer; 0 when the data is not there."""
-    s = stacks(PLAYERS, kind)
-    return s[-1] if s else 0.0
+    """The deepest stack with an exact answer (every table is solved on the same stacks); 0 when the data is not there."""
+    return max((s for n in games(kind) for s in stacks(n, kind)), default=0.0)
 
 
 def close(stack: float, all_in: int = 1) -> float:
