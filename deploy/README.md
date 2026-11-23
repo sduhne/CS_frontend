@@ -95,9 +95,11 @@ choices in their own browser. Nothing is stored on the server.
 name and password of its own (since 20 November 2026, set up from the Menlo
 Gaming session on the owner's PC). The folder on the server is
 `/opt/menlo-guide`; it is a copy, not a checkout. The copy there is commit
-1f6a90c (page 2: the table map and Reset); the one before it is kept beside
-it as `/opt/menlo-guide.old_<date>_<time>` for a swap back. The foot of the
-page names the page's number, which tells the copies apart.
+158b83c (page 3: the size of a raise, tables v2; since 23 November 2026);
+the one before it is kept beside it as `/opt/menlo-guide.old_<date>_<time>`
+for a swap back. The foot of the page names the page's number and the
+tables' version, which tells the copies apart. Two logins open it; a login
+is one more line in the `basic_auth` block.
 
 To set it up again, or somewhere else:
 
@@ -116,14 +118,20 @@ To set it up again, or somewhere else:
    ```
 
 To update: copy the folder again over `/opt/menlo-guide` (all of it: the
-tables and the script belong together). The tables are one file of 2.7 MB;
-with `encode` the web server sends it compressed, about 0.4 MB. The browser
-keeps a copy for five minutes.
+tables and the script belong together, and `index.html` names them with
+their numbers, `data.js?v=2` and `guide.js?v=3`, so a browser fetches the
+new ones). The tables are one file of 6.5 MB; with `encode` the web server
+sends it compressed, about 0.9 MB. The live site answers with
+`Cache-Control: private, no-cache`: the browser keeps its copy and asks
+each time whether it is still the current one, so an update shows at once.
 
 What was checked: before going live, behind a throwaway Caddy with a test
 login (every file 200, `data.js` identical after compression, 401 without
 the login); on the live site from outside, the first three lines above.
 Page 2 was opened from a local server in Chromium on the owner's Windows PC
 before the swap (the foot, both reset buttons, the map of eight seats, no
-errors in the console). The page behind the real login was not opened by
-either session: that check is the owner's.
+errors in the console). Page 3 was fetched from the live site with a login,
+from outside: all 14 files are byte for byte those of commit 158b83c, a
+wrong password and no login are refused, and `/poker` redirects. The page
+behind the real login was not opened in a browser by either session: that
+check is the owner's.
