@@ -16,7 +16,7 @@ Three passes (PASSES).  The first solves the game and samples every hand of ever
 times.  That is plenty for a hand that is clearly in or out and too little for the hands at the edge of a
 range, which are the ones a chart is read for.  So the second pass takes every hand the first left near
 zero and samples it 100,000 times against the same solved strategies, a third of the noise; and the third
-takes, first in, the hands the second left within one and a half of their standard errors of zero and
+takes, first in, the hands the second left within two and a half of their standard errors of zero and
 samples them a million times.  Every pass deals from random numbers of its own, and the solver says what
 each number is good to (its standard error): the data file keeps the middle and the largest of them for
 the numbers of each pass, with how many hands each pass took and how many it moved to the other side.
@@ -53,7 +53,7 @@ BAND = (0.05, 0.04)             # near zero after the first pass: within 0.05bb 
 PASSES = (
     {"samples": 10_000, "all_ins": S.MOST_ALL_IN},
     {"samples": 100_000, "all_ins": 2, "band": BAND},
-    {"samples": 1_000_000, "all_ins": 0, "within": 1.5, "step": 0.001},
+    {"samples": 1_000_000, "all_ins": 0, "within": 2.5, "step": 0.001},
 )
 
 
@@ -173,7 +173,8 @@ def crossed(nodes: dict, players: int) -> int:
 
 
 def fine(solver: str | None, sol: dict, path: str, quick: bool) -> dict:
-    """The later passes on one solution, in place: a hand they sampled gets the number of its last pass.
+    """The later passes on one solution, in place: a hand they sampled gets the number of its last pass
+    ("ev"), that number's standard error ("se_milli") and the pass it is from ("pass": 1 for the others).
 
     -> what they did, a list with a place for each pass after the first under every key but "noise":
     "again" (the hands sampled), "moved" (how many of them changed sides), "crossed" (the hands in from
@@ -185,8 +186,8 @@ def fine(solver: str | None, sol: dict, path: str, quick: bool) -> dict:
     base = path[:-len(".json")]
     players = sol["n"]
     nodes = {(nd["player"], nd["mask"]): nd for nd in sol["nodes"] if all_ins(nd["mask"]) <= S.MOST_ALL_IN}
-    made_by = {key: [1] * 169 for key in nodes}                         # the pass each number is from
-    error = {key: [x / 1000.0 for x in nd["se_milli"]] for key, nd in nodes.items()}      # and its standard error, bb
+    for nd in nodes.values():
+        nd["pass"] = [1] * 169
     did = {"again": [], "moved": [], "crossed": [crossed(nodes, players)], "short": [], "seconds": [], "ratio": []}
     hands, before = [], {}
     for number, spec in enumerate(PASSES[1:], start=2):
@@ -194,7 +195,7 @@ def fine(solver: str | None, sol: dict, path: str, quick: bool) -> dict:
         hands = near_zero(sol, spec) if "band" in spec else still_near(hands, before, spec)
         # how many of the first pass's standard errors a band is, for the report: [nobody, one player, two all-in]
         did["ratio"].append([round(band(sol["stacks"][0], spec) / statistics.median(inside), 1) if inside else None
-                             for inside in ([error[i, m][c] for i, m, c in hands if all_ins(m) == count]
+                             for inside in ([nodes[i, m]["se_milli"][c] / 1000.0 for i, m, c in hands if all_ins(m) == count]
                                             for count in range(spec["all_ins"] + 1))] if "band" in spec else None)
         started = time.time()
         before = sample(solver, sol, base, number, spec, hands, samples) if hands else {}
@@ -208,9 +209,7 @@ def fine(solver: str | None, sol: dict, path: str, quick: bool) -> dict:
                 value = got["ev"][c]
             moved += (nodes[i, m]["ev"][c] > 0) != (value > 0)
             short += got["n"][c] < samples
-            nodes[i, m]["ev"][c] = value
-            made_by[i, m][c] = number
-            error[i, m][c] = got["se_milli"][c] / 1000.0
+            nodes[i, m]["ev"][c], nodes[i, m]["se_milli"][c], nodes[i, m]["pass"][c] = value, got["se_milli"][c], number
         did["again"].append(len(hands))
         did["moved"].append(moved)
         did["short"].append(short)
@@ -219,7 +218,8 @@ def fine(solver: str | None, sol: dict, path: str, quick: bool) -> dict:
     for number in range(1, len(PASSES) + 1):
         row = []
         for count in range(PASSES[number - 1]["all_ins"] + 1):
-            left = [error[key][c] for key in nodes if all_ins(key[1]) == count for c in range(169) if made_by[key][c] == number]
+            left = [nd["se_milli"][c] / 1000.0 for (_, mask), nd in nodes.items() if all_ins(mask) == count
+                    for c in range(169) if nd["pass"][c] == number]
             row.append([round(statistics.median(left), 4), round(max(left), 4)] if left else None)
         noise.append(row)
     did["noise"] = noise

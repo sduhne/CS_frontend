@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """An independent check of the exact short-stack solutions: the same game played out in plain Python.
 
-    python3 tools/build_short.py --work work/        # keeps the solver's own output there
-    python3 tools/check_short.py work/n9_s3.json     # a dozen decision points of that game, about two minutes
-    python3 tools/check_short.py work/n9_s6.json 12000
+    python3 tools/check_short.py tools/short_solutions/n9_s3.json.xz     # a dozen decision points of that game, about two minutes
+    python3 tools/check_short.py tools/short_solutions/n9_s6.json.xz 12000
+    python3 tools/check_short.py tools/short_solutions/n9_s6.json.xz 40000 8:33:A7s 6:0:K5s    # these hands: player:mask:hand
+    python3 tools/build_short.py --work work/        # or the solver's own output of a new build, kept there
+    python3 tools/check_short.py work/n9_s3.json
 
 Equal stacks, blinds 0.5 and 1, a big blind ante of 1 paid before the blind.  Everybody but the player
 under test follows the solver's trained strategy (the "freq" tables of its output); the player under
@@ -11,9 +13,13 @@ test holds a given hand at a given decision point, goes in, and the result is co
 The pot and side-pot arithmetic here is written from the rules, not taken from the solver's code, the
 hands are ranked by the engine's own evaluator, and a deal counts only when the players before did what
 the decision point says, so what they folded is out of the deck here too.  With 6,000 deals a number is
-good to about 0.05bb; the solver's own figure should be within that.
+good to about 0.05bb with a few big blinds (it is printed: the spread of the deals over the root of their
+number); the solver's own figure should be within that and its own standard error.  The solver's figure is
+the one the data file has: where the later passes of tools/build_short.py sampled the hand again and
+their output is kept beside the solution, theirs.
 """
 import json
+import lzma
 import os
 import random
 import sys
@@ -70,16 +76,27 @@ def settle(n, stack, ante, all_in, strength):
         before = level
     return net
 
+def load(path):
+    """The solver's output for one game, as it is kept: plain, or packed with xz."""
+    with (lzma.open(path, "rt") if path.endswith(".xz") else open(path)) as fh:
+        return json.load(fh)
+
 def run(path, checks, deals, seed=1):
-    sol = json.load(open(path))
+    sol = load(path)
     n, stack = sol["n"], sol["stacks"][0]
-    freq = {(nd["player"], nd["mask"]): nd["freq"] for nd in sol["nodes"]}
-    ev = {(nd["player"], nd["mask"]): nd["ev"] for nd in sol["nodes"]}
+    freq = {(nd["player"], nd["mask"]): list(nd["freq"]) for nd in sol["nodes"]}
+    try:                                     # the numbers of the later passes, where they are kept beside the solution
+        import build_short
+        build_short.fine(None, sol, path[:-len(".xz")] if path.endswith(".xz") else path, False)
+    except SystemExit:
+        print("  (the later passes are not kept beside this solution: the first pass's numbers)")
+    nodes = {(nd["player"], nd["mask"]): nd for nd in sol["nodes"]}
     rng = random.Random(seed)
+    worst = 0.0
     for hero, mask, hand in checks:
         h = HANDS.index(hand)
         mine = combos(h)
-        total, done, tries = 0.0, 0, 0
+        total, squares, done, tries = 0.0, 0.0, 0, 0
         while done < deals and tries < deals * 400:
             tries += 1
             c1, c2 = rng.choice(mine)
@@ -116,10 +133,19 @@ def run(path, checks, deals, seed=1):
                     strength = {k: evaluate(list(hole[k]) + list(board)) for k in range(n)}
                 results.append(settle(n, stack, 1.0, set(in_), strength)[hero])
             total += results[0] - results[1]
+            squares += (results[0] - results[1]) ** 2
             done += 1
         mine_ev = total / max(1, done)
-        print(f"  {n} players, {stack:g}bb, player {hero} with {hand} after all-ins {bin(mask)}: played out {mine_ev:+.2f}bb over {done} deals; "
-              f"the solver says {ev[(hero, mask)][h] / 100:+.2f}bb")
+        mine_se = (max(0.0, squares / done - mine_ev ** 2) / done) ** 0.5 if done > 1 else 0.0
+        node = nodes[(hero, mask)]
+        theirs, their_se = node["ev"][h] / 100, node.get("se_milli", [0.0] * 169)[h] / 1000
+        both = (mine_se ** 2 + their_se ** 2) ** 0.5
+        apart = abs(mine_ev - theirs) / both if both else 0.0
+        worst = max(worst, apart)
+        print(f"  {n} players, {stack:g}bb, player {hero} with {hand} after all-ins {bin(mask)}: played out {mine_ev:+.3f}bb "
+              f"(good to {mine_se:.3f}) over {done} deals; the solver says {theirs:+.3f}bb (good to {their_se:.3f}, "
+              f"pass {node.get('pass', [1] * 169)[h]}): {apart:.1f} standard errors apart")
+    print(f"  the widest gap: {worst:.1f} standard errors of the two numbers together")
 
 def main() -> int:
     if len(sys.argv) < 2:
@@ -127,8 +153,10 @@ def main() -> int:
         return 2
     path = sys.argv[1]
     deals = int(sys.argv[2]) if len(sys.argv) > 2 else 6000
-    with open(path) as fh:
-        n = json.load(fh)["n"]
+    n = load(path)["n"]
+    if len(sys.argv) > 3:                    # the hands asked for: "player:mask:hand" (player 0 acts first; the mask
+        run(path, [(int(i), int(m), hand) for i, m, hand in (word.split(":") for word in sys.argv[3:])], deals)   # is the players all-in before)
+        return 0
     first, late, sb, bb = 0, max(0, n - 4), n - 2, n - 1
     # first in from three seats; calling the first seat's all-in on the button; the big blind against one
     # all-in and against two
