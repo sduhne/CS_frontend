@@ -5,6 +5,7 @@
     python3 tools/build_short.py --work DIR      # keeps the solver's own output there, and uses what is there already
     python3 tools/build_short.py --work DIR --fine-only     # the later passes for the solutions that are in DIR, no more
     python3 tools/build_short.py --work DIR --report        # what every pass did, read from DIR: nothing is run or written
+    python3 tools/build_short.py --work DIR --pack          # the solver's output of DIR into tools/short_solutions, packed
     python3 tools/build_short.py --work tools/short_solutions    # the data file again from the output the repository keeps
 
 Equal stacks, a small blind of half a big blind and a big blind ante of one; every player moves all-in
@@ -250,6 +251,32 @@ def report(work: str, quick: bool = False) -> int:
     return 0
 
 
+def pack(work: str) -> int:
+    """Pack the solver's output in ``work`` into KEPT, the folder the repository keeps: the first pass of every
+    solution that is there and the later passes that are finished, each as one xz file.  A file that is
+    kept already with the same contents is left alone."""
+    os.makedirs(KEPT, exist_ok=True)
+    wrote = 0
+    for players in GAMES:
+        for stack in STACKS:
+            for name in [f"n{players}_s{stack}.json"] + [f"n{players}_s{stack}.pass{k}.json" for k in range(2, len(PASSES) + 1)]:
+                source, out = os.path.join(work, name), os.path.join(KEPT, name + ".xz")
+                if not os.path.exists(source):
+                    continue
+                with open(source, "rb") as fh:
+                    raw = fh.read()
+                if os.path.exists(out):
+                    with lzma.open(out, "rb") as fh:
+                        if fh.read() == raw:
+                            continue
+                with lzma.open(out + ".tmp", "wb", preset=9) as fh:
+                    fh.write(raw)
+                os.replace(out + ".tmp", out)
+                wrote += 1
+    print(f"packed {wrote} files into {KEPT} ({len([n for n in os.listdir(KEPT) if n.endswith('.xz')])} kept)")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--work", help="folder for the solver's output (kept, and reused when it is there)")
@@ -258,11 +285,13 @@ def main() -> int:
                     help="run the later passes for the solutions that are in the work folder, write nothing else")
     ap.add_argument("--report", action="store_true",
                     help="say what every pass did to the solutions in the work folder; run and write nothing")
+    ap.add_argument("--pack", action="store_true",
+                    help="pack the solver's output in the work folder into tools/short_solutions, which the repository keeps")
     a = ap.parse_args()
-    if a.report:
+    if a.report or a.pack:
         if not a.work:
-            ap.error("--report reads a work folder: give --work")
-        return report(a.work, a.quick)
+            ap.error("--report and --pack read a work folder: give --work")
+        return report(a.work, a.quick) if a.report else pack(a.work)
     work = a.work or tempfile.mkdtemp(prefix="short-")
     os.makedirs(work, exist_ok=True)
     solver = os.path.join(work, "aof_solver")

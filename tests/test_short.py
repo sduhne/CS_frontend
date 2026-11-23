@@ -198,6 +198,28 @@ class Passes(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 BUILD.fine(None, self.solution(), path, False)
 
+    def test_the_solvers_output_is_packed_into_the_folder_the_repository_keeps(self):
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as work, tempfile.TemporaryDirectory() as kept:
+            sol = self.solution()
+            names = [f"n{self.PLAYERS}_s{self.STACK}.json", f"n{self.PLAYERS}_s{self.STACK}.pass2.json"]
+            for name in names + ["aof_solver", f"n{self.PLAYERS}_s{self.STACK}.strategy.txt", "n9_s8_notes.json"]:
+                with open(os.path.join(work, name), "w") as fh:
+                    json.dump(sol, fh)
+            before, BUILD.KEPT = BUILD.KEPT, kept
+            try:
+                said = io.StringIO()
+                with contextlib.redirect_stdout(said):
+                    BUILD.pack(work)
+                    BUILD.pack(work)                    # nothing has changed: nothing is written again
+            finally:
+                BUILD.KEPT = before
+            self.assertEqual(sorted(os.listdir(kept)), sorted(name + ".xz" for name in names))      # the solver's own output, no more
+            self.assertEqual(BUILD.read(os.path.join(kept, names[0])), sol)
+            self.assertRegex(said.getvalue(), r"packed 2 files into .*\(2 kept\)\npacked 0 files")
+
     def test_a_hand_in_from_a_seat_and_out_from_the_next_is_counted(self):
         sol = self.solution()
         nodes = {(nd["player"], nd["mask"]): nd for nd in sol["nodes"]}
