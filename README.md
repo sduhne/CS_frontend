@@ -23,8 +23,9 @@ Cards, seat, stack in big blinds, what happened before you: the play, one
 sentence of why, the numbers behind it and the whole chart, at once. Nothing
 is worked out while you play: every answer is read from tables that
 `tools/build_guide.py` made by asking the engine about each of the 169 hands
-of every spot before the flop (109,188 spots, 42,905 different tables: every seat, 28 stack
-sizes, five sizes of a raise and four of a re-raise, three kinds of opponent, two styles).
+of every spot before the flop (@@SPOTS@@ spots, @@TABLES@@ different tables: every seat, 28 stack
+sizes, five sizes of a raise and four of a re-raise, three kinds of opponent, two styles, and for
+the short stacks both kinds of ante).
 
 **To open it:** double-click `guide/index.html` ("Open Quick Guide.bat" on
 Windows). It is a page on your own computer: no Python, no internet. On a
@@ -62,6 +63,11 @@ web server it is a folder of files (`deploy/README.md`).
   **Stage** (Normal, Bubble).
 - **Blinds** (Regular, Turbo, Hyper): how fast the levels go. It changes no
   answer (see "Turbo and hyper-turbo" below); it turns on the blinds clock.
+- **Ante** (Big blind, Every player): who pays it. "Big blind" is one big
+  blind paid by the big blind for the table. "Every player" is an eighth of
+  a big blind from each player in every hand, as on GGPoker. It changes the
+  all-ins of 20bb or less, at every table size, and every answer for two
+  players (see "The ante" below).
 
 **What it shows:**
 
@@ -90,7 +96,7 @@ web server it is a folder of files (`deploy/README.md`).
   bet you face, the street, the board and the chips behind.
 
 **What the answers are.** The engine's, counting chips only (no prizes), with
-a big blind ante and equal stacks. **Play to win** opens wider than the
+equal stacks and the ante you chose. **Play to win** opens wider than the
 coach's tight ranges and, from the cutoff and the button, calls and
 re-raises a raise with more hands (`PLAYBOOK.md`, "Play to win"); **Tight**
 keeps the tight ranges. In both, the big blind's call of a raise is tested
@@ -118,10 +124,10 @@ each of the three:
   rarer on the board: with 6bb the big blind called a cutoff all-in with
   65% of hands where the answer is 47%. All-ins of 20bb or less are now
   read from an exact solution of the game (real cards, every showdown and
-  side pot, tables of 3, 4, 5, 6 and 9 players, solved at 2 to 10bb and at
-  12, 16 and 20bb: `poker_coach/short.py`, `tools/build_short.py`). Up to
-  10bb, where every hand is an all-in or a fold, that is the whole answer;
-  from 11 to 20bb it is what an all-in earns first in and every call of an
+  side pot, solved at 2 to 10bb and at 12, 16 and 20bb, once for each kind
+  of ante: `poker_coach/short.py`, `tools/build_short.py`). Up to 10bb,
+  where every hand is an all-in or a fold, that is the whole answer; from
+  11 to 20bb it is what an all-in earns first in and every call of an
   all-in. Those tables say "Solved exactly".
 - **The clock.** A round of folding costs the two blinds and the ante, and
   the blinds rise meanwhile: 12bb on the button of an eight-handed table is
@@ -135,6 +141,31 @@ each of the three:
 `PLAYBOOK.md`, "Turbo and hyper-turbo", has the numbers and what they were
 checked against.
 
+**The ante.** With a big blind ante the big blind pays one big blind for the
+table. On GGPoker every player pays an eighth of a big blind in every hand
+instead. At eight players that is the same money in the pot, and still
+another game: the big blind keeps one big blind more behind, and a smaller
+table plays for a smaller pot (0.75bb of ante at six players, 0.375bb at
+three, a quarter with two). With a short stack that moves the answers:
+@@BBCALL@@. So the all-ins of 20bb or less are solved a second time for
+that ante, at every table size from 3 to 9, each as such (with a big blind
+ante 7 and 8 players are read from the nine; here the pot would be wrong),
+and the tables for two players are made a second time, since the engine is
+exact there and the pot is a quarter of a big blind of ante in place of
+one. Ante set to "Every player" reads those. Every other table (a raise
+that does not commit the raiser, re-raises, three players in the pot,
+anything above 20bb with three players or more) is the one made with the
+big blind ante whichever is chosen, and the chart says so under it. What
+that leaves out was measured by asking the engine again with the ante of
+every player at the real table size (`tools/check_guide_ante.py`, 300
+spots a table size): 1.2% of hands play differently at eight and at nine
+players, 2.4% at six and 4.4% at three; all but 0.2% (0.7% at three) are
+hands the tables mark close. Most of it is where the big blind's stack is
+the one played for (you are the big blind against a raise, or the big
+blind moved all-in over your raise, with 20bb or less): he has about one
+big blind more than those tables count, and the table one big blind deeper
+is the nearer one. The blinds clock follows the choice.
+
 **Limits.** Stacks are taken as equal. Spots with three players in the pot
 are made for the big blind and four first seats, and the page says so when
 yours is read from a neighbour; two all-ins with 20bb or less have a table
@@ -146,11 +177,15 @@ into a 5bb stack, against 2bb into 6bb); behind callers the page does not
 offer that size (read it as two all-ins). The wider opening rows are written
 by hand from standard ranges, not solved, and the share of its equity a hand
 keeps in the big blind is a formula set against a solver's published fold
-rates, not a solver. After the flop it is rules, not a solver. The exact
-answers for all-ins of 20bb or less are for a big blind ante (GGPoker's ante
-is paid by every player: the same money at eight players, a slightly
-different game with 2 to 4bb and at a short-handed table). First in they are
-for players who call correctly: the Opponents choice does not move them. It
+rates, not a solver. After the flop it is rules, not a solver. The ante of
+every player has tables of its own only where the answers are exact (all-ins
+of 20bb or less at 3 to 9 players, and two players): everywhere else the
+table is the big blind ante's ("The ante", above, has what that costs). It
+is solved for an eighth of a big blind each; an ante from 0.115 to 0.135 is
+read from it (0.12 and 0.133 are levels of the same structures, and move a
+hand at the edge by a few hundredths of a big blind). First in the exact
+answers are for players who call correctly: the Opponents choice does not
+move them. It
 moves the calls, through the hands an all-in player is taken to hold: with
 Standard the solved range itself up to 10bb, and a little tighter from
 there, a tenth at 20bb, as the deeper tables assume. Their numbers come from
@@ -162,8 +197,9 @@ seat and out from the next. With two players all-in before you only the
 first pass was run: those numbers are good to 0.05bb with a few big blinds
 and 0.2bb with 20, and a play within 0.15bb or more is marked close. Between
 two solved stacks (11, 13 to 15, 17 and 18bb) the numbers are read off a
-straight line. Tables of 7 and 8 players are read from the nine-player
-solution (at eight that costs about 0.001bb a hand). Behind a player who
+straight line. With a big blind ante, tables of 7 and 8 players are read
+from the nine-player solution (at eight that costs about 0.001bb a hand).
+Behind a player who
 only called with 6bb or less, they are that player's all-in with a caller's
 hands in its place. On the Bubble stage a call read from them must have 10
 points of equity to spare, hand by hand. Checked in headless Chromium on
@@ -173,12 +209,17 @@ It is a chart. Most real-money sites forbid charts and outside help while
 you play: use it to study, to review hands and where help is allowed.
 
 ```bash
-python3 tools/build_short.py                 # the exact answers for all-ins of 2 to 20bb -> poker_coach/data/short.json, about four hours (needs gcc)
-python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 40 minutes on four processors
+python3 tools/build_short.py --ante player   # the exact answers for all-ins of 2 to 20bb with the ante of every player -> poker_coach/data/short.json:
+                                             # a minute from the solver's kept output (tools/short_work/); --fresh solves again, about seven hours (needs gcc)
+python3 tools/build_short.py --ante bb       # the same for the big blind ante: about four hours, its output was not kept
+python3 tools/check_short.py work/player_n8_s6.json   # one solution played out by a second program (after build_short.py --work work/)
+python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about @@BUILDMIN@@ minutes on four processors
+python3 tools/check_guide_ante.py 8          # what the Ante choice leaves unchanged, measured at a table of eight (about five minutes)
 python3 tools/build_guide.py --only open --styles win    # some of them; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py out/       # the page as one file, with data.json beside it
 python3 -m unittest tests.test_guide tests.test_short   # about a minute
-python3 -m poker_coach clock --stack 12 --pos BTN --players 8 --speed hyper    # the blinds clock in words
+python3 -m poker_coach clock --stack 12 --pos BTN --players 8 --speed hyper    # the blinds clock in words (--ante player: GGPoker's ante)
+python3 -m poker_coach quick --hand 65o --stack 5 --pos BB --players 6 --facing "BTN allin" --goal chips --ante player   # one exact answer, with that ante
 ```
 
 ## The table app

@@ -155,14 +155,8 @@ def run(path, checks, deals, seed=1):
         out.append((hero, mask, hand, mine_ev, ev[(hero, mask)][h] / 100))
     return out
 
-def main() -> int:
-    if len(sys.argv) < 2:
-        print(__doc__)
-        return 2
-    path = sys.argv[1]
-    deals = int(sys.argv[2]) if len(sys.argv) > 2 else 6000
-    with open(path) as fh:
-        n = json.load(fh)["n"]
+def points(n):
+    """The decision points checked at a table of ``n``: (player, the players all-in before him as bits, the hand)."""
     first, late, sb, bb = 0, max(0, n - 4), n - 2, n - 1
     # first in from three seats; calling the first seat's all-in on the button; the big blind against one
     # all-in and against two
@@ -172,7 +166,18 @@ def main() -> int:
     checks += [(bb, 1 << late, "T8o"), (bb, 1 << late, "87o"), (bb, 1 << late, "A2o")]
     if n >= 5:
         checks += [(bb, (1 << first) | (1 << late), "QJs")]
-    rows = run(path, checks, deals)
+    return checks
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 2
+    path = sys.argv[1]
+    deals = int(sys.argv[2]) if len(sys.argv) > 2 else 6000
+    with open(path) as fh:
+        n = json.load(fh)["n"]
+    rows = run(path, points(n), deals)
     wide = max(rows, key=lambda r: abs(r[3] - r[4]))
     print(f"  the widest gap: {abs(wide[3] - wide[4]):.2f}bb (player {wide[0]} with {wide[2]} after all-ins {bin(wide[1])})")
     return 0

@@ -1029,7 +1029,10 @@ One test for every hand, at every stack:
 
 The quick guide has a Blinds choice (Regular, Turbo, Hyper) and one set of
 tables behind all three. This section says why, what the fast formats do
-change, and what the tables were checked against.
+change, and what the tables were checked against. The stacks a fast format
+is played with are solved exactly, for both kinds of ante: one big blind
+paid by the big blind, and an eighth of a big blind paid by every player,
+which is GGPoker's ("The ante of every player", below).
 
 ### The play does not change with the speed
 
@@ -1116,14 +1119,23 @@ out, and with a short stack both count:
   (70% of hands for 63% with 12bb, 55% for 48% with 20bb).
 
 So these all-ins are not left to that solver. The game (equal stacks, a
-small blind of half a big blind, a big blind ante of one, every player
-all-in or fold) is solved with real cards, every showdown and every side
-pot (`tools/aof_solver.c`, the solver of the All-In or Fold tables, run by
-`tools/build_short.py`), for tables of 9, 6, 5, 4 and 3 players, at every
-stack from 2 to 10bb and at 12, 16 and 20bb (a stack between two of them is
-read off the straight line between). Tables of 7 and 8 are read from the
-last seats of the nine; two players are left to the engine's solver, which
-is exact heads-up.
+small blind of half a big blind, an ante, every player all-in or fold) is
+solved with real cards, every showdown and every side pot
+(`tools/aof_solver.c`, the solver of the All-In or Fold tables, run by
+`tools/build_short.py`), at every stack from 2 to 10bb and at 12, 16 and
+20bb (a stack between two of them is read off the straight line between).
+It is solved twice, once for each kind of ante:
+
+- **A big blind ante:** the big blind pays one big blind for the table,
+  before his blind. Tables of 9, 6, 5, 4 and 3 players; tables of 7 and 8
+  are read from the last seats of the nine.
+- **An ante from every player:** an eighth of a big blind each, as on
+  GGPoker. Every table from 3 to 9 players, each solved as such ("The ante
+  of every player", below, says why and what it changes).
+
+Two players are left to the engine's solver, which is exact heads-up. The
+numbers and tables of this part are the big blind ante's; the other game
+has its own further down.
 
 The numbers come from dealing cards, so they carry noise, and the hands a
 chart is read for are the ones near zero. Each solution is therefore made in
@@ -1302,10 +1314,30 @@ big blind against an all-in from the button:
 
 ### Limits
 
-- The exact tables are for a big blind ante. GGPoker's ante is paid by every
-  player: the same money at eight players, but the big blind keeps one big
-  blind more behind, which matters a little with 2 to 4bb, and at a
-  short-handed table there is less ante in the pot than the tables count.
+- The exact tables are for two antes: one big blind from the big blind, or
+  an eighth of a big blind from every player. An ante from 0.115 to 0.135 a
+  player is read from the second (the answer says so); any other ante (a
+  tenth, a quarter, none, or both kinds at once) is left to the engine's
+  solver, with its warning.
+- In the quick guide the Ante choice changes the tables that are read from
+  the exact solution, at every table size, and the tables for two players.
+  Every other table is made with the big blind ante whichever is chosen: a
+  raise that does not commit the raiser, re-raises, three players in the
+  pot, and everything above 20bb with three players or more. The chart
+  says so under it. Asked again with the ante of every player at the real
+  table size, a sample of 300 such spots a table size
+  (`tools/check_guide_ante.py`) plays 1.2% of hands differently at eight
+  players and at nine, 2.4% at six and 4.4% at three; the hands that change
+  and are not marked close are 0.2% at eight, 0.1% at nine, 0.3% at six and
+  0.7% at three. Where it is most: the big blind's all-in over your raise
+  with 20bb or less (5% of hands at eight players, 10% at six), a raise
+  and an all-in before the big blind with 6 to 20bb (5% and 7%), and the
+  big blind against a small raise with 6 to 12bb (1.3% and 4.5%). In all
+  three the big blind's stack is the one played for, and he has about one
+  big blind more than a big blind ante leaves him: read at one big blind
+  deeper, the same tables are within 0.1% (against a raise) and 1.1%
+  (his all-in) at eight players. First in above 20bb nothing changes at
+  all: the opening rows do not look at the ante.
 - They are for equal stacks, or for players behind who cover you. With a
   shorter stack still to act, with prizes counted, or with a strong read on
   a player, the engine's solver answers as before and says in a warning that
@@ -1315,9 +1347,11 @@ big blind against an all-in from the button:
 - Above 10bb the solved game is not the whole game: its all-in ranges stand
   for players who, in a real game, also raise small. That is the same
   reading of an all-in as before, with better arithmetic.
-- Tables of 7 and 8 players are read from the nine: the seats that are not
-  there count as players who folded. At eight players that costs about
-  0.001bb a hand (the big blind calls 2 to 6 points of hands too few).
+- With a big blind ante, tables of 7 and 8 players are read from the nine:
+  the seats that are not there count as players who folded. At eight
+  players that costs about 0.001bb a hand (the big blind calls 2 to 6
+  points of hands too few). With the ante of every player each table is
+  its own.
 - Their numbers carry noise from dealing cards. After the second pass a
   number near zero is good to about 0.02bb with 6bb, 0.03bb with 10bb and
   0.06bb with 20bb; a play within 0.05bb (0.1bb with 20bb) is marked close,
