@@ -425,7 +425,10 @@ python3 -m unittest tests.test_guide                 # the style, the builder, t
 - **What the user sets**, one tap each: two ranks and suited or offsuit (or a
   hand in the chart), what happened before them, their seat and the table
   size (2 to 9), the stack, opponents (Standard, Tight, Loose), style (Play
-  to win, Tight), stage (Normal, Bubble). "Next hand" moves the seat on.
+  to win, Tight), stage (Normal, Bubble). "Next hand" moves the seat on;
+  its button and Reset are in the bar at the top, which stays in the window
+  while the page scrolls and shows the answer in one line once the answer
+  itself is out of sight.
 - **How much they raised.** Under a raise: "Raised to" 2bb, 2.2bb, 2.5bb,
   3bb or 4bb+ (read as 4bb). Until the user picks, it is the engine's usual
   size for the stack (2bb under 25bb, 2.2bb from there; 2.5bb and 3bb from

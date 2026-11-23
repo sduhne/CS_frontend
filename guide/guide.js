@@ -21,9 +21,10 @@
   const MARK = '<svg class="mark" viewBox="0 0 40 40" role="img" aria-label="Menlo Bet"><rect width="40" height="40" rx="9" fill="#FFD60A"/>' +
                '<path d="M8 30V11l12 11 12-11v19h-5V22l-7 6.5L13 22v8z" fill="#0A0A0B"/></svg>';
   const RESET_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
-  const PAGE = 3;                       // the page's own number, shown at the foot: which copy of the page is open
+  const PAGE = 4;                       // the page's own number, shown at the foot: which copy of the page is open
   const TABLES = 2;                     // the oldest tables this page can read (2: the size of a raise is in the keys)
   const UNDO_MS = 8000;                 // how long Reset can be taken back
+  const BAR = 52;                       // the height of the bar at the top on a phone, in pixels (.top in guide.css)
 
   /* What can have happened before you act.  group 0: your first decision; 1: you raised first; 2: you re-raised. */
   const LINES = [
@@ -703,7 +704,7 @@
     const a = ans[h], [verb, size] = verbOf(a.name, res.table);
     const cls = ATTACK.includes(a.name) ? "attack" : a.name === "FOLD" ? "fold" : "passive";
     return `<button class="minibar ${cls}" data-act="top" tabindex="-1"><b>${esc(handName(h))}</b><span class="verb">${verb}</span>` +
-           `${size ? `<span class="size">${esc(size)}</span>` : ""}<span class="where">${seatName(st.seat, st.players)} &middot; ${bbText(st.stack)}</span></button>`;
+           `${size ? `<span class="size">${esc(size.replace(/^to /, ""))}</span>` : ""}<span class="where">${seatName(st.seat, st.players)} &middot; ${bbText(st.stack)}</span></button>`;
   }
 
   /* What comes next, read from the follow-up tables for the same hand. */
@@ -961,7 +962,7 @@
     $("post").innerHTML = postHtml(state, postOpen);
     if (!$("notes").innerHTML) $("notes").innerHTML = notesHtml(notesOpen);
     const next = $("btn-next");
-    if (next) next.innerHTML = `Next hand <b>&rarr; ${seatName((state.seat + 1) % state.players, state.players)}</b>`;
+    if (next) next.innerHTML = `<span class="long">Next hand</span><span class="short">Next</span> <b>&rarr; ${seatName((state.seat + 1) % state.players, state.players)}</b>`;
     drawReset();
     save();
   }
@@ -1069,11 +1070,14 @@
     EQ = bytes(D.eq); PAIRS = bytes(D.pairs);
     load();
     const root = $("guide");
-    root.innerHTML = `<header class="top"><div class="brand">${MARK}<span class="word">Menlo<b>.bet</b></span><span class="sub">Quick guide</span></div>
+    /* The bar at the top stays in the window while the page scrolls: Reset and Next hand are always one tap
+       away.  While the answer is out of sight the bar shows it in one line where the name was. */
+    root.innerHTML = `<header class="top" id="top"><div class="brand">${MARK}<span class="word">Menlo<b>.bet</b></span><span class="sub">Quick guide</span></div>
+        <div id="mini" aria-hidden="true"></div>
         <div class="tools"><button class="reset" id="btn-reset" data-act="reset"></button><button class="next" id="btn-next" data-act="next"></button></div></header>
       <div class="cols">
         <div class="col left"><section id="inputs" aria-label="The spot"></section><section id="post"></section><section id="notes"></section></div>
-        <div class="col right"><section id="answer" aria-live="polite" aria-label="The answer"></section><div id="mini" aria-hidden="true"></div><section id="plan"></section><section id="chart"></section></div>
+        <div class="col right"><section id="answer" aria-live="polite" aria-label="The answer"></section><section id="plan"></section><section id="chart"></section></div>
       </div>
       <p class="foot">Menlo.bet quick guide &middot; a study aid &middot; page ${PAGE} &middot; tables v${D.version}${D.quick || D.partial ? " (trial set)" : ""}</p>`;
     root.addEventListener("click", onClick);
@@ -1083,13 +1087,18 @@
     root.addEventListener("change", (event) => { if (event.target.id === "stack") render(); });
     root.addEventListener("toggle", onToggle, true);
     document.addEventListener("keydown", onKey);
-    if ("IntersectionObserver" in window) {       // the one-line bar shows while the answer itself is out of sight
-      new IntersectionObserver((entries) => $("mini").classList.toggle("on", !entries[0].isIntersecting && entries[0].boundingClientRect.top < 0),
-                               {threshold: 0}).observe($("answer"));
+    const bar = $("top");
+    if ("IntersectionObserver" in window) {       // the answer in one line shows while the answer itself is out of sight
+      new IntersectionObserver((entries) => bar.classList.toggle("away", !entries[0].isIntersecting && entries[0].boundingClientRect.top < BAR),
+                               {threshold: 0, rootMargin: `-${BAR}px 0px 0px 0px`}).observe($("answer"));       // under the bar is out of sight
       /* ... and not over the rules for after the flop, which are about another moment of the hand */
-      new IntersectionObserver((entries) => $("mini").classList.toggle("off", entries[0].isIntersecting),
+      new IntersectionObserver((entries) => bar.classList.toggle("post", entries[0].isIntersecting),
                                {rootMargin: "0px 0px -60% 0px"}).observe($("post"));
     }
+    /* a line under the bar once something has scrolled beneath it */
+    const scrolled = () => bar.classList.toggle("scrolled", (window.scrollY || document.documentElement.scrollTop || 0) > 2);
+    window.addEventListener("scroll", scrolled, {passive: true});
+    scrolled();
     render();
   }
 

@@ -685,6 +685,18 @@ class PageFiles(unittest.TestCase):
         self.assertEqual(oldest, B.VERSION)
         self.assertIn("(data.version || 1) < TABLES", js)
 
+    def test_the_bar_with_next_hand_stays_at_the_top_of_the_window(self):
+        """Read from the files: the browser run checks at every step that the button is in sight."""
+        css, js = self.read("guide.css"), self.read("guide.js")
+        self.assertRegex(css, r"\.top\{position:sticky;top:0;")
+        self.assertIn("height:calc(52px + env(safe-area-inset-top,0px))", css)
+        self.assertIn("const BAR = 52;", js)                           # what the script takes the bar's height to be
+        header = js[js.index('<header class="top" id="top">'):js.index("</header>")]
+        for part in ('class="brand"', 'id="mini"', 'id="btn-reset"', 'id="btn-next"'):
+            self.assertIn(part, header)
+        self.assertNotIn('id="mini"', js[js.index("</header>"):])       # the answer in one line is in the bar, nowhere else
+        self.assertIn('.top.away:not(.post) #mini{display:flex}', css)
+
     def test_the_page_knows_every_family_of_the_builder(self):
         js = self.read("guide.js")
         for name in B.FAMILIES:

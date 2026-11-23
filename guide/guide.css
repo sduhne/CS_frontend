@@ -30,11 +30,15 @@ h1,h2,h3,p{margin:0}
 .hint{font-size:12px;color:var(--grey)}
 .num{font-family:var(--display);font-weight:800;font-variant-numeric:tabular-nums lining-nums}
 
-.guide{max-width:1180px;margin:0 auto;
-  padding:0 max(var(--gut),env(safe-area-inset-right,0px)) 32px max(var(--gut),env(safe-area-inset-left,0px))}
+html{scroll-padding-top:64px}                  /* what is scrolled to does not hide under the bar at the top */
+.guide{--gl:max(var(--gut),env(safe-area-inset-left,0px));--gr:max(var(--gut),env(safe-area-inset-right,0px));
+  max-width:1180px;margin:0 auto;padding:0 var(--gr) 32px var(--gl)}
 
-/* ---------- 3. Header ---------- */
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;height:52px}
+/* ---------- 3. Header: it stays at the top of the window, with Reset and Next hand in it ---------- */
+.top{position:sticky;top:0;z-index:8;display:flex;align-items:center;justify-content:space-between;gap:12px;
+  height:calc(52px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) var(--gr) 0 var(--gl);
+  margin:0 calc(-1 * var(--gr)) 0 calc(-1 * var(--gl));background:var(--ink);border-bottom:1px solid transparent}
+.top.scrolled{border-bottom-color:var(--line-strong);box-shadow:0 6px 16px rgba(0,0,0,.5)}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
 .brand .mark{width:28px;height:28px;flex:none;display:block}
 .word{font:italic 800 22px/1 var(--display);text-transform:uppercase;letter-spacing:-.01em;white-space:nowrap}
@@ -50,24 +54,33 @@ h1,h2,h3,p{margin:0}
 .next{flex:none;height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--line-strong);background:var(--panel);
   font:600 13px/1 var(--body);color:var(--white);white-space:nowrap}
 .next b{color:var(--yellow);font-weight:700}
+.next .short{display:none}
 
 /* ---------- 4. Columns ---------- */
 .cols{display:flex;flex-direction:column;gap:12px}
 .col{display:contents}
 #answer{order:1}
-/* The answer in one line.  It takes no room: it lies over the top of the page while the answer is out of sight. */
-#mini{order:1;position:sticky;top:0;z-index:6;height:0;margin-top:-12px}
-.minibar{display:none;position:absolute;top:0;left:calc(-1 * var(--gut));right:calc(-1 * var(--gut));height:46px;align-items:center;gap:10px;
-  padding:0 var(--gut);background:var(--panel);color:var(--white);border-bottom:1px solid var(--line-strong);box-shadow:0 6px 16px rgba(0,0,0,.5);text-align:left}
-#mini.on .minibar{display:flex}
-#mini.off .minibar{display:none}
-.minibar b{font:800 18px/1 var(--display);padding:4px 7px;border-radius:6px;background:var(--white);color:var(--ink)}
-.minibar .verb{font:italic 800 26px/1 var(--display);text-transform:uppercase;white-space:nowrap}
-.minibar .size{font:800 16px/1 var(--display);text-transform:uppercase;white-space:nowrap}
-.minibar .where{margin-left:auto;font:600 12px/1 var(--body);opacity:.75;white-space:nowrap}
-.minibar.attack{background:var(--yellow);color:var(--ink);border-color:var(--yellow)}
-.minibar.attack b{background:var(--ink);color:var(--yellow)}
+/* The answer in one line, in the bar at the top where the name is: it shows while the answer itself is out of
+   sight (the bar is then "away"), and not over the rules for after the flop ("post").  A tap goes back up. */
+#mini{display:none;flex:1 1 auto;min-width:0}
+.minibar{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;height:40px;color:var(--white);text-align:left}
+.minibar b{flex:none;font:800 17px/1 var(--display);padding:5px 7px;border-radius:6px;background:var(--white);color:var(--ink)}
+.minibar .verb{flex:none;font:italic 800 24px/1 var(--display);text-transform:uppercase;white-space:nowrap}
+.minibar .size{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font:800 15px/1 var(--display);text-transform:uppercase;white-space:nowrap}
+.minibar .where{display:none;flex:none;font:600 12px/1 var(--body);color:var(--grey);white-space:nowrap}
+.minibar.attack .verb,.minibar.attack .size{color:var(--yellow)}
 .minibar.fold .verb{color:var(--soft)}
+@media (max-width:959px){
+  .top.away:not(.post) .brand{display:none}
+  .top.away:not(.post) #mini{display:flex}
+}
+@media (max-width:479px){                      /* a phone: the shorter word leaves the answer its room */
+  .top.away:not(.post) .next .long{display:none}
+  .top.away:not(.post) .next .short{display:inline}
+}
+@media (min-width:600px){
+  .minibar .where{display:inline;margin-left:4px}
+}
 #inputs{order:2}
 #plan{order:3}
 #chart{order:4}
@@ -273,16 +286,16 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
   .cell{font-size:12px}
 }
 @media (min-width:960px){
-  .top{height:60px}
+  html{scroll-padding-top:72px}
+  .top{height:calc(60px + env(safe-area-inset-top,0px))}
   .brand .mark{width:32px;height:32px}
   .word{font-size:26px}
   .cols{display:grid;grid-template-columns:minmax(380px,440px) minmax(0,1fr);gap:16px;align-items:start}
   .col{display:flex;flex-direction:column;gap:12px;min-width:0}
-  #mini{display:none}
-  /* the answer, what comes next and the chart stay in sight while the choices scroll; when they are taller
-     than the window they scroll on their own */
-  .col.right{position:sticky;top:12px;max-height:calc(100vh - 72px);overflow-y:auto;overscroll-behavior:contain;
-    scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;padding-right:2px}
+  /* the answer, what comes next and the chart stay in sight under the bar while the choices scroll; when
+     they are taller than the window they scroll on their own */
+  .col.right{position:sticky;top:calc(72px + env(safe-area-inset-top,0px));max-height:calc(100vh - 84px - env(safe-area-inset-top,0px));
+    overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;padding-right:2px}
   .slab{min-height:128px;padding:14px 18px 16px}
   .slab .verb{font-size:60px}
   .slab .size{font-size:28px}
@@ -297,4 +310,5 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
 @media (max-width:359px){
   .word{font-size:19px}
   .chip{padding:0 9px}
+  .minibar .size{display:none}                 /* no room for half a number: the answer itself is one tap up */
 }

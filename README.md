@@ -45,7 +45,10 @@ web server it is a folder of files (`deploy/README.md`).
   re-raised, "Re-raised to" has four sizes: 2.5, 3, 4 and 5 times your
   raise.
 - **Your seat** and the number of players (2 to 9). "Next hand" moves your
-  seat on by one and clears the cards.
+  seat on by one and clears the cards. Its button, with Reset, is in the bar
+  at the top, which stays in the window while the page scrolls; once the
+  answer has scrolled out of sight the bar shows it in one line (a tap on
+  it goes back up).
 - **The table map** under the seats: the table from above with your seat at
   the bottom, every seat's name, the dealer button (D) and who has raised,
   called or moved all-in in the spot you chose. Play goes clockwise. Where
