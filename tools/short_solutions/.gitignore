@@ -1,0 +1,5 @@
+# The solver output that poker_coach/data/short.json was made from, packed with xz (tools/build_short.py).
+# Everything else a build leaves here (the compiled solver, strategy and hand lists, unpacked output) is not kept.
+*
+!.gitignore
+!*.json.xz

@@ -25,7 +25,8 @@
  * A decision point is (player, mask) where mask has bit k set if player k
  * shoved earlier in the hand.  Output: for each decision point, the shove
  * frequency (percent) and the EV of shoving minus folding (1/100 bb) per
- * hand class, on the usual 13x13 grid with the ace first.
+ * hand class, on the usual 13x13 grid with the ace first; where the
+ * precision pass ran, also the standard error of that EV (1/1000 bb).
  */
 #include <math.h>
 #include <omp.h>
@@ -276,107 +277,128 @@ static void run(long iters, int mode) {
  * class is sampled directly: hero holds the class, the players who acted
  * before are dealt hands and the deal is kept with the probability that they
  * would have acted that way, and the players behind respond with the average
- * strategy.  The result is the EV of shoving minus folding to about 0.05bb.
+ * strategy.  The result is the EV of shoving minus folding to about 0.05bb,
+ * and its standard error is kept beside it (the spread of the sampled deals
+ * over the root of their number).
  */
-static double ev_ref[MAXN][MAXMASK][169];
+static double ev_ref[MAXN][MAXMASK][169], se_ref[MAXN][MAXMASK][169];
 static long n_ref[MAXN][MAXMASK][169];
 /* br mode: when a list of hands is given, only those are sampled (the hands near zero, with many more
    samples than the first pass could afford for every hand) */
 static int only_set = 0;
 static unsigned char only[MAXN][MAXMASK][169];
+/* br mode: another number here gives every hand another stream of random numbers, so a pass on top of
+   an earlier one does not deal that pass's cards again (0: the streams the solver always had) */
+static uint64_t refine_salt = 0;
+
+/* one hand of one decision point */
+static void refine_hand(int i, int m, int c, long samples) {
+    /* one stream of random numbers for each decision point (masks under 64 keep the seeds they always had) */
+    uint64_t seed = 0xA0761D6478BD642FULL
+        ^ ((uint64_t)(c + 1 + 169 * (m + 64 * i) + 1000003 * (m >> 6)) * 0xE7037ED1A0B428DBULL)
+        ^ (refine_salt * 0x8EBC6AF09C88C6E3ULL);
+    int row = c / 13, col = c % 13;
+    int combos[12][2], nc = 0;
+    int hi = 12 - (row < col ? row : col), lo = 12 - (row < col ? col : row);
+    if (row == col) {
+        for (int a = 0; a < 4; a++) for (int b = a + 1; b < 4; b++) { combos[nc][0] = hi * 4 + a; combos[nc][1] = hi * 4 + b; nc++; }
+    } else if (row < col) {
+        for (int a = 0; a < 4; a++) { combos[nc][0] = hi * 4 + a; combos[nc][1] = lo * 4 + a; nc++; }
+    } else {
+        for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) if (a != b) { combos[nc][0] = hi * 4 + a; combos[nc][1] = lo * 4 + b; nc++; }
+    }
+    long per = samples / nc + 1, acc_total = 0;
+    double num = 0.0, squares = 0.0;
+    Deal d;
+    d.mode = 2;
+    d.weight = 0.0;
+    for (int x = 0; x < nc; x++) {
+        int deck[50], nd = 0;
+        for (int card = 0; card < 52; card++)
+            if (card != combos[x][0] && card != combos[x][1]) deck[nd++] = card;
+        /* a situation the earlier players never create is given up on,
+           and reported with zero samples */
+        long acc = 0, tries = 0, max_tries = per * 5000L;
+        int pre = 2 * i, rest = 2 * (N - 1 - i) + 5;
+        while (acc < per && tries < max_tries) {
+            if (acc == 0 && tries >= 1000000L) break;
+            tries++;
+            for (int k = 0; k < pre; k++) {
+                int j = k + (int)(rng_next(&seed) % (uint64_t)(50 - k));
+                int t = deck[k]; deck[k] = deck[j]; deck[j] = t;
+            }
+            double a = 1.0;
+            int hole[MAXN][2];
+            for (int k = 0; k < i; k++) {
+                hole[k][0] = deck[2 * k]; hole[k][1] = deck[2 * k + 1];
+                double pk = avg[k][m & ((1 << k) - 1)][class_of(hole[k][0], hole[k][1])];
+                a *= ((m >> k) & 1) ? pk : (1.0 - pk);
+            }
+            if (a <= 0.0) continue;
+            if (a < 1.0 && (double)(rng_next(&seed) >> 11) * (1.0 / 9007199254740992.0) >= a) continue;
+            for (int k = pre; k < pre + rest; k++) {
+                int j = k + (int)(rng_next(&seed) % (uint64_t)(50 - k));
+                int t = deck[k]; deck[k] = deck[j]; deck[j] = t;
+            }
+            hole[i][0] = combos[x][0]; hole[i][1] = combos[x][1];
+            for (int k = i + 1; k < N; k++) { hole[k][0] = deck[pre + 2 * (k - i - 1)]; hole[k][1] = deck[pre + 2 * (k - i - 1) + 1]; }
+            int cards[7], rank[MAXN];
+            for (int k = 0; k < 5; k++) cards[2 + k] = deck[pre + rest - 5 + k];
+            for (int p2 = 0; p2 < N; p2++) {
+                cards[0] = hole[p2][0]; cards[1] = hole[p2][1];
+                rank[p2] = eval7(cards);
+                d.cls[p2] = class_of(cards[0], cards[1]);
+            }
+            for (int mask = 0; mask < (1 << N); mask++) {
+                if ((mask & ((1 << i) - 1)) != m) continue;   /* only histories that match */
+                const MaskInfo *mi = &minfo[mask];
+                double *pay = d.pay[mask];
+                for (int k = 0; k < N; k++) pay[k] = mi->base[k];
+                for (int j = 0; j < mi->npots; j++) {
+                    int best = -1, cnt = 0;
+                    for (int k = 0; k < N; k++) if ((mi->elig[j] >> k) & 1) {
+                        if (rank[k] > best) { best = rank[k]; cnt = 1; }
+                        else if (rank[k] == best) cnt++;
+                    }
+                    double share = mi->amt[j] / cnt;
+                    for (int k = 0; k < N; k++)
+                        if (((mi->elig[j] >> k) & 1) && rank[k] == best) pay[k] += share;
+                }
+            }
+            double us[MAXN], uf[MAXN];
+            walk(&d, i + 1, m | (1 << i), 1.0, us);
+            walk(&d, i + 1, m, 1.0, uf);
+            num += us[i] - uf[i];
+            squares += (us[i] - uf[i]) * (us[i] - uf[i]);
+            acc++;
+        }
+        acc_total += acc;
+    }
+    ev_ref[i][m][c] = acc_total ? num / acc_total : 0.0;
+    n_ref[i][m][c] = acc_total;
+    /* the deals are independent, so the mean is good to the spread of one deal over the root of their number */
+    double var = acc_total > 1 ? (squares - num * num / acc_total) / (acc_total - 1) : 0.0;
+    se_ref[i][m][c] = var > 0.0 ? sqrt(var / acc_total) : 0.0;
+}
 
 static void refine(long samples) {
-    for (int i = 0; i < N; i++) {
+    /* Every hand to sample, whatever its decision point, in one list, and a thread takes the next one.  (One
+       decision point at a time left processors idle when a list named two or three hands of it.)  Each hand
+       has its own random numbers, so the order changes no answer. */
+    static int todo[MAXN * MAXMASK * 169][3];
+    int count = 0;
+    for (int i = 0; i < N; i++)
         for (int m = 0; m < (1 << i); m++) {
             if (i == N - 1 && m == 0) continue;
             if (__builtin_popcount(m) > refine_bits) continue;
-            #pragma omp parallel for schedule(dynamic, 4)
             for (int c = 0; c < 169; c++) {
                 if (only_set && !only[i][m][c]) continue;
-                /* one stream of random numbers for each decision point (masks under 64 keep the seeds they always had) */
-                uint64_t seed = 0xA0761D6478BD642FULL
-                    ^ ((uint64_t)(c + 1 + 169 * (m + 64 * i) + 1000003 * (m >> 6)) * 0xE7037ED1A0B428DBULL);
-                int row = c / 13, col = c % 13;
-                int combos[12][2], nc = 0;
-                int hi = 12 - (row < col ? row : col), lo = 12 - (row < col ? col : row);
-                if (row == col) {
-                    for (int a = 0; a < 4; a++) for (int b = a + 1; b < 4; b++) { combos[nc][0] = hi * 4 + a; combos[nc][1] = hi * 4 + b; nc++; }
-                } else if (row < col) {
-                    for (int a = 0; a < 4; a++) { combos[nc][0] = hi * 4 + a; combos[nc][1] = lo * 4 + a; nc++; }
-                } else {
-                    for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) if (a != b) { combos[nc][0] = hi * 4 + a; combos[nc][1] = lo * 4 + b; nc++; }
-                }
-                long per = samples / nc + 1, acc_total = 0;
-                double num = 0.0;
-                Deal d;
-                d.mode = 2;
-                d.weight = 0.0;
-                for (int x = 0; x < nc; x++) {
-                    int deck[50], nd = 0;
-                    for (int card = 0; card < 52; card++)
-                        if (card != combos[x][0] && card != combos[x][1]) deck[nd++] = card;
-                    /* a situation the earlier players never create is given up on,
-                       and reported with zero samples */
-                    long acc = 0, tries = 0, max_tries = per * 5000L;
-                    int pre = 2 * i, rest = 2 * (N - 1 - i) + 5;
-                    while (acc < per && tries < max_tries) {
-                        if (acc == 0 && tries >= 1000000L) break;
-                        tries++;
-                        for (int k = 0; k < pre; k++) {
-                            int j = k + (int)(rng_next(&seed) % (uint64_t)(50 - k));
-                            int t = deck[k]; deck[k] = deck[j]; deck[j] = t;
-                        }
-                        double a = 1.0;
-                        int hole[MAXN][2];
-                        for (int k = 0; k < i; k++) {
-                            hole[k][0] = deck[2 * k]; hole[k][1] = deck[2 * k + 1];
-                            double pk = avg[k][m & ((1 << k) - 1)][class_of(hole[k][0], hole[k][1])];
-                            a *= ((m >> k) & 1) ? pk : (1.0 - pk);
-                        }
-                        if (a <= 0.0) continue;
-                        if (a < 1.0 && (double)(rng_next(&seed) >> 11) * (1.0 / 9007199254740992.0) >= a) continue;
-                        for (int k = pre; k < pre + rest; k++) {
-                            int j = k + (int)(rng_next(&seed) % (uint64_t)(50 - k));
-                            int t = deck[k]; deck[k] = deck[j]; deck[j] = t;
-                        }
-                        hole[i][0] = combos[x][0]; hole[i][1] = combos[x][1];
-                        for (int k = i + 1; k < N; k++) { hole[k][0] = deck[pre + 2 * (k - i - 1)]; hole[k][1] = deck[pre + 2 * (k - i - 1) + 1]; }
-                        int cards[7], rank[MAXN];
-                        for (int k = 0; k < 5; k++) cards[2 + k] = deck[pre + rest - 5 + k];
-                        for (int p2 = 0; p2 < N; p2++) {
-                            cards[0] = hole[p2][0]; cards[1] = hole[p2][1];
-                            rank[p2] = eval7(cards);
-                            d.cls[p2] = class_of(cards[0], cards[1]);
-                        }
-                        for (int mask = 0; mask < (1 << N); mask++) {
-                            if ((mask & ((1 << i) - 1)) != m) continue;   /* only histories that match */
-                            const MaskInfo *mi = &minfo[mask];
-                            double *pay = d.pay[mask];
-                            for (int k = 0; k < N; k++) pay[k] = mi->base[k];
-                            for (int j = 0; j < mi->npots; j++) {
-                                int best = -1, cnt = 0;
-                                for (int k = 0; k < N; k++) if ((mi->elig[j] >> k) & 1) {
-                                    if (rank[k] > best) { best = rank[k]; cnt = 1; }
-                                    else if (rank[k] == best) cnt++;
-                                }
-                                double share = mi->amt[j] / cnt;
-                                for (int k = 0; k < N; k++)
-                                    if (((mi->elig[j] >> k) & 1) && rank[k] == best) pay[k] += share;
-                            }
-                        }
-                        double us[MAXN], uf[MAXN];
-                        walk(&d, i + 1, m | (1 << i), 1.0, us);
-                        walk(&d, i + 1, m, 1.0, uf);
-                        num += us[i] - uf[i];
-                        acc++;
-                    }
-                    acc_total += acc;
-                }
-                ev_ref[i][m][c] = acc_total ? num / acc_total : 0.0;
-                n_ref[i][m][c] = acc_total;
+                todo[count][0] = i; todo[count][1] = m; todo[count][2] = c;
+                count++;
             }
         }
-    }
+    #pragma omp parallel for schedule(dynamic, 1)
+    for (int q = 0; q < count; q++) refine_hand(todo[q][0], todo[q][1], todo[q][2], samples);
 }
 
 /*
@@ -403,13 +425,18 @@ static int load_strategy(const char *path, double dst[MAXN][MAXMASK][169]) {
 
 int main(int argc, char **argv) {
     /* Extra modes:
-     *   aof_solver br   stacks fee fee_mode samples opp_file [ante] [bb_ante] [all_ins] [hands_file]
+     *   aof_solver br   stacks fee fee_mode samples opp_file [ante] [bb_ante] [all_ins] [hands_file] [stream]
      *       best response: EV of shoving minus folding at every decision
      *       point (with at most all_ins players all-in before) when every
      *       other player follows opp_file.  With more samples than the solve
      *       used, this is the precision pass again with less noise; with
-     *       hands_file ("player mask hand" lines after their count), for
-     *       those hands only, the others are printed as 0;
+     *       hands_file ("player mask hand" lines after their count, or "-"
+     *       for every hand), for those hands only, the others are printed
+     *       as 0; with stream (a number, 0 by default), on other random
+     *       numbers than the pass before.  Beside "ev" (1/100 bb) it prints
+     *       the same number unrounded and its standard error, both in
+     *       1/1000 bb ("ev_milli", "se_milli"), and the deals behind each
+     *       ("n");
      *   aof_solver eval stacks fee fee_mode deals hero_file opp_file
      *       average result and standard deviation per hand, seat by seat,
      *       for one player on hero_file against three on opp_file.
@@ -422,7 +449,7 @@ int main(int argc, char **argv) {
     }
     if (argc < 6 || (strcmp(mode, "eval") == 0 && argc < 7)) {
         fprintf(stderr, "usage: %s stacks(csv) fee fee_mode train_iters eval_iters [refine_samples] [ante] [bb_ante] [refine_all_ins]\n"
-                        "       %s br stacks fee fee_mode samples opp_file [ante] [bb_ante] [all_ins] [hands_file]\n"
+                        "       %s br stacks fee fee_mode samples opp_file [ante] [bb_ante] [all_ins] [hands_file] [stream]\n"
                         "       %s eval stacks fee fee_mode deals hero_file opp_file\n", argv[0], argv[0], argv[0]);
         return 2;
     }
@@ -442,7 +469,8 @@ int main(int argc, char **argv) {
     if (strcmp(mode, "br") == 0 && argc > 6) ante_v = atof(argv[6]);
     if (strcmp(mode, "br") == 0 && argc > 7) bb_ante_v = atof(argv[7]);
     if (strcmp(mode, "br") == 0 && argc > 8) refine_bits = atoi(argv[8]);
-    if (strcmp(mode, "br") == 0 && argc > 9) {
+    if (strcmp(mode, "br") == 0 && argc > 10) refine_salt = strtoull(argv[10], NULL, 10);
+    if (strcmp(mode, "br") == 0 && argc > 9 && strcmp(argv[9], "-") != 0) {
         /* a file of "player mask hand" lines, after their count: the hands to sample */
         FILE *f = fopen(argv[9], "r");
         long count;
@@ -475,7 +503,9 @@ int main(int argc, char **argv) {
     if (strcmp(mode, "br") == 0) {
         if (load_strategy(argv[5], avg)) { fprintf(stderr, "cannot read %s\n", argv[5]); return 2; }
         refine(atol(argv[4]));
-        printf("{\"n\": %d, \"nodes\": [\n", N);
+        /* what was asked comes first, so a kept answer can be told from one made with other numbers */
+        printf("{\"n\": %d, \"samples\": %ld, \"all_ins\": %d, \"stream\": %llu, \"nodes\": [\n",
+               N, atol(argv[4]), refine_bits, (unsigned long long)refine_salt);
         int first_node = 1;
         for (int i = 0; i < N; i++)
             for (int m = 0; m < (1 << i); m++) {
@@ -487,7 +517,17 @@ int main(int argc, char **argv) {
                     if (least < 0 || n_ref[i][m][c] < least) least = n_ref[i][m][c];
                     printf("%s%d", c ? "," : "", (int)lround(100.0 * ev_ref[i][m][c]));
                 }
-                printf("], \"samples\": %ld}", least);
+                printf("], \"samples\": %ld", least);
+                if (__builtin_popcount(m) <= refine_bits) {
+                    printf(", \"ev_milli\": [");
+                    for (int c = 0; c < 169; c++) printf("%s%.2f", c ? "," : "", 1000.0 * ev_ref[i][m][c]);
+                    printf("], \"se_milli\": [");
+                    for (int c = 0; c < 169; c++) printf("%s%.2f", c ? "," : "", 1000.0 * se_ref[i][m][c]);
+                    printf("], \"n\": [");
+                    for (int c = 0; c < 169; c++) printf("%s%ld", c ? "," : "", n_ref[i][m][c]);
+                    printf("]");
+                }
+                printf("}");
             }
         printf("\n]}\n");
         return 0;
@@ -549,7 +589,13 @@ int main(int argc, char **argv) {
                 }
                 printf("%s%d", c ? "," : "", (int)lround(100.0 * e));
             }
-            printf("], \"samples\": %ld}", least);
+            printf("], \"samples\": %ld", least);
+            if (refine_samples > 0 && __builtin_popcount(m) <= refine_bits) {
+                printf(", \"se_milli\": [");
+                for (int c = 0; c < 169; c++) printf("%s%ld", c ? "," : "", lround(1000.0 * se_ref[i][m][c]));
+                printf("]");
+            }
+            printf("}");
         }
     }
     printf("\n]}\n");
