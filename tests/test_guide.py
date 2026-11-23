@@ -690,7 +690,10 @@ class PageFiles(unittest.TestCase):
         css, js = self.read("guide.css"), self.read("guide.js")
         self.assertRegex(css, r"\.top\{position:sticky;top:0;")
         self.assertIn("height:calc(52px + env(safe-area-inset-top,0px))", css)
-        self.assertIn("const BAR = 52;", js)                           # what the script takes the bar's height to be
+        self.assertIn("const BAR = 52;", js)                           # what the script takes the bar's height to be, until it measures it
+        # under a phone's status bar the page starts below the strip and the bar reaches up over it, once
+        self.assertIn(":root{padding-top:env(safe-area-inset-top,0px)}", css)
+        self.assertIn("margin:calc(-1 * env(safe-area-inset-top,0px)) calc(-1 * var(--gr)) 0 calc(-1 * var(--gl))", css)
         header = js[js.index('<header class="top" id="top">'):js.index("</header>")]
         for part in ('class="brand"', 'id="mini"', 'id="btn-reset"', 'id="btn-next"'):
             self.assertIn(part, header)

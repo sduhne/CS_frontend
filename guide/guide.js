@@ -21,10 +21,10 @@
   const MARK = '<svg class="mark" viewBox="0 0 40 40" role="img" aria-label="Menlo Bet"><rect width="40" height="40" rx="9" fill="#FFD60A"/>' +
                '<path d="M8 30V11l12 11 12-11v19h-5V22l-7 6.5L13 22v8z" fill="#0A0A0B"/></svg>';
   const RESET_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
-  const PAGE = 4;                       // the page's own number, shown at the foot: which copy of the page is open
+  const PAGE = 5;                       // the page's own number, shown at the foot: which copy of the page is open
   const TABLES = 2;                     // the oldest tables this page can read (2: the size of a raise is in the keys)
   const UNDO_MS = 8000;                 // how long Reset can be taken back
-  const BAR = 52;                       // the height of the bar at the top on a phone, in pixels (.top in guide.css)
+  const BAR = 52;                       // the height of the bar at the top on a phone, in pixels (.top in guide.css), before it is measured
 
   /* What can have happened before you act.  group 0: your first decision; 1: you raised first; 2: you re-raised. */
   const LINES = [
@@ -1088,9 +1088,10 @@
     root.addEventListener("toggle", onToggle, true);
     document.addEventListener("keydown", onKey);
     const bar = $("top");
+    const tall = Math.round(bar.getBoundingClientRect().height) || BAR;       // with a phone's status bar strip, when there is one
     if ("IntersectionObserver" in window) {       // the answer in one line shows while the answer itself is out of sight
-      new IntersectionObserver((entries) => bar.classList.toggle("away", !entries[0].isIntersecting && entries[0].boundingClientRect.top < BAR),
-                               {threshold: 0, rootMargin: `-${BAR}px 0px 0px 0px`}).observe($("answer"));       // under the bar is out of sight
+      new IntersectionObserver((entries) => bar.classList.toggle("away", !entries[0].isIntersecting && entries[0].boundingClientRect.top < tall),
+                               {threshold: 0, rootMargin: `-${tall}px 0px 0px 0px`}).observe($("answer"));      // under the bar is out of sight
       /* ... and not over the rules for after the flop, which are about another moment of the hand */
       new IntersectionObserver((entries) => bar.classList.toggle("post", entries[0].isIntersecting),
                                {rootMargin: "0px 0px -60% 0px"}).observe($("post"));

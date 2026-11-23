@@ -30,14 +30,17 @@ h1,h2,h3,p{margin:0}
 .hint{font-size:12px;color:var(--grey)}
 .num{font-family:var(--display);font-weight:800;font-variant-numeric:tabular-nums lining-nums}
 
-html{scroll-padding-top:64px}                  /* what is scrolled to does not hide under the bar at the top */
+/* A window that runs edge to edge under a phone's status bar: the page starts below it (a host that pads the
+   page itself, as the Artifact frame does, says the same), and the bar at the top reaches up over that strip. */
+:root{padding-top:env(safe-area-inset-top,0px)}
+html{scroll-padding-top:calc(64px + env(safe-area-inset-top,0px))}       /* what is scrolled to does not hide under the bar */
 .guide{--gl:max(var(--gut),env(safe-area-inset-left,0px));--gr:max(var(--gut),env(safe-area-inset-right,0px));
   max-width:1180px;margin:0 auto;padding:0 var(--gr) 32px var(--gl)}
 
 /* ---------- 3. Header: it stays at the top of the window, with Reset and Next hand in it ---------- */
 .top{position:sticky;top:0;z-index:8;display:flex;align-items:center;justify-content:space-between;gap:12px;
   height:calc(52px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) var(--gr) 0 var(--gl);
-  margin:0 calc(-1 * var(--gr)) 0 calc(-1 * var(--gl));background:var(--ink);border-bottom:1px solid transparent}
+  margin:calc(-1 * env(safe-area-inset-top,0px)) calc(-1 * var(--gr)) 0 calc(-1 * var(--gl));background:var(--ink);border-bottom:1px solid transparent}
 .top.scrolled{border-bottom-color:var(--line-strong);box-shadow:0 6px 16px rgba(0,0,0,.5)}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
 .brand .mark{width:28px;height:28px;flex:none;display:block}
@@ -286,7 +289,7 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
   .cell{font-size:12px}
 }
 @media (min-width:960px){
-  html{scroll-padding-top:72px}
+  html{scroll-padding-top:calc(72px + env(safe-area-inset-top,0px))}
   .top{height:calc(60px + env(safe-area-inset-top,0px))}
   .brand .mark{width:32px;height:32px}
   .word{font-size:26px}
