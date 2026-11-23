@@ -13,6 +13,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
+import build_short as BUILD                                    # noqa: E402
 from poker_coach import preflop as P                           # noqa: E402
 from poker_coach import ranges as R                            # noqa: E402
 from poker_coach import short as S                             # noqa: E402
@@ -84,6 +85,137 @@ class Data(unittest.TestCase):
         self.assertIsNone(S.node(3.0, 8, 0b111))                       # three all-in: not kept
         self.assertIsNone(S.node(3.0, 8, 0))                           # the big blind first in: no such decision
         self.assertIsNone(S.node(3.0, 5, 0, 7))                        # no table of seven was solved
+
+
+class Playbook(unittest.TestCase):
+    def test_the_tables_printed_in_the_playbook_are_the_solution(self):
+        """PLAYBOOK.md prints the first-in shares and hands and the calls of an all-in.  Two builds of the data
+        differ by a hand here and there, so the rows are made from the data again (tools/short_report.py
+        tables) and each must be in the playbook as it stands."""
+        import short_report
+        with open(os.path.join(ROOT, "PLAYBOOK.md")) as fh:
+            text = fh.read()
+        rows = [row for row in short_report.tables() if row.startswith("|")]
+        self.assertEqual(len(rows), 57)
+        for row in rows:
+            self.assertIn(row + "\n", text)
+
+
+class Passes(unittest.TestCase):
+    """tools/build_short.py: what the passes after the first do to a solution.  The solver is not run: its
+    answers are written here by hand, the way it keeps them."""
+
+    PLAYERS, STACK = 4, 4
+
+    def solution(self):
+        """A first pass: at every decision point the hands go from -2.5bb to +2.5bb in steps of 0.03bb, a
+        little higher for a later seat, each good to 0.03bb."""
+        nodes = []
+        for player in range(self.PLAYERS):
+            for mask in range(1 << player):
+                if player == self.PLAYERS - 1 and mask == 0:
+                    continue
+                evs = [3 * (c - 84) + player for c in range(169)]
+                node = {"player": player, "mask": mask, "freq": [100 if e > 0 else 0 for e in evs], "ev": evs, "samples": 10_004}
+                if bin(mask).count("1") <= S.MOST_ALL_IN:
+                    node["se_milli"] = [30] * 169
+                nodes.append(node)
+        return {"n": self.PLAYERS, "stacks": [self.STACK] * self.PLAYERS, "bb_ante": 1, "train": BUILD.TRAIN, "nodes": nodes}
+
+    def keep(self, folder, number, hands, value, error, samples=None):
+        """The solver's answer for a later pass, as tools/aof_solver.c prints it."""
+        samples = samples or BUILD.PASSES[number - 1]["samples"]
+        by_node = {}
+        for player, mask, c in hands:
+            node = by_node.setdefault((player, mask), {"player": player, "mask": mask, "ev": [0] * 169, "samples": 0,
+                                                       "ev_milli": [0.0] * 169, "se_milli": [0.0] * 169, "n": [0] * 169})
+            node["ev_milli"][c], node["se_milli"][c], node["n"][c] = value(player, mask, c), error, samples + 4
+            node["ev"][c] = int(round(node["ev_milli"][c] / 10.0))
+        with open(os.path.join(folder, f"n{self.PLAYERS}_s{self.STACK}.pass{number}.json"), "w") as fh:
+            json.dump({"n": self.PLAYERS, "samples": samples, "all_ins": BUILD.PASSES[number - 1]["all_ins"], "stream": number,
+                       "nodes": list(by_node.values())}, fh)
+
+    def test_a_later_pass_takes_the_hands_the_one_before_left_near_zero(self):
+        import tempfile
+        sol = self.solution()
+        first = {(nd["player"], nd["mask"]): list(nd["ev"]) for nd in sol["nodes"]}
+        # the second pass: within 0.05bb and 0.04bb a big blind of zero, at every decision point that is kept
+        near = BUILD.near_zero(sol)
+        self.assertAlmostEqual(BUILD.band(self.STACK), 0.21)
+        kept = [key for key in first if bin(key[1]).count("1") <= S.MOST_ALL_IN]
+        self.assertEqual(len(kept), 13)                         # with three players all-in before the big blind: not kept
+        self.assertEqual(sorted(near), sorted((i, m, c) for i, m in kept for c in range(169) if abs(first[i, m][c]) < 21))
+        self.assertEqual(len(near), 175)                        # 13 or 14 hands a decision point; 0.21bb itself is not within
+        self.assertEqual({bin(m).count("1") for _, m, _ in near}, {0, 1, 2})
+        # it finds every number 0.02bb lower than the first did, good to 0.01bb
+        second = lambda i, m, c: 10.0 * first[i, m][c] - 20.0                               # noqa: E731
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, f"n{self.PLAYERS}_s{self.STACK}.json")
+            with self.assertRaises(SystemExit):                 # no solver, and nothing kept: it says so
+                BUILD.fine(None, self.solution(), path, False)
+            self.keep(folder, 2, near, second, 10.0)
+            # the third: first in, the hands the second left within two and a half standard errors (0.025bb) of zero
+            third = [(i, m, c) for i, m, c in near if m == 0 and abs(second(i, m, c)) < 25.0]
+            self.assertEqual(sorted(third), [(0, 0, 84), (0, 0, 85), (1, 0, 84), (1, 0, 85), (2, 0, 84)])   # 0.00 to 0.04bb at first
+            self.keep(folder, 3, third, lambda i, m, c: second(i, m, c) + 12.34, 3.0)
+            did = BUILD.fine(None, sol, path, False)
+            self.assertEqual(did["again"], [len(near), 5])
+            now = {(nd["player"], nd["mask"]): nd["ev"] for nd in sol["nodes"]}
+            for i, m, c in near:
+                if (i, m, c) in third:                          # the third pass's number, to a thousandth of a big blind
+                    self.assertAlmostEqual(now[i, m][c], first[i, m][c] - 2 + 1.2, places=9)
+                else:
+                    self.assertEqual(now[i, m][c], first[i, m][c] - 2)
+            untouched = [(key, c) for key in first for c in range(169) if (key[0], key[1], c) not in set(near)]
+            self.assertTrue(all(now[key][c] == first[key][c] for key, c in untouched))
+            # how many hands each pass moved to the other side of zero: 0.01 and 0.02bb became -0.01 and 0.00, and
+            # the third pass brought back the two it took of them
+            self.assertEqual(did["moved"][0], sum(1 for i, m, c in near if first[i, m][c] in (1, 2)))
+            self.assertEqual(did["moved"][1], 2)
+            # in from one seat and out from the next, before and after each pass (here a later seat is always higher)
+            self.assertEqual(did["crossed"], [0, 0, 0])
+            # what the numbers each pass left are good to: [the middle one, the largest], by players all-in before
+            self.assertEqual(did["noise"], [[[0.03, 0.03]] * 3, [[0.01, 0.01]] * 3, [[0.003, 0.003]]])
+            # the band is seven of the first pass's standard errors here, at each kind of decision point
+            self.assertEqual(did["ratio"], [[7.0, 7.0, 7.0], None])
+            # the repository keeps the solver's output packed with xz: read the same
+            import lzma
+            for name in os.listdir(folder):
+                with open(os.path.join(folder, name), "rb") as fh, lzma.open(os.path.join(folder, name + ".xz"), "wb") as out:
+                    out.write(fh.read())
+                os.remove(os.path.join(folder, name))
+            packed = self.solution()
+            self.assertEqual({k: v for k, v in BUILD.fine(None, packed, path, False).items() if k != "seconds"},
+                             {k: v for k, v in did.items() if k != "seconds"})
+            self.assertEqual(packed["nodes"], sol["nodes"])
+            self.assertEqual(BUILD.read(os.path.join(folder, f"n{self.PLAYERS}_s{self.STACK}.pass2.json"))["stream"], 2)
+            self.assertIsNone(BUILD.kept(os.path.join(folder, "n9_s2.json")))
+            # a kept answer made with other deals, or for other hands, is not this pass's
+            self.keep(folder, 3, third, lambda i, m, c: 0.0, 3.0, samples=500_000)
+            with self.assertRaises(SystemExit):
+                BUILD.fine(None, self.solution(), path, False)
+            self.keep(folder, 3, third[:-1], lambda i, m, c: 0.0, 3.0)
+            with self.assertRaises(SystemExit):
+                BUILD.fine(None, self.solution(), path, False)
+
+    def test_a_hand_in_from_a_seat_and_out_from_the_next_is_counted(self):
+        sol = self.solution()
+        nodes = {(nd["player"], nd["mask"]): nd for nd in sol["nodes"]}
+        self.assertEqual(BUILD.crossed(nodes, self.PLAYERS), 0)
+        nodes[0, 0]["ev"][10], nodes[1, 0]["ev"][10] = 1, 0          # in first to act, worth nothing from the next seat
+        self.assertEqual(BUILD.crossed(nodes, self.PLAYERS), 1)
+        nodes[1, 0]["ev"][20], nodes[2, 0]["ev"][20] = 5, -5         # the button and the small blind are not compared
+        self.assertEqual(BUILD.crossed(nodes, self.PLAYERS), 1)
+
+    def test_a_kept_first_pass_must_be_this_game_and_this_solver(self):
+        sol = self.solution()
+        BUILD.check(sol, "kept", self.PLAYERS, self.STACK, BUILD.TRAIN)
+        for change in ({"n": 5}, {"bb_ante": 0}, {"train": BUILD.TRAIN // 20}, {"stacks": [5] * self.PLAYERS}):
+            with self.assertRaises(SystemExit):
+                BUILD.check(dict(sol, **change), "kept", self.PLAYERS, self.STACK, BUILD.TRAIN)
+        del sol["nodes"][0]["se_milli"]                     # a solution of the solver before it kept standard errors
+        with self.assertRaises(SystemExit):
+            BUILD.check(sol, "kept", self.PLAYERS, self.STACK, BUILD.TRAIN)
 
 
 class Shape(unittest.TestCase):
