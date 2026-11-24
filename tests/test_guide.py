@@ -1092,6 +1092,15 @@ class Ante(unittest.TestCase):
         self.assertIn('chipRow(D.antes.kinds.map((a) => [a, ANTE[a] || a]), st.ante, "ante", true)', js)
         self.assertIn('const ANTE = {bb: "Big blind", player: "Every player"};', js)
 
+    def test_the_notes_quote_the_solved_game(self):
+        """The page's "How to read it" gives one pair of numbers for what the ante changes: they are the data's."""
+        from poker_coach import short as S
+        every = S.width(S.node(5.0, 7, 1 << 5, 8, "player"))            # eight players, the big blind against the button
+        his = S.width(S.node(5.0, 8, 1 << 6, 9, "bb"))                  # the same seats with a big blind ante
+        with open(os.path.join(GUIDE, "guide.js")) as fh:
+            self.assertIn(f"calls a button all-in of 5bb with {every:.0f}% of his hands, where he calls with {his:.0f}% "
+                          "when the whole ante was his", fh.read())
+
     def test_the_page_and_the_engine_say_the_same_with_the_ante_of_every_player(self):
         """Random spots where the ante has tables of its own, at their real table size: first in, against one
         all-in and against two, with 20bb or less; and two players at any stack."""
