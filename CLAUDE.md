@@ -524,7 +524,8 @@ python3 -m unittest tests.test_guide tests.test_short    # the style, the builde
   blind from each player in every hand, which is GGPoker's and what the
   table app takes a tournament to have. At eight players it is the same
   money in the pot and still another game: the big blind keeps one big
-  blind more behind (@@BBCALL_SHORT@@), and a smaller table plays for a
+  blind more behind (against a button all-in of 5bb he calls with 58% of hands,
+  not 73%), and a smaller table plays for a
   smaller pot (0.75bb of ante at six players, 0.375bb at three, a quarter
   with two). The second game has tables of its own, `name+each`
   (`open+each` at nine players, `open+each@8` at eight), where the answer

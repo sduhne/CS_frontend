@@ -147,7 +147,10 @@ instead. At eight players that is the same money in the pot, and still
 another game: the big blind keeps one big blind more behind, and a smaller
 table plays for a smaller pot (0.75bb of ante at six players, 0.375bb at
 three, a quarter with two). With a short stack that moves the answers:
-@@BBCALL@@. So the all-ins of 20bb or less are solved a second time for
+at a table of eight the big blind calls a button all-in of 5bb with 58% of
+hands, where he calls with 73% when the whole ante was his, and one of 4bb
+with 76% for 96%; at six players the small blind moves all-in first with
+63% of hands for 70% with 10bb. So the all-ins of 20bb or less are solved a second time for
 that ante, at every table size from 3 to 9, each as such (with a big blind
 ante 7 and 8 players are read from the nine; here the pot would be wrong),
 and the tables for two players are made a second time, since the engine is
