@@ -1312,6 +1312,28 @@ big blind against an all-in from the button:
   the page 700 random spots at their real table size and compares each
   answer with the engine's.
 
+The second game, with the ante of every player, was put through the same
+checks, and two of its own:
+
+- **The solver against the second program.** `tools/check_short.py` reads
+  the ante from the solution it is given, and its pots were written again
+  for an ante from every player. @@CHECKED@@
+- **The solver against itself.** @@SELF@@
+- **A straight line between stacks.** @@LINE@@
+- **An ante near an eighth.** Solved again with 0.12 and with 0.133 of a
+  big blind a player in place of 0.125 (six players, 6 and 10bb, both
+  passes): 0.3 to 1.9% of hands change sides, all but 2 in 10,000 of them
+  inside the 0.05bb that is marked close; a hand near zero moves by 0.04bb
+  at most on average.
+- **The big blind ante's tables after the change.** All 109,188 spots of the
+  guide were built again with the engine as it is now and came out the
+  same, table for table: the second game changed no answer of the first.
+- **The page against the engine, with either ante.** A browser run asks the
+  page 1,400 random spots (first in, against one all-in and against two,
+  and two players; both antes, every kind of opponent and both styles, at
+  the real table size) and compares each answer with the engine asked with
+  the ante the table was made for: @@PAGE@@
+
 ### Limits
 
 - The exact tables are for two antes: one big blind from the big blind, or
