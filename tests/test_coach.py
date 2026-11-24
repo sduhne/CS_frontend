@@ -524,7 +524,13 @@ class Preflop(unittest.TestCase):
         # very deep the re-raise is small against the stack: UTG all-in for 8bb, hero in the cutoff with 100bb
         deep = [8] + [100] * 7
         self.assertEqual(self.play(deep, 4, "TT", [(0, "allin", 0)]).action, "RE-RAISE to 20bb (isolate)")
-        self.assertEqual(self.play(deep, 4, "KQo", [(0, "allin", 0)]).action, "FOLD")
+        self.assertEqual(self.play(deep, 4, "KJo", [(0, "allin", 0)]).action, "FOLD")
+        # king-queen offsuit was a close fold by the price and a margin for the players behind (44% for 46%).  The
+        # call of an all-in of 8bb is now read from the exact game, where those players are in the answer: a call
+        # worth 0.08bb, and no hand for a re-raise
+        adv = self.play(deep, 4, "KQo", [(0, "allin", 0)])
+        self.assertEqual(adv.action, "CALL")
+        self.assertTrue(adv.data.get("exact") and 0.0 < adv.data["exact_ev"] < 0.2, adv.data)
 
     def test_pre_10_a_caller_with_chips_is_not_a_second_all_in(self):
         # the button is all-in for 3bb, the small blind (30bb) calls, hero is the big blind with 16bb
@@ -734,9 +740,14 @@ class Preflop(unittest.TestCase):
         self.assertEqual([c.idx for c in sol.callers], [7])
         self.assertGreater(sum(sol.caller(7).call_range), 5)
         self.assertEqual(self.play([20.0] * 6 + [0.3, 20.0], 5, "72o").action, "FOLD")
-        # with every stack whole the wrappers give the solver's own numbers
-        whole = HandSetup([12.0] * 8, 0.5, 1.0, 0.125)
+        # with every stack whole the wrappers give the solver's own numbers.  (With an ante the exact game of the
+        # short stacks has not got: a quarter of a big blind from every player.  With an eighth the all-in first in
+        # is read from that game, poker_coach/short.py, and is no longer the solver's.)
+        whole = HandSetup([12.0] * 8, 0.5, 1.0, 0.25)
         self.assertEqual(solve_open_shove(whole, 5, Prizes()).ev, pushfold.solve_open_shove(whole, 5, Prizes()).ev)
+        eighth = solve_open_shove(HandSetup([12.0] * 8, 0.5, 1.0, 0.125), 5, Prizes())
+        self.assertTrue(eighth.exact)
+        self.assertNotEqual(eighth.ev, pushfold.solve_open_shove(HandSetup([12.0] * 8, 0.5, 1.0, 0.125), 5, Prizes()).ev)
         ours = solve_reshove(whole, 6, 4, 2.0, Prizes(), opener_range=parse_range("22+, A2s+, KTs+, ATo+"))
         theirs = pushfold.solve_reshove(whole, 6, 4, 2.0, Prizes(), opener_range=parse_range("22+, A2s+, KTs+, ATo+"))
         self.assertEqual(ours.ev, theirs.ev)
@@ -766,14 +777,14 @@ class Preflop(unittest.TestCase):
         self.assertTrue(34 <= need(adv) <= 42, adv.numbers)
 
     def test_a_raise_over_an_all_in_is_not_a_re_raise_over_a_full_raise(self):
-        # under the gun is all-in for 6bb and the cutoff raises to 15bb: the cutoff holds the hands that play
-        # against a 6bb all-in (about one hand in six), not the 3% that re-raise an early raise; and he still
+        # under the gun is all-in for 4bb and the cutoff raises to 10bb: the cutoff holds the hands that play
+        # against a 4bb all-in (about one hand in six), not the 3% that re-raise an early raise; and he still
         # decides when hero moves in (the all-in player is asked last, he is in whatever happens)
-        stacks = [6, 40, 40, 40, 40, 40, 40, 40]
-        acts = [(0, "allin", 0), (4, "raise", 15)]
+        stacks = [4, 40, 40, 40, 40, 40, 40, 40]
+        acts = [(0, "allin", 0), (4, "raise", 10)]
         got = {hand: self.play(stacks, 5, hand, acts, left=400) for hand in ("QQ", "AKo", "TT", "ATo", "K5s", "72o")}
         # ... so with 45bb or less a hand that is ahead of those hands moves all-in when the number clears twice
-        # the usual bar: tens earn about +7bb here (dead money: the 6bb all-in and the 15bb raise), and were
+        # the usual bar: tens earn about +5bb here (dead money: the 4bb all-in and the 10bb raise), and were
         # folded while only JJ+ and ace-king ever played against "a raise and a re-raise"
         self.assertEqual({hand: adv.action for hand, adv in got.items()},
                          {"QQ": "ALL-IN", "AKo": "ALL-IN", "TT": "ALL-IN", "ATo": "FOLD", "K5s": "FOLD", "72o": "FOLD"})
@@ -782,8 +793,18 @@ class Preflop(unittest.TestCase):
         # a re-raise over a full raise keeps the list: tens fold there, whatever the number
         self.assertEqual(self.play([40] * 8, 5, "TT", [(0, "raise", 2.2), (4, "raise", 7)], left=400).action, "FOLD")
         # and deeper than 45bb the rule does not apply
-        deep = [6] + [70] * 7
+        deep = [4] + [70] * 7
         self.assertEqual(self.play(deep, 5, "TT", acts, left=400).action, "FOLD")
+        # The hands that raise over an all-in are read from the hands that call it, and with this ante (an eighth
+        # of a big blind a player) those are the exact game's (poker_coach/short.py): a player with others behind
+        # him calls tighter than the price says, and tighter the bigger the all-in.  Against a 6bb all-in and a
+        # raise to 15bb that is one hand in nine (the engine's own solver said one in six, and tens moved in):
+        # tens are behind the better half of them and fold, and JJ+ and ace-king are all that plays
+        bigger = [(0, "allin", 0), (4, "raise", 15)]
+        six = {hand: self.play([6] + [40] * 7, 5, hand, bigger, left=400) for hand in ("JJ", "TT", "AKo", "AQs")}
+        self.assertEqual({hand: adv.action for hand, adv in six.items()}, {"JJ": "ALL-IN", "TT": "FOLD", "AKo": "ALL-IN", "AQs": "FOLD"})
+        self.assertTrue(any("3-bettor's range ~11." in line for line in six["TT"].numbers), six["TT"].numbers)
+        self.assertTrue(any("against the better half of them this hand has only" in line for line in six["TT"].why), six["TT"].why)
         self.assertTrue(any("3-bettor's range ~1" in line for line in got["QQ"].numbers), got["QQ"].numbers)   # 10 to 19%
         ev = [line for line in got["72o"].numbers if "shove EV" in line][0]
         self.assertIn("shove EV -", ev)                                 # 72o for 40bb is a loss, not dead money won
@@ -792,21 +813,25 @@ class Preflop(unittest.TestCase):
         self.assertTrue(any("3-bettor's range ~3" in line or "3-bettor's range ~4" in line for line in adv.numbers), adv.numbers)
 
     def test_a_tight_player_who_raises_over_an_all_in_is_not_read_as_raising_wide(self):
-        # under the gun is all-in for 5bb, the cutoff raises to 11bb, hero is the big blind with 30bb.  With no read
-        # the cutoff is taken to hold about 22% of hands, and nines, tens and ace-queen move all-in.  The tag did
-        # not move that range, so the same hands moved in against a cutoff tagged nit: by the pot arithmetic
+        # under the gun is all-in for 3bb, the cutoff raises to 7bb, hero is the big blind with 30bb.  With no read
+        # the cutoff is taken to hold about 21% of hands, and nines, tens and ace-queen suited move all-in.  The tag
+        # did not move that range, so the same hands moved in against a cutoff tagged nit: by the pot arithmetic
         # eights lose about 8bb against TT+, AQs+ and AKo (33%).  Against a nit or a tight player only the list plays
-        stacks, acts = [5] + [30] * 7, [(0, "allin", 0), (4, "raise", 11)]
+        stacks, acts = [3] + [30] * 7, [(0, "allin", 0), (4, "raise", 7)]
 
         def tagged(tag):
             return ["unknown"] * 4 + [tag] + ["unknown"] * 3
 
-        # (eights are ahead of every hand that might raise there, 56%, but not of the better half of them: the
+        # (eights are ahead of every hand that might raise there, 55%, but not of the better half of them: the
         #  estimate is the widest reading, so they fold whoever raised)
         adv = self.play(stacks, 7, "88", acts)
         self.assertEqual(adv.action, "FOLD")
         self.assertTrue(any("against the better half of them this hand has only" in line for line in adv.why), adv.why)
-        for hand in ("99", "TT", "AQo", "AQs"):
+        # The estimate for a player with no read is three quarters of the hands that call that all-in.  With this
+        # ante those are the exact game's (21% here); a tag as strong as nit takes the whole spot to the engine's
+        # own solver, which has most hands calling 3bb (half of all hands, the most the estimate may be)
+        no_read = {"nit": "~50.0%", "tight": "~20.9%"}
+        for hand in ("99", "TT", "AQs"):
             self.assertEqual(self.play(stacks, 7, hand, acts).action, "ALL-IN", hand)        # no read: as before
             self.assertEqual(self.play(stacks, 7, hand, acts, types=tagged("lag")).action, "ALL-IN", hand)
             for tag in ("nit", "tight"):
@@ -817,16 +842,21 @@ class Preflop(unittest.TestCase):
                 self.assertTrue(any(line.startswith(f"CO is {tag}: ") for line in adv.why), adv.why)
                 self.assertFalse(any("has only" in line for line in adv.why), adv.why)
                 # ... and the range line says whose range it shows: the estimate for a player with no read
-                self.assertTrue(adv.numbers[0].startswith("a raise over an all-in from a player with no read: ~22."),
+                self.assertTrue(adv.numbers[0].startswith(f"a raise over an all-in from a player with no read: {no_read[tag]}"),
                                 adv.numbers)
                 self.assertNotIn("3-bettor's range", adv.numbers[0])
         for tag in ("nit", "tight"):                                                        # the list, by the number
             self.assertEqual(self.play(stacks, 7, "KK", acts, types=tagged(tag)).action, "ALL-IN")
             self.assertEqual(self.play(stacks, 7, "QQ", acts, types=tagged(tag)).action, "ALL-IN")
         # a hand behind even the wide range keeps its own sentence
-        adv = self.play(stacks, 7, "66", acts, types=tagged("nit"))
+        adv = self.play(stacks, 7, "66", acts, types=tagged("tight"))
         self.assertEqual(adv.action, "FOLD")
         self.assertTrue(any("has only 51%" in line for line in adv.why), adv.why)
+        # a bigger all-in is called by fewer hands, and fewer hands are ahead of them: against 5bb and a raise to
+        # 11bb (13% of hands, where the engine's own solver said 22%) nines, tens and ace-queen fold with no read
+        five = [5] + [30] * 7, 7
+        for hand, action in (("99", "FOLD"), ("TT", "FOLD"), ("AQs", "FOLD"), ("JJ", "ALL-IN"), ("AKo", "ALL-IN")):
+            self.assertEqual(self.play(*five, hand, [(0, "allin", 0), (4, "raise", 11)]).action, action, hand)
         # the all-in the rule makes carries its bar (+1.00bb, twice the usual), for the table app's "close" sentence
         self.assertEqual(self.play(stacks, 7, "TT", acts).data.get("allin_bar_bb"), 1.0)
         self.assertNotIn("allin_bar_bb", self.play(stacks, 7, "QQ", acts).data)

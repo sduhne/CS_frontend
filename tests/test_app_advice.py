@@ -264,16 +264,23 @@ class TournamentFullPlan(unittest.TestCase):
         shove = [(CO, "allin", None)]
         a = A.advise(tournament(stacks, BB, "99", acts=shove))
         self.assertEqual((verb(a), a["guard"]), ("CALL", "agrees"))
-        self.assertEqual(a["tiles"][0]["value"], "47% / 60%")
+        # (the hands of a first-in all-in of 15bb are the exact game's with this ante, poker_coach/short.py: a
+        #  quarter of all hands from the cutoff, where the engine's own solver said three in ten and nines had 60%)
+        self.assertEqual(a["tiles"][0]["value"], "47% / 58%")
         self.assertEqual(a["spot"], "99 in the big blind, 20bb, CO is all-in for 14.9bb")
         bubble = A.advise(tournament(stacks, BB, "99", acts=shove, left=152, style="cash"))
         self.assertEqual((verb(bubble), bubble["guard"]), ("FOLD", "survival"))
         self.assertIn("TT+, AQs+, AKo", bubble["reason"])
-        self.assertIn("CALL, 60% against 57%", bubble["also"])
-        # the default style folds a thin call only: 7 points over the need is the least it plays this close
+        self.assertIn("CALL, 58% against 57%", bubble["also"])
+        # the default style folds a thin call only: 7 points over the need is the least it plays this close.
+        # Against 15bb nines have 5 ...
         bubble = A.advise(tournament(stacks, BB, "99", acts=shove, left=152))
+        self.assertEqual((verb(bubble), bubble["guard"]), ("FOLD", "survival"))
+        self.assertIn("A thin edge (58% against 53%)", bubble["reason"])
+        # ... and against 13bb, a wider all-in at a better price, 10
+        bubble = A.advise(tournament([30, 25, 18, 40, 13, 22, 16, 20], BB, "99", acts=shove, left=152))
         self.assertEqual((verb(bubble), bubble["guard"]), ("CALL", "edge"))
-        self.assertIn("CLEAR EDGE (60% against 53%): played although the all-in table folds", bubble["source"])
+        self.assertIn("CLEAR EDGE (60% against 50%): played although the all-in table folds", bubble["source"])
         self.assertEqual(bubble["tiles"][-1], {"label": "The chart says", "value": "FOLD", "note": "TT+, AQs+, AKo",
                                                "sign": 0})
         read = A.advise(tournament(stacks, BB, "99", acts=shove, left=152, types={CO: "maniac"}))
@@ -573,7 +580,7 @@ class TournamentNumbers(unittest.TestCase):
         self.assertEqual(a["icm"], "off")
         self.assertIn("icm_off", codes(a))
         self.assertEqual(verb(a), "ALL-IN")
-        self.assertEqual(a["tiles"][0]["value"], "+1.57bb")     # chip EV
+        self.assertEqual(a["tiles"][0]["value"], "+1.27bb")     # chip EV: the exact game's number (poker_coach/short.py)
         self.assertEqual(a["guard"], "agrees")                  # the guard treats the hand as before the money
         self.assertIn("ICM off", a["source"])
 
@@ -738,7 +745,7 @@ class Charts(unittest.TestCase):
         self.assertEqual(solver["numbers"][row][column], "+1.20bb")     # the engine's own number for hero's hand
         self.assertEqual(solver["numbers"][0][0][0], "+")               # aces earn
         call = A.advise(tournament([30, 25, 18, 40, 15, 22, 16, 20], BB, "99", acts=[(CO, "allin", None)]))["chart"]
-        self.assertEqual(call["numbers"][5][5], "60%")                  # 99: its equity against the range
+        self.assertEqual(call["numbers"][5][5], "58%")                  # 99: its equity against the range
         table = A.advise(tournament(STACKS_B, CO, "K9s"))["chart"]
         self.assertEqual(table["numbers"][1][5], "all-in up to 8bb")    # K9s: the deepest stack that moves in
         self.assertIsNone(A.advise(tournament([30, 25, 18, 40, 15, 35, 16, 28], BTN, "QJs"))["chart"]["numbers"])
@@ -1058,8 +1065,10 @@ class SurvivalGuardFindings(unittest.TestCase):
                 self.assertEqual((verb(a), a["guard"]), ("CALL", "off"))
                 self.assertIn("GUARD OFF (a good price: 3.5 to 1)", source(a))
                 self.assertEqual(a["headline"]["follow"], {"kind": "call"})
-                # 1,875 into 5,375 is worse than 3 to 1, but T8s has 21 points more than it needs
-                a = short_big_blind("T8s", 6, BTN, 3, style)
+                # 1,875 into 5,375 is worse than 3 to 1, but Q9s has 21 points more than it needs.  (The hands of
+                # an all-in of 3bb from the button are the exact game's with this ante: half of all hands, where
+                # the engine's own solver said nearly all.  T8s, which stood here with 48%, has 42%: 15 points.)
+                a = short_big_blind("Q9s", 6, BTN, 3, style)
                 self.assertEqual((verb(a), a["guard"]), ("CALL", "off"))
                 self.assertIn("GUARD OFF (a clear call: 48% against 27%)", source(a))
         # neither a good price nor a clear edge: the table still decides (72o, 32% against 29%)
@@ -1440,38 +1449,41 @@ class SurvivalGuardFindings(unittest.TestCase):
             self.assertEqual((f"{100 * exact[who][0]:.0f}", f"{100 * exact[who][1]:.0f}"), (need, have), line)
 
     def test_l3_an_all_in_and_a_caller_with_chips_is_one_all_in_for_the_guard(self):
-        # the button is all-in for 10bb, the small blind (40bb) calls, hero is the big blind with 20bb.  The
-        # engine's CALL is a call of the 10bb all-in with a caller in the pot: the guard reads the row for one
-        # all-in from the button (KQs is on it), not the row for two all-ins (77+, AJs+, AQo+)
-        stacks = [30, 30, 30, 30, 30, 10, 40, 20]
+        # the button is all-in for 8bb, the small blind (40bb) calls, hero is the big blind with 20bb.  The
+        # engine's CALL is a call of the 8bb all-in with a caller in the pot: the guard reads the row for one
+        # all-in from the button (ATs is on it), not the row for two all-ins (77+, AJs+, AQo+).
+        # (Ace-ten suited against 8bb, where king-queen suited against 10bb stood: with this ante the button's
+        #  all-in and the small blind's call are the exact game's hands, poker_coach/short.py, fewer and better
+        #  than the engine's own solver had them, and king-queen suited is a close fold against 10bb.)
+        stacks = [30, 30, 30, 30, 30, 8, 40, 20]
         acts = [(BTN, "allin", None), (SB, "call", None)]
         for style in (None, "cash"):
-            a = A.advise(tournament(stacks, BB, "KQs", acts=acts, style=style))
+            a = A.advise(tournament(stacks, BB, "ATs", acts=acts, style=style))
             self.assertEqual((verb(a), a["guard"]), ("CALL", "agrees"), style)
-            self.assertEqual(a["headline"]["size_text"], "8.9BB \u00b7 8,875")     # what is still to pay
-        s = tournament(stacks, BB, "KQs", acts=acts)
+            self.assertEqual(a["headline"]["size_text"], "6.9BB \u00b7 6,875")     # what is still to pay
+        s = tournament(stacks, BB, "ATs", acts=acts)
         seen, money = A.read_table(s, s.view()), A.read_money(s)
         before = A.what_happened(seen)
         call = A.table_answer(seen, money, before, at_risk=20.0, calling=True)
         self.assertEqual(call.action, "CALL")
-        self.assertIn("an all-in of 10bb from BTN", call.why)
+        self.assertIn("an all-in of 8bb from BTN", call.why)
         self.assertIn("a caller is in the pot", call.why)
         self.assertIn("an all-in from BTN with a caller in the pot", call.chart["title"])
-        self.assertTrue(A.in_range(call.short, HANDS.index("KQs")))
+        self.assertTrue(A.in_range(call.short, HANDS.index("ATs")))
         # a re-raise over the two of them plays for the caller's chips too: still the row for two all-ins,
         # and so does the all-in plan, which has one decision for the hand
         for says in (A.table_answer(seen, money, before, at_risk=20.0), A.table_answer(seen, money, before)):
             self.assertEqual(says.action, "FOLD")
             self.assertIn("two all-ins", says.why)
-        plan = A.advise(tournament(stacks, BB, "KQs", acts=acts, plan="allin"))
+        plan = A.advise(tournament(stacks, BB, "ATs", acts=acts, plan="allin"))
         self.assertEqual(verb(plan), "FOLD")
         self.assertIn("two all-ins", plan["reason"])
         tens = A.advise(tournament(stacks, BB, "TT", acts=acts, left=185, style="cash"))
         self.assertEqual((verb(tens), tens["guard"]), ("FOLD", "survival"))
         self.assertIn("two all-ins", tens["reason"])
         # a caller who is all-in himself is a second all-in, whatever the play
-        short = [30, 30, 30, 30, 30, 10, 9, 20]
-        s = tournament(short, BB, "KQs", acts=acts)
+        short = [30, 30, 30, 30, 30, 8, 7, 20]
+        s = tournament(short, BB, "ATs", acts=acts)
         seen, money = A.read_table(s, s.view()), A.read_money(s)
         says = A.table_answer(seen, money, A.what_happened(seen), at_risk=20.0, calling=True)
         self.assertIn("two all-ins", says.why)
@@ -3391,9 +3403,14 @@ class LastCorrections(unittest.TestCase):
                                            r"calling is nearly as good\.")
                 self.assertNotIn("all-in earns", close[0])
 
+    # The three tests below: under the gun is all-in for 4bb, the cutoff raises to 14bb (over a third of his stack,
+    # which the all-in chart reads as a second all-in: its row is KK+), the user is on the button with 40bb.  The
+    # hands that raise over an all-in are read from the hands that call it, and with the ante of these tables (an
+    # eighth of a big blind a player) those are the exact game's (poker_coach/short.py): one hand in six against
+    # 4bb.  Against 6bb, where these tests stood, it is one in nine (the engine's own solver said one in six), and
+    # tens are behind the better half of them: a fold with no read at all.
     def test_an_all_in_and_a_raise_over_it_is_not_only_for_premiums(self):
-        # under the gun is all-in for 6bb, the cutoff raises to 15bb, the user has tens on the button with 40bb
-        stacks, acts = [6] + [40] * 7, [(UTG, "allin", 6), (CO, "raise", 15)]
+        stacks, acts = [4] + [40] * 7, [(UTG, "allin", 4), (CO, "raise", 14)]
         a = A.advise(tournament(stacks, BTN, "TsTd", acts))                       # survive: a clear edge stands
         self.assertEqual(a["headline"]["verb"], "ALL-IN")
         self.assertIn("raised over it", a["reason"])
@@ -3403,11 +3420,15 @@ class LastCorrections(unittest.TestCase):
         self.assertIn("SURVIVAL FOLD (engine: ALL-IN", a["source"])
         a = A.advise(tournament(stacks, BTN, "AsTd", acts))                       # not ahead of the raiser's hands
         self.assertEqual(a["headline"]["verb"], "FOLD")
+        # against the bigger all-in fewer hands raise over it, and tens are not ahead of the better half of them
+        a = A.advise(tournament([6] + [40] * 7, BTN, "TsTd", [(UTG, "allin", 6), (CO, "raise", 15)]))
+        self.assertEqual(a["headline"]["verb"], "FOLD")
+        self.assertIn("against the better half of them this hand has only", a["reason"])
 
     def test_a_close_all_in_over_an_all_in_and_a_raise_names_the_bar_it_was_measured_against(self):
         # an all-in the rule makes must earn +1.00bb (twice the +0.50bb of JJ+ and ace-king).  When it is close, the
         # note names that bar: it said "after a raise and a re-raise it takes +0.50bb"
-        stacks, acts = [6] + [40] * 7, [(UTG, "allin", 6), (CO, "raise", 15)]
+        stacks, acts = [4] + [40] * 7, [(UTG, "allin", 4), (CO, "raise", 14)]
         s = tournament(stacks, BTN, "TsTd", acts, style="maxev")
         seen = A.read_table(s, s.view())
         self.assertEqual(A.engine_line(seen, {"allin_bar_bb": 1.0, "ev": 1.2}, A.what_happened(seen)),
@@ -3424,14 +3445,14 @@ class LastCorrections(unittest.TestCase):
 
     def test_a_raiser_tagged_tight_keeps_the_all_in_over_an_all_in_and_a_raise_to_the_list(self):
         # the user tagged the cutoff nit: tens are no all-in against that player's raise over an all-in, in any style
-        stacks, acts = [6] + [40] * 7, [(UTG, "allin", 6), (CO, "raise", 15)]
+        stacks, acts = [4] + [40] * 7, [(UTG, "allin", 4), (CO, "raise", 14)]
         for style in ("survive", "maxev"):
             with self.subTest(style=style):
                 a = A.advise(tournament(stacks, BTN, "TsTd", acts, style=style, types={CO: "nit"}))
                 self.assertEqual(a["headline"]["verb"], "FOLD")
                 self.assertIn("CO is nit: from this player a raise over an all-in is a strong hand", a["reason"])
                 self.assertNotIn("raised over it", a["reason"])
-                # no "Their range 16%: you have 60% against it" beside a fold made because that range is not theirs
+                # no "Their range 17%: you have 60% against it" beside a fold made because that range is not theirs
                 self.assertNotIn("Their range", [tile["label"] for tile in a["tiles"]])
 
 

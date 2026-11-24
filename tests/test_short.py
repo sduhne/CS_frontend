@@ -482,14 +482,17 @@ class EveryPlayerAntes(unittest.TestCase):
                     self.assertGreater(widths[i] + 4.0, widths[i + 1], (n, player, widths))
 
     def test_a_hand_that_goes_in_from_a_seat_goes_in_from_the_next(self):
-        """What the second pass is for, as with the big blind ante: nearly none is left, each worth nothing either way."""
+        """What the second pass is for, as with the big blind ante: nearly none is left, each worth nothing either way.
+        From 3 to 7bb one hand at most at any table, up to four with 8 to 12bb and up to eleven with 16 and 20bb,
+        as there.  With 2bb the first seats of eight hold nearly the same range (37% and 38% of hands), and four
+        hands worth 0.04bb or less cross."""
         for n in (9, 8, 7, 6):
             for stack in S.stacks(n, self.K):
                 odd = []
                 for player in range(n - 3):                 # up to the cutoff and the button; the small blind is another game
                     here, behind = S.node(stack, player, 0, n, self.K), S.node(stack, player + 1, 0, n, self.K)
                     odd += [(player, HANDS[h], here[h], behind[h]) for h in range(169) if here[h] > 0 >= behind[h]]
-                self.assertLessEqual(len(odd), 1 if stack <= 7 else 4 if stack <= 12 else 12, (n, stack, odd))
+                self.assertLessEqual(len(odd), 4 if stack <= 2 else 1 if stack <= 7 else 4 if stack <= 12 else 12, (n, stack, odd))
                 for _, _, mine, next_one in odd:
                     self.assertLess(mine - next_one, 4 * S.close(stack), (n, stack, odd))
 
