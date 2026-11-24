@@ -309,6 +309,10 @@ static void refine_hand(int i, int m, int c, long samples) {
     }
     long per = samples / nc + 1, acc_total = 0;
     double num = 0.0, squares = 0.0;
+    /* A player who is not a blind has nothing in the pot but the ante every player pays: by folding he loses
+       that and no more, whatever the others do afterwards.  The game after his fold is not played out for
+       him, which halves the work of a deal. */
+    int fold_is_known = i < N - 2 && blind[i] == 0.0;
     Deal d;
     d.mode = 2;
     d.weight = 0.0;
@@ -351,6 +355,7 @@ static void refine_hand(int i, int m, int c, long samples) {
             }
             for (int mask = 0; mask < (1 << N); mask++) {
                 if ((mask & ((1 << i) - 1)) != m) continue;   /* only histories that match */
+                if (fold_is_known && !((mask >> i) & 1)) continue;
                 const MaskInfo *mi = &minfo[mask];
                 double *pay = d.pay[mask];
                 for (int k = 0; k < N; k++) pay[k] = mi->base[k];
@@ -367,7 +372,8 @@ static void refine_hand(int i, int m, int c, long samples) {
             }
             double us[MAXN], uf[MAXN];
             walk(&d, i + 1, m | (1 << i), 1.0, us);
-            walk(&d, i + 1, m, 1.0, uf);
+            if (fold_is_known) uf[i] = -ante_v;
+            else walk(&d, i + 1, m, 1.0, uf);
             num += us[i] - uf[i];
             squares += (us[i] - uf[i]) * (us[i] - uf[i]);
             acc++;
