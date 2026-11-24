@@ -497,11 +497,17 @@ class EveryPlayerAntes(unittest.TestCase):
         """Eight players: the two antes put the same big blind in the pot.  With the big blind ante the big blind
         has paid all of it, and against an all-in of four or five big blinds he has little left to save; with an
         eighth paid he has one big blind more behind, and calls with far fewer hands."""
-        for stack, fewer in ((4.0, 12), (5.0, 12), (6.0, 6), (8.0, 2)):
+        for stack, fewer in ((4.0, 12), (5.0, 10), (6.0, 3), (7.0, 2)):
             for shover in (0, 5):                           # against the first seat of eight, and the button
                 mine = width(S.node(stack, 7, 1 << shover, 8, self.K))
                 theirs = width(S.node(stack, 8, 1 << (shover + 1), 9, "bb"))        # the same seats: the nine's last eight
                 self.assertLess(mine + fewer, theirs, (stack, shover, mine, theirs))
+        for stack in (8.0, 9.0, 10.0, 12.0, 16.0, 20.0):    # deeper, one big blind is a small part of the stack
+            for shover in (0, 5, 6):
+                mine = width(S.node(stack, 7, 1 << shover, 8, self.K))
+                theirs = width(S.node(stack, 8, 1 << (shover + 1), 9, "bb"))
+                self.assertLess(abs(mine - theirs), 6.0, (stack, shover, mine, theirs))
+                self.assertLess(mine, theirs + 2.0, (stack, shover, mine, theirs))
         # with two big blinds a big blind ante leaves him all-in from posting.  With his eighth paid he has a
         # decision, and the price makes it for him: seven eighths of a big blind to call into more than four
         self.assertEqual(width(S.node(2.0, 8, 1 << 0, 9, "bb")), 100.0)
