@@ -121,7 +121,7 @@ To set it up again, or somewhere else:
 To update: copy the folder again over `/opt/menlo-guide` (all of it: the
 tables and the script belong together, and `index.html` names them with
 their numbers, `data.js?v=3` and `guide.js?v=6` in page 6, so a browser
-fetches the new ones). The tables are one file of 7.3 MB; with `encode` the
+fetches the new ones). The tables are one file of 7.2 MB; with `encode` the
 web server sends it compressed, about 0.9 MB. The live site answers with
 `Cache-Control: private, no-cache`: the browser keeps its copy and asks
 each time whether it is still the current one, so an update shows at once.

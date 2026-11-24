@@ -410,13 +410,17 @@ by asking the engine about each of the 169 hands of every spot before the
 flop.
 
 ```bash
-python3 tools/build_short.py                         # all-ins of 2 to 20bb solved exactly -> poker_coach/data/short.json (about four hours, needs gcc)
+python3 tools/build_short.py                         # all-ins of 2 to 20bb solved exactly -> poker_coach/data/short.json (about six hours on four processors, needs gcc)
+python3 tools/build_short.py --work tools/short_solutions    # the same file from the solver's kept output, in seconds (--report: what each pass did)
 python3 tools/build_guide.py                         # every table -> guide/data.js (about 40 minutes on four processors)
 python3 tools/build_guide.py --only open,vsraise --styles win    # some again; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py <folder>           # one HTML file and data.json, to publish as an Artifact
 python3 -m poker_coach quick --hand A7o --stack 40 --pos CO --goal chips --style win   # one of its answers, from the engine
 python3 -m poker_coach quick --hand Q5o --stack 20 --pos BB --facing "CO raise 3bb" --goal chips --style win   # against a raise of a given size
 python3 -m poker_coach clock --stack 12 --pos BTN --players 8 --speed hyper     # the blinds clock in words
+python3 tools/short_report.py tables                 # the playbook's tables of the exact all-ins from the data (precision, line, itself, engine, builds: its checks)
+python3 tools/check_short.py tools/short_solutions/n9_s6.json.xz 6000    # the solver against a second program
+python3 tools/check_guide_page.py                    # the page in headless Chromium against the engine, 700 random spots (needs node with playwright)
 python3 -m unittest tests.test_guide tests.test_short    # the style, the builder, the tables against the engine, the exact short stacks
 ```
 
@@ -477,7 +481,7 @@ python3 -m unittest tests.test_guide tests.test_short    # the style, the builde
   the engine's solver, which is exact heads-up). The engine's solver leaves
   two things out that count with short stacks. It sets an all-in against one
   caller at a time: with 3bb the tables moved all-in first to act with 84%
-  of hands where the answer is 26%, and behind a player who only called with
+  of hands where the answer is 25%, and behind a player who only called with
   98%. And it deals every opponent from a full deck, while the players who
   folded hold mostly middle and low cards: at a full table T8o is worth
   about three points less against an all-in than its plain odds, and with
@@ -556,13 +560,24 @@ python3 -m unittest tests.test_guide tests.test_short    # the style, the builde
   The exact tables are an equilibrium for a big blind ante: on GGPoker,
   where every player antes, the big blind keeps one big blind more behind,
   which matters a little with 2 to 4bb. Their numbers come from dealt
-  cards: every hand 10,000 times, and the hands that came out near zero
-  another 100,000 times (`tools/build_short.py`: that second pass moved
-  about a hundred border hands a stack to the other side), which leaves
-  those good to about 0.02bb with 6bb, 0.03bb with 10bb and 0.06bb with
-  20bb; a play within 0.05bb (0.1bb with 20bb) is marked close. With two
-  players all-in only the first pass was run (0.05bb with a few big
-  blinds, 0.2bb with 20; close within 0.15bb or more). The small blind first
+  cards, in three passes (`tools/build_short.py`): every hand 10,000
+  times; the hands that came out near zero another 100,000 times, with
+  nobody, one player or two players all-in before; and first in, the
+  hands still within two and a half standard errors of zero a million
+  times. The data file keeps what each number is good to: near zero
+  0.02bb with 6bb, 0.035bb with 10bb and 0.065bb with 20bb for a call of
+  one all-in, 0.02bb, 0.04bb and 0.09bb for a call of two, 0.006bb to
+  0.011bb for an all-in first in. A call within 0.05bb is marked close
+  (0.1bb with 20bb; against two all-ins 0.13bb with 20bb). First in, a
+  hand that is in from one seat is in from the next with 16 exceptions
+  in the nine-player solution, none with 7bb or less and 11 with 16 or
+  20bb. Five show on the charts: T8s with 8bb, and K8s, T8s and JTo with
+  10bb, are an all-in from the lojack and a fold from the hijack, and
+  A4s with 16bb is an all-in first to act and a small raise from the
+  next seat. When the user points at one, say that most of the sixteen
+  are the solution itself, found again in a second build, and not a slip
+  of the chart (@PLAYBOOK.md, "All-ins of 20bb or less", says why); all
+  five are marked close. The small blind first
   in with 13 to 20bb moves all-in or folds (half its hands at 20bb): a
   solver with every play open moves all-in with a tenth of its hands there
   and limps most of the rest; say so when the user finds those all-ins
@@ -934,7 +949,7 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   previous tournament. The table app keeps its own sessions beside it, in
   `tournament/app/`; the two do not read each other.
 - After the tournament, if asked for a review, use `log` and `show --log 30`.
-- Tests: `python3 -m unittest discover -s tests` (about 760 tests, seven
+- Tests: `python3 -m unittest discover -s tests` (about 770 tests, eight
   minutes; the live reader's tests need
   `pip install -r requirements-live.txt`; without it they are skipped). Rebuild data only if ranges
   or the solver change: `tools/gen_preflop_equity.c` (equity table),
@@ -950,7 +965,9 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   `python3 tools/build_spin.py` (spin tables, about 7 minutes; it reads the
   All-In or Fold tables), then `python3 tools/spin_sim.py` (the whole-game
   simulation, about 6 minutes); `python3 tools/build_short.py` (the exact
-  answers for all-ins of 2 to 20bb, about four hours; only if the solver
-  or the blinds of that game change), then `python3 tools/build_guide.py` (the quick
+  answers for all-ins of 2 to 20bb, about six hours; only if the solver
+  or the blinds of that game change: with `--work tools/short_solutions`
+  it makes the file again from the solver's kept output in seconds, and a
+  further pass over those solutions needs no new solve), then `python3 tools/build_guide.py` (the quick
   guide's tables, about 40 minutes; needed after any change to the engine's
   answers before the flop).

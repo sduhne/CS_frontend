@@ -1,26 +1,44 @@
 #!/usr/bin/env python3
 """Build poker_coach/data/short.json: all-ins of 2 to 20 big blinds, solved exactly (see poker_coach/short.py).
 
-    python3 tools/build_short.py                 # compiles the solver and runs it, hours on four processors
+    python3 tools/build_short.py                 # compiles the solver and runs it: about six hours on four processors
+                                                 # (20 minutes a stack to solve nine players, 3 for the smaller tables
+                                                 # together; the later passes 5 to 10 minutes a stack of nine)
     python3 tools/build_short.py --work DIR      # keeps the solver's own output there, and uses what is there already
     python3 tools/build_short.py --work DIR --fine-only     # the later passes for the solutions that are in DIR, no more
     python3 tools/build_short.py --work DIR --report        # what every pass did, read from DIR: nothing is run or written
     python3 tools/build_short.py --work DIR --pack          # the solver's output of DIR into tools/short_solutions, packed
-    python3 tools/build_short.py --work tools/short_solutions    # the data file again from the output the repository keeps
+    python3 tools/build_short.py --work tools/short_solutions    # the data file again from the output the repository keeps:
+                                                 # a few seconds, nothing is run and no compiler is needed
 
 Equal stacks, a small blind of half a big blind and a big blind ante of one; every player moves all-in
 or folds; tables of 9, 6, 5, 4 and 3 players.  The solver (tools/aof_solver.c) deals real cards, so every
 showdown and side pot is exact, and so is what the folded hands take out of the deck.  Kept: what going
 in earns over folding, hand by hand, for every player with at most two players all-in before him.
 
-Three passes (PASSES).  The first solves the game and samples every hand of every decision point 10,000
-times.  That is plenty for a hand that is clearly in or out and too little for the hands at the edge of a
-range, which are the ones a chart is read for.  So the second pass takes every hand the first left near
-zero and samples it 100,000 times against the same solved strategies, a third of the noise; and the third
-takes, first in, the hands the second left within two and a half of their standard errors of zero and
-samples them a million times.  Every pass deals from random numbers of its own, and the solver says what
-each number is good to (its standard error): the data file keeps the middle and the largest of them for
-the numbers of each pass, with how many hands each pass took and how many it moved to the other side.
+Three passes (PASSES), each on random numbers of its own.  The first solves the game and samples every
+hand of every decision point 10,000 times: a number is then good to 0.06 to 0.08bb first in and 0.07 to
+0.13bb for a call with 6 to 10bb, and to 0.12 to 0.25bb with 20bb (an all-in of 20bb swings more).  That
+is plenty for a hand that is clearly in or out and too little for the hands at the edge of a range, which
+are the ones a chart is read for.  So the second pass takes every hand the first left near zero (BAND:
+three to seven times what the first pass's number is good to), with nobody, one player or two players
+all-in before, and samples it 100,000 times against the same solved strategies: a third of the noise.
+The third takes, first in, the hands the second left within two and a half of their standard errors of
+zero and samples them a million times: a third of the noise again.
+
+"Good to" is measured: the solver gives every number its standard error (the spread of its deals over
+the root of their number).  The data file keeps the middle one and the largest for the numbers each pass
+left, the hands each pass took, how many it moved to the other side of zero, and how many hands were in
+from one seat and out from the next before the passes and after each.  At nine players the second pass
+took one hand in nine and moved 3,034 of them over the twelve stacks (1,867 with two players all-in); the
+third took 802 and moved 147.  The hands in from one seat and out from the next went from 103 to 17 to
+16: the third pass took the noise out, and ten of the pairs that are left are three to seven standard
+errors apart (PLAYBOOK.md, "All-ins of 20bb or less", says which and why).  From there the training is
+the limit, not the dealing: two builds, each trained on its own, are about 0.01bb apart in a first-in
+number near zero.
+
+The solver's output behind the data file is kept in tools/short_solutions, packed (--pack puts it
+there).  A further pass, --report and tools/check_short.py start from it without solving again.
 """
 from __future__ import annotations
 
@@ -192,7 +210,8 @@ def fine(solver: str | None, sol: dict, path: str, quick: bool) -> dict:
     -> what they did, a list with a place for each pass after the first under every key but "noise":
     "again" (the hands sampled), "moved" (how many of them changed sides), "crossed" (the hands in from
     one seat and out from the next, before the pass at 0 and after each), "short" (the hands that got fewer
-    deals than asked, because the decision point comes up too rarely), "seconds", and "noise": for the
+    deals than asked, because the decision point comes up too rarely), "seconds", "ratio" (for a pass with a
+    band: how many of the first pass's standard errors the band is, by players all-in before), and "noise": for the
     numbers each pass left in the solution, first pass included, at decision points with nobody, one
     player and two players all-in before, [the middle one of their standard errors, the largest] in big
     blinds, or None where it left none.  With no solver, only what was kept is read."""
@@ -255,7 +274,8 @@ def report(work: str, quick: bool = False) -> int:
                 what = "every hand" if k == 0 else \
                     f"{did['again'][k - 1]} hands again, {did['moved'][k - 1]} changed sides" + \
                     (f", {did['short'][k - 1]} with fewer deals than asked" if did["short"][k - 1] else "") + \
-                    (f"; the band is {did['ratio'][k - 1]} of the first pass's standard errors" if "band" in spec else "")
+                    ("; the band is " + ", ".join(f"{r} ({names[count]})" for count, r in enumerate(did["ratio"][k - 1]) if r)
+                     + " of the first pass's standard errors" if "band" in spec else "")
                 left = ", ".join(f"{names[count]} {row[0]:.4f} (at most {row[1]:.4f})"
                                  for count, row in enumerate(did["noise"][k]) if row)
                 print(f"    pass {k + 1}, {spec['samples'] // (10 if quick else 1):,} deals: {what}\n"

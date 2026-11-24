@@ -113,7 +113,7 @@ each of the three:
   an all-in against one caller at a time and deals every opponent a hand
   from a full deck. With a few big blinds neither holds. A short all-in is
   often called twice: with 3bb and nine players the tables moved all-in
-  first to act with 84% of hands where the exact answer is 26%. And the
+  first to act with 84% of hands where the exact answer is 25%. And the
   players who folded hold mostly middle and low cards, which are then
   rarer on the board: with 6bb the big blind called a cutoff all-in with
   65% of hands where the answer is 47%. All-ins of 20bb or less are now
@@ -154,13 +154,20 @@ for players who call correctly: the Opponents choice does not move them. It
 moves the calls, through the hands an all-in player is taken to hold: with
 Standard the solved range itself up to 10bb, and a little tighter from
 there, a tenth at 20bb, as the deeper tables assume. Their numbers come from
-dealing cards: every hand 10,000 times, and the hands that came out near
-zero another 100,000 times, which leaves those good to about 0.02bb with
-6bb, 0.03bb with 10bb and 0.06bb with 20bb. A play within 0.05bb (0.1bb with
-20bb) is marked close, and inside that band a hand can still be in from one
-seat and out from the next. With two players all-in before you only the
-first pass was run: those numbers are good to 0.05bb with a few big blinds
-and 0.2bb with 20, and a play within 0.15bb or more is marked close. Between
+dealing cards, in three passes: every hand 10,000 times; the hands that came
+out near zero another 100,000 times, whether nobody, one player or two
+players are all-in before you; and first in, the hands still within two and
+a half standard errors of zero a million times. The solver measures what
+each number is good to, and the data file keeps it. Near zero that is 0.02bb
+with 6bb, 0.035bb with 10bb and 0.065bb with 20bb for a call of one all-in,
+0.02bb, 0.04bb and 0.09bb for a call of two, and 0.006bb, 0.008bb and
+0.011bb for an all-in first in. A call within 0.05bb of zero is marked close
+(0.1bb with 20bb; against two all-ins 0.065bb with 10bb and 0.13bb with
+20bb), and up to 10bb an all-in first in within 0.08bb. First in, 16 hands
+of the nine-player solution are in from one seat and out from the next (none
+with 7bb or less, 11 of them with 16 or 20bb), each pair within 0.16bb; most
+are not noise but the solution itself, which builds the first seats' ranges
+differently there (`PLAYBOOK.md` says how). Between
 two solved stacks (11, 13 to 15, 17 and 18bb) the numbers are read off a
 straight line. Tables of 7 and 8 players are read from the nine-player
 solution (at eight that costs about 0.001bb a hand). Behind a player who
@@ -173,10 +180,15 @@ It is a chart. Most real-money sites forbid charts and outside help while
 you play: use it to study, to review hands and where help is allowed.
 
 ```bash
-python3 tools/build_short.py                 # the exact answers for all-ins of 2 to 20bb -> poker_coach/data/short.json, about four hours (needs gcc)
+python3 tools/build_short.py                 # the exact answers for all-ins of 2 to 20bb -> poker_coach/data/short.json, about six hours on four processors (needs gcc)
+python3 tools/build_short.py --work tools/short_solutions   # the same file from the solver's output, which the repository keeps: a few seconds, no compiler
+python3 tools/build_short.py --work tools/short_solutions --report   # what each of the three passes did, and what its numbers are good to
 python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 40 minutes on four processors
 python3 tools/build_guide.py --only open --styles win    # some of them; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py out/       # the page as one file, with data.json beside it
+python3 tools/short_report.py tables         # the playbook's tables of the exact all-ins, from the data (also: precision, line, itself, engine, builds)
+python3 tools/check_short.py tools/short_solutions/n9_s6.json.xz    # the solver against a second program, a dozen decision points
+python3 tools/check_guide_page.py            # the page in headless Chromium against the engine, 700 random spots (needs node with playwright)
 python3 -m unittest tests.test_guide tests.test_short   # about a minute
 python3 -m poker_coach clock --stack 12 --pos BTN --players 8 --speed hyper    # the blinds clock in words
 ```

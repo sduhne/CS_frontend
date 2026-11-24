@@ -876,8 +876,8 @@ _EXACT_USUAL = 20.0     # from here a player with no read is taken a tenth tight
 
 
 def _exact_conf(ev: float, size_bb: float, all_in: int) -> str:
-    """How sure an answer read from the exact game is: close within about twice the noise of its number
-    (``short.close``), clear from a quarter of a big blind and at least twice that band."""
+    """How sure an answer read from the exact game is: close within about one and a half times the noise
+    of its number (``short.close``), clear from a quarter of a big blind and at least twice that band."""
     near = short.close(size_bb, all_in)
     return _conf(ev, max(0.25, 2.0 * near), near)
 
@@ -1182,7 +1182,8 @@ def vs_shove(spot: Spot, shover: int, *, raiser: int | None = None, raise_to: fl
 
     adv = Advice("CALL" if edge >= 0 else "FOLD", _conf(edge, 0.05, 0.02), sit)
     if exact is not None:
-        # with two players in for the stack (a raise that commits and an all-in) the numbers are the first pass's
+        # with two players in for the stack (a raise that commits and an all-in) the number is one of a call of two
+        # all-ins, with their noise
         adv.confidence = _exact_conf(exact, shove_bb, 2 if raiser is not None or callers else 1)
         adv.data.update(exact=True, exact_ev=exact, exact_edge=exact_edge)
     adv.numbers.append(f"their range ~{pct:.0f}% [{format_range(rng)}]")

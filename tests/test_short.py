@@ -48,9 +48,14 @@ class Data(unittest.TestCase):
         with open(os.path.join(ROOT, "poker_coach", "data", "short.json")) as fh:
             d = json.load(fh)
         self.assertEqual((d["sb"], d["bb"], d["bb_ante"]), (0.5, 1, 1))
-        # two passes: every hand 10,000 times, and the hands that left near zero ten times that
-        self.assertEqual((d["train"], d["samples"]), (40_000_000, 10_000))
-        self.assertEqual(d["fine"], {"samples": 100_000, "all_ins": 1, "band": [0.05, 0.04]})
+        # three passes, and the file says so: every hand 10,000 times; the hands that left near zero ten times
+        # that, with two players all-in as well; and first in, the hands that left within two and a half of
+        # their standard errors of zero, a million times, kept to a thousandth of a big blind
+        self.assertEqual(d["train"], 40_000_000)
+        self.assertEqual(d["passes"], [{"samples": 10_000, "all_ins": 2},
+                                       {"samples": 100_000, "all_ins": 2, "band": [0.05, 0.04]},
+                                       {"samples": 1_000_000, "all_ins": 0, "within": 2.5, "step": 0.001}])
+        self.assertEqual(d["passes"], [dict(spec, **({"band": list(spec["band"])} if "band" in spec else {})) for spec in BUILD.PASSES])
         self.assertEqual(S.games(), (3, 4, 5, 6, 9))
         self.assertEqual(S.top(), GRID[-1])
         for players in S.games():
@@ -65,9 +70,16 @@ class Data(unittest.TestCase):
                 # what the seats win and lose in a hand adds up to nothing
                 self.assertAlmostEqual(sum(game["value"][f"{stack:g}"]), 0.0, delta=0.02)
                 self.assertLess(game["value"][f"{stack:g}"][-1], -0.4)         # the big blind pays for the table
-                # the second pass took a part of the hands, not none and not most
-                with_one = sum(1 for key in nodes if bin(int(key.split(":")[1])).count("1") <= 1)
-                self.assertTrue(0.03 * 169 * with_one < game["again"][f"{stack:g}"] < 0.5 * 169 * with_one, (players, stack))
+                # the second pass took a part of the hands, not none and not most; the third a few of the hands first in
+                second, third = game["again"][f"{stack:g}"]
+                self.assertTrue(0.03 * 169 * len(nodes) < second < 0.5 * 169 * len(nodes), (players, stack, second))
+                self.assertTrue(0 < third < 0.2 * 169 * (players - 1), (players, stack, third))
+                for count, moved in zip((second, third), game["moved"][f"{stack:g}"]):
+                    self.assertTrue(0 <= moved < 0.5 * count, (players, stack))
+                # a number of the third pass is kept to a thousandth of a big blind, every other to a hundredth
+                fine = [key for key, evs in nodes.items() for e in evs if e != int(e)]
+                self.assertLessEqual(len(fine), third, (players, stack))
+                self.assertEqual({key.split(":")[1] for key in fine} - {"0"}, set(), (players, stack))
         self.assertEqual(S.table_for(6), 6)
         self.assertEqual(S.table_for(8), 9)             # seven and eight players: the last seats of the nine
         self.assertEqual(S.table_for(7), 9)
@@ -261,20 +273,51 @@ class Shape(unittest.TestCase):
             self.assertLess(widths[0] + 12, widths[6], (stack, widths))   # the button far more than the first seat
             self.assertLess(widths[6] + 15, widths[7], (stack, widths))   # and the small blind far more than the button
 
+    # First in, the hands that are in from one seat and out from the next, as this build has them after its last
+    # pass: the most at a stack of nine players, by stack, and in all the stacks of each smaller table.
+    CROSSED = {2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 1, 9: 0, 10: 3, 12: 1, 16: 4, 20: 7}
+    CROSSED_SMALL = {6: 1, 5: 4, 4: 0, 3: 0}
+    APART = 0.16            # big blinds: the two numbers of the widest such pair are 0.153 apart (A2s with 20bb)
+
     def test_a_hand_that_goes_in_from_a_seat_goes_in_from_the_next(self):
-        """Nearly so: what the second pass is for.  After the first pass alone three to eleven hands a stack
-        were in from one seat and out from the next; a chart with that in it reads as a mistake.  After the
-        second none is left up to 7bb and one to three up to 12bb, each a hand worth nothing either way.
-        (With 16 and 20bb the first seats' numbers for the small suited aces lie within a few hundredths of
-        each other and of zero, and more hands cross; at that depth no table moves all-in on such a number.)"""
+        """Nearly so, and most of what is left is the solution's own.  After the first pass alone three to
+        eighteen hands a stack were in from one seat and out from the next, 103 in the twelve stacks; a
+        chart with that in it reads as a mistake.  The second pass leaves 17, none of them under 9bb.  The
+        third deals the first-in hands still nearest zero a million times, and 16 are left: it took the
+        noise away and showed that the rest is not noise.  Ten of the sixteen pairs are three to seven
+        standard errors apart.  With 10bb the lojack moves in with K8s and T8s and the hijack does not; with
+        16 and 20bb a first seat moves in with small suited aces, KJo or KQo that lose up to 0.13bb from the
+        next.  Ten of the sixteen hands were there in the build before this one, which was trained on its
+        own.  The seats' ranges are built differently (the second seat of nine with 20bb: pairs from 99 and
+        every suited ace but A6s; the third: pairs from 55, the suited aces from A9s and A5s), and the
+        players behind call the later seat with more hands (PLAYBOOK.md).  With 17bb or more no table moves
+        all-in on such a number."""
+        with open(os.path.join(ROOT, "poker_coach", "data", "short.json")) as fh:
+            games = json.load(fh)["games"]
         for stack in S.stacks():
             odd = []
             for player in range(6):                     # up to the cutoff and the button; the small blind is another game
                 here, behind = S.node(stack, player, 0), S.node(stack, player + 1, 0)
                 odd += [(SEATS[player], HANDS[h], here[h], behind[h]) for h in range(169) if here[h] > 0 >= behind[h]]
-            self.assertLessEqual(len(odd), 0 if stack <= 7 else 4 if stack <= 12 else 12, (stack, odd))
-            for _, _, mine, next_one in odd:            # the two numbers are within their noise of each other
-                self.assertLess(mine - next_one, 4 * S.close(stack), (stack, odd))
+            self.assertEqual(len(odd), games["9"]["crossed"][f"{stack:g}"][-1], (stack, odd))       # the file's own count
+            self.assertLessEqual(len(odd), self.CROSSED[int(stack)], (stack, odd))
+            for _, _, mine, next_one in odd:            # worth next to nothing from both seats
+                self.assertLess(mine - next_one, self.APART, (stack, odd))
+        # the smaller tables, from their own solutions: the file's count is the count, and it is what it was
+        for players, most in self.CROSSED_SMALL.items():
+            total = 0
+            for stack in S.stacks(players):
+                odd = sum(1 for player in range(players - 3) for a, b in zip(S.node(stack, player, 0, players), S.node(stack, player + 1, 0, players))
+                          if a > 0 >= b)
+                self.assertEqual(odd, games[str(players)]["crossed"][f"{stack:g}"][-1], (players, stack))
+                total += odd
+            self.assertLessEqual(total, most, players)
+        # what the passes were for: the file keeps the count after each, and no pass raised it
+        for players, game in games.items():
+            first, second, third = (sum(game["crossed"][f"{stack:g}"][k] for stack in S.stacks(int(players))) for k in range(3))
+            self.assertTrue(first >= second >= third, (players, first, second, third))
+        first, second, third = (sum(games["9"]["crossed"][f"{stack:g}"][k] for stack in S.stacks()) for k in range(3))
+        self.assertGreater(first, 4 * third)
 
     def test_with_three_big_blinds_the_first_seat_plays_a_quarter_of_its_hands_not_most_of_them(self):
         """The number this file exists for: one caller at a time said 84%."""
@@ -415,9 +458,13 @@ class Engine(unittest.TestCase):
                 self.assertAlmostEqual(mine, ev, places=6)
             else:
                 # above ten big blinds a player with no read moves in with a little less than the solved game's
-                # range (a tenth less at 20bb, as the deeper tables take him): the exact answer, moved by that
+                # range (a tenth less at 20bb, as the deeper tables take him): the exact answer, moved by that.
+                # A hand that is a call or near one is no better against the fewer hands.  (A hand far from a
+                # call can be: with 20bb the first seat's tenth is A9s and KQo, and K9o, which KQo had dominated,
+                # has half a point more against the rest.)
                 self.assertLess(abs(mine - ev), 1.5, (HANDS[hand], stack, SEATS[hero], facing))
-                self.assertLess(mine, ev + 0.1, (HANDS[hand], stack, SEATS[hero], facing))
+                if ev > -1.0:
+                    self.assertLess(mine, ev + 0.1, (HANDS[hand], stack, SEATS[hero], facing))
             self.assertEqual(adv.action.startswith(("CALL", "ALL-IN")), mine > 0, (HANDS[hand], stack, SEATS[hero], facing, adv.action, mine))
             if not two:
                 # said in the engine's own words: the equity and what is needed stand on the same side as the answer
@@ -464,14 +511,30 @@ class Engine(unittest.TestCase):
         self.assertGreater(mine, 0.8 * own)
 
     def test_what_is_called_close_goes_by_the_noise_of_the_number(self):
-        """About twice the noise: it grows with the stack, and with two players all-in the first pass stands."""
+        """About one and a half times the noise, and 0.05bb at least: it grows with the stack, and with two
+        players all-in before, where three stacks swing, it is a third wider."""
         self.assertEqual((S.close(5), S.close(10), S.close(20)), (0.05, 0.05, 0.1))
-        self.assertEqual((S.close(5, 2), S.close(20, 2)), (0.15, 0.3))
+        self.assertEqual((S.close(5, 2), S.close(10, 2), S.close(20, 2)), (0.05, 0.065, 0.13))
         self.assertEqual(P._exact_conf(0.04, 8, 1), "close")
         self.assertEqual(P._exact_conf(0.12, 8, 1), "standard")
-        self.assertEqual(P._exact_conf(0.12, 8, 2), "close")
-        self.assertEqual(P._exact_conf(0.4, 20, 2), "standard")        # clear starts at twice the band
-        self.assertEqual(P._exact_conf(0.7, 20, 2), "clear")
+        self.assertEqual(P._exact_conf(0.05, 8, 2), "close")
+        self.assertEqual(P._exact_conf(0.12, 8, 2), "standard")        # it was close while the first pass stood there
+        self.assertEqual(P._exact_conf(0.12, 20, 2), "close")
+        self.assertEqual(P._exact_conf(0.2, 20, 2), "standard")        # clear starts at twice the band
+        self.assertEqual(P._exact_conf(0.3, 20, 2), "clear")
+        # the noise is the one the data file keeps: what the numbers the second pass left are good to, the
+        # middle one of them, at every stack of every table, with one player all-in before and with two
+        with open(os.path.join(ROOT, "poker_coach", "data", "short.json")) as fh:
+            d = json.load(fh)
+        for players, game in d["games"].items():
+            for stack in S.stacks(int(players)):
+                for count in (1, 2):
+                    if game["noise"][f"{stack:g}"][1][count] is None:           # three players, a stack with no such hand near zero
+                        continue
+                    typical, largest = game["noise"][f"{stack:g}"][1][count]
+                    self.assertGreaterEqual(S.close(stack, count), 1.4 * typical, (players, stack, count))
+                    self.assertLessEqual(S.close(stack, count), max(0.05, 2.0 * typical), (players, stack, count))
+                    self.assertGreater(S.close(stack, count), 1.15 * largest, (players, stack, count))
         # the engine says so: a call within the band is close, whichever side it falls on
         evs = S.node(8.0, 8, 1 << 6)
         edge = min(range(169), key=lambda h: abs(evs[h]) if evs[h] != 0 else 9)
