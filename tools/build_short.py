@@ -5,7 +5,8 @@
                                                  # on four processors for the big blind ante (14 minutes a stack for nine
                                                  # players, 2 for the smaller tables together, 40 minutes for the second
                                                  # pass) and seven for the ante of every player, which has two tables more
-                                                 # (eight players: 7 minutes a stack, seven players: 4)
+                                                 # (eight players: 8 minutes a stack, seven players: 4; nine players took
+                                                 # 17 there, with other work on the same machine)
     python3 tools/build_short.py --work DIR      # keeps the solver's own output there, and uses what is there already
     python3 tools/build_short.py --work DIR --ante player   # that kind only: the other is kept as the data file has it
     python3 tools/build_short.py --work DIR --fine-only     # the second pass for the solutions that are in DIR, no more
@@ -28,8 +29,9 @@ him.
 The tables (GAMES).  With a big blind ante: 9, 6, 5, 4 and 3 players; 7 and 8 are read from the last
 seats of the nine, where the same big blind of ante is in the pot.  With an ante from every player the
 pot goes with the number of players (1.125bb at nine, 1bb at eight, 0.875bb at seven), so 8 and 7 are
-solved as well: read from the nine, a table of eight would play for an eighth of a big blind that is
-not there.
+solved as well.  (Read from the nine, a table of eight would play for an eighth of a big blind that is
+not there.  Measured afterwards, that is 1.3% of hands first in and 0.6% of the calls at eight players,
+1.8% and 1.0% at seven: about the size of the noise.)
 
 Two passes.  The first solves the game and samples every hand of every decision point 10,000 times: a
 number is then good to about 0.06bb first in and 0.1bb for a call with 6 to 10bb, more with a deeper

@@ -524,29 +524,47 @@ python3 -m unittest tests.test_guide tests.test_short    # the style, the builde
   blind from each player in every hand, which is GGPoker's and what the
   table app takes a tournament to have. At eight players it is the same
   money in the pot and still another game: the big blind keeps one big
-  blind more behind (against a button all-in of 5bb he calls with 58% of hands,
-  not 73%), and a smaller table plays for a
-  smaller pot (0.75bb of ante at six players, 0.375bb at three, a quarter
-  with two). The second game has tables of its own, `name+each`
-  (`open+each` at nine players, `open+each@8` at eight), where the answer
-  is read from its exact solution: the same spots as above, at every table
-  size from 3 to 9; and two players, every table (`hu_open+each`), because
-  the engine's solver is exact there and the pot is another one. Every
-  other table (a raise that does not commit the raiser, re-raises, three
-  players in the pot, 22bb and more with three players or more) is the
-  big blind ante's whichever is chosen, and the chart says so under it
-  (`ownAnte` in `guide/guide.js`). Measured by asking the engine again
-  with the ante of every player at the real table size
-  (`tools/check_guide_ante.py`, 300 spots a table size): 1.2% of hands
-  play differently at eight and nine players, 2.4% at six, 4.4% at three,
-  nearly all of them marked close; most where the big blind's stack is the
-  one played for (the user is the big blind against a raise, or the big
-  blind moved all-in over the user's raise, with 20bb or less), and there
-  the table one big blind deeper is the nearer one: say so when the user
-  asks about such a spot on GGPoker. The solution is for an eighth: an
-  ante from 0.115 to 0.135 of a big blind (30 at 125/250, 40 at 150/300)
-  is read from it and the answer says so. The page starts on "Big blind"
-  and Reset goes back to it; the choice is kept between visits.
+  blind more behind (against a button all-in of 5bb he calls with 58% of
+  hands, not 73%), and a smaller table plays for a smaller pot (0.75bb of
+  ante at six players, 0.375bb at three, a quarter with two). The second
+  game has tables of its own, `name+each` (`open+each` at nine players,
+  `open+each@8` at eight), where the answer is read from its exact
+  solution: the same spots as above, at every table size from 3 to 9; and
+  two players, every table (`hu_open+each`), because the engine's solver
+  is exact there and the pot is another one. Every other table (a raise
+  that does not commit the raiser, players who only called with 7bb or
+  more, re-raises, three players in the pot, 22bb and more with three
+  players or more) is the big blind ante's whichever is chosen, and the
+  chart says so under it (`ownAnte` in `guide/guide.js`). Measured by
+  asking the engine again with the ante of every player at the real table
+  size (`tools/check_guide_ante.py`, 300 spots a table size): 1.2% of
+  hands play differently at eight and nine players, 2.4% at six, 4.4% at
+  three, five in six of them marked close. Most of it is where the big
+  blind's stack is the one played for (the user is the big blind against
+  a raise, or the big blind moved all-in over the user's raise, with 20bb
+  or less), and there the table one big blind deeper is the nearer one:
+  say so when the user asks about such a spot on GGPoker. The changes
+  that are not close sit behind players who only called with 7 to 20bb at
+  a short table (2.5% of hands at six players, 6% at three) and after the
+  user's raise met a re-raise and an all-in (2%): for such a spot on
+  GGPoker run `quick` with `--ante player` and `--players`. The solution
+  is for an eighth: an ante from 0.115 to 0.135 of a big blind (30 at
+  125/250, 40 at 150/300) is read from it and the answer says so. The
+  page starts on "Big blind" and Reset goes back to it; the choice is kept
+  between visits.
+- **A tracked table and the table app read the second game too.** Their
+  ante is an eighth from every player. On chips (players left or places
+  paid not entered, re-entry open) an all-in of 20bb or less, first in or
+  as a call, is the exact game's answer. With prizes counted the user's
+  own decision is the ICM solver's as before, but the hands an all-in
+  player is taken to hold, and the hands that call one, are read from the
+  exact game. Those are fewer and better than the engine's own solver had
+  them (a cutoff all-in of 15bb is a quarter of all hands, not 29%; the
+  hands that raise over a 5bb all-in 13%, not 22%), so some
+  plays that were close are folds now: against an all-in of 5bb and a
+  raise over it only JJ+ and AK move in, where 99+ and AQ did. A tag of
+  nit, lag, station or maniac on a player sends the spot to the engine's
+  own solver, as does a player sitting out.
 - **The answers are the engine's, on chips:** no prizes, equal stacks, the
   ante chosen. `Play to win` is `ranges.set_style("win")`: wider
   opening rows (13% first to act at nine players, 36% cutoff, 50% button;
@@ -980,7 +998,7 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   previous tournament. The table app keeps its own sessions beside it, in
   `tournament/app/`; the two do not read each other.
 - After the tournament, if asked for a review, use `log` and `show --log 30`.
-- Tests: `python3 -m unittest discover -s tests` (about 760 tests, seven
+- Tests: `python3 -m unittest discover -s tests` (about 790 tests, seven
   minutes; the live reader's tests need
   `pip install -r requirements-live.txt`; without it they are skipped). Rebuild data only if ranges
   or the solver change: `tools/gen_preflop_equity.c` (equity table),

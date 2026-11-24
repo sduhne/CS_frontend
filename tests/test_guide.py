@@ -1087,7 +1087,8 @@ class Ante(unittest.TestCase):
             self.assertEqual(mine["ante"], ante, (st, hand))
             letters = B.unpack(self.table(where, "win", "unknown", mine["key"])["a"])
             self.assertEqual(B.ACTIONS[(B.CODES + B.CLOSE).index(letters[HANDS.index(hand)]) % len(B.CODES)], mine["name"], (st, hand))
-        js = open(os.path.join(GUIDE, "guide.js")).read()
+        with open(os.path.join(GUIDE, "guide.js")) as fh:
+            js = fh.read()
         self.assertIn("This table counts a big blind ante of 1bb", js)
         self.assertIn('chipRow(D.antes.kinds.map((a) => [a, ANTE[a] || a]), st.ante, "ante", true)', js)
         self.assertIn('const ANTE = {bb: "Big blind", player: "Every player"};', js)
@@ -1151,9 +1152,11 @@ class AnteMoves(unittest.TestCase):
     """What the Ante choice does not change: the tables that are not read from the exact solution, at three
     players and more, are made with the big blind ante.  Here a sample of them is asked again with an eighth of
     a big blind from every player, at a table of eight (GGPoker's), and held to what the page and the playbook
-    say of the difference: a few hands at the edge, nearly all of them marked close.  (Measured over 300 spots
-    a table size: 1.2% of hands at eight and nine players, 2.4% at six, 4.4% at three; under 1% not marked
-    close.  Most where the big blind's stack is the one played for, and less one big blind deeper.)"""
+    say of the difference: a few hands at the edge, five in six of them marked close.  (Measured over 300 spots
+    a table size, tools/check_guide_ante.py: 1.2% of hands at eight and nine players, 2.4% at six, 4.4% at
+    three; under 1% not marked close.  Most where the big blind's stack is the one played for, and less one big
+    blind deeper.  The changes that are not close sit behind players who only called with 7 to 20bb at a short
+    table, and after a raise of the user's met a re-raise and an all-in.)"""
 
     def tearDown(self):
         R.set_style("tag")
@@ -1192,6 +1195,27 @@ class AnteMoves(unittest.TestCase):
         for key, question in rng.sample(groups["open"], 3):
             self.assertEqual(B.table(opp="unknown", **question)["a"],
                              B.table(opp="unknown", **dict(question, ante="player"))["a"], key)
+
+    def test_behind_a_caller_at_a_short_table_is_where_those_tables_are_furthest_off(self):
+        """The limit the page's notes and the playbook name.  Three players, the button only called, the user is
+        the big blind with 17bb: the page's table (nine seats, a big blind ante, 15bb left after posting) moves
+        all-in with most of the hands it plays; with an eighth from every player (15.9bb left, 0.6bb less in
+        the pot) the engine checks or raises small with more than half of all hands instead."""
+        R.set_style("win")
+        key = (0, 1, 17)
+        question = dict(B.fam_limp())[key]
+        page = B.table(opp="unknown", **question)["a"]
+        again = B.table(opp="unknown", **B.at_table("limp", key, 3, "player"))["a"]
+        moved, not_close = self.moved(page, again)
+        self.assertGreater(not_close, 40.0)
+        went = lambda letters, codes: sum(B.COMBO_COUNT[h] for h in range(169) if page[h] in "aA" and letters[h] in codes) / 13.26     # noqa: E731
+        self.assertGreater(went(again, "xX"), 25.0)         # all-in on the page, a check in that game
+        self.assertGreater(went(again, "rQRW"), 15.0)       # ... or a small raise
+        # at a table of eight the same family is near: the pot is the same there
+        near = [self.moved(B.table(opp="unknown", **q)["a"], B.table(opp="unknown", **B.at_table("limp", k, 8, "player"))["a"])[1]
+                for k, q in random.Random(5).sample([(k, q) for k, q in B.fam_limp() if 7 <= k[2] <= 20 and all(x < 8 for x in k[:1])
+                                                       and B.at_table("limp", k, 8)], 6)]
+        self.assertLess(sum(near) / len(near), 1.5)
 
     def test_two_players_are_another_game_and_have_their_own_tables(self):
         """A quarter of a big blind of ante in place of one: a tenth of the hands or more change, at every depth
@@ -1252,7 +1276,8 @@ class Speed(unittest.TestCase):
         self.assertLess(every["at_blind"], his["at_blind"] - 0.5)       # six hands of an eighth paid before the big blind comes
         self.assertAlmostEqual(every["orbit"], his["orbit"], delta=0.15)       # the same 2.5bb a round
         self.assertGreater(L.fold_clock(12, 6, 2, "regular", "player")["orbit"], L.fold_clock(12, 6, 2, "regular", "bb")["orbit"] + 0.2)
-        self.assertIn("clock(st.stack, n, st.seat, st.speed, st.ante)", open(os.path.join(GUIDE, "guide.js")).read())
+        with open(os.path.join(GUIDE, "guide.js")) as fh:
+            self.assertIn("clock(st.stack, n, st.seat, st.speed, st.ante)", fh.read())
 
     def test_what_the_clock_says(self):
         from poker_coach import latereg as L

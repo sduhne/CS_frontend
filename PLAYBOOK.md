@@ -93,9 +93,13 @@ Sizes: 2x under 25bb, 2.2x to 40bb, 2.3-2.5x deeper, 3x from the small blind.
   all-in does it with many more hands than a re-raise over a full raise.
   With 45bb or less a hand moves all-in when it is ahead of those hands
   (55% or more against all of them, and at least even against the better
-  half) and the all-in's number clears +1bb: against a 5bb all-in and a
-  raise to 11bb about 99+ and AQ; against a 12bb all-in and a raise to 26bb
-  still JJ+ and AK only. Against a raiser tagged nit or tight only JJ+ and
+  half) and the all-in's number clears +1bb. His hands are read from the
+  hands that call that all-in, which with either solved ante are the exact
+  game's ("All-ins of 20bb or less", below): about a fifth of all hands
+  against 3bb, a sixth against 4bb, an eighth against 5bb. So against a 3bb
+  all-in and a raise to 7bb 99+, AQs and AK move in (TT+ and AK with a big
+  blind ante); against 4bb and a raise to 10bb TT+ and AK; against 5bb or
+  more JJ+ and AK only. Against a raiser tagged nit or tight only JJ+ and
   AK play.
 - **You raised, a player re-raised and another moved all-in over both:**
   that all-in is the narrowest range before the flop, and the re-raiser is
@@ -141,6 +145,16 @@ At 10bb that means roughly:
 These are chip-EV numbers. On the bubble the coach recomputes them with ICM
 for the real stacks: shove ranges shrink when players who cover you will call,
 and the coach assumes opponents call wider than a perfect ICM player would.
+
+They are the engine's own solver's, which sets an all-in against one caller
+at a time. On chips, with 20bb or less and one of the two antes that are
+solved exactly (one big blind from the big blind, or an eighth of a big
+blind from every player, which a tracked table and the table app have), the
+coach reads the exact tables instead, for its own all-in and for the hands
+it takes an opponent's all-in to be. Those are a few points tighter than
+this table from the cutoff, the button and the small blind ("All-ins of
+20bb or less: solved exactly" and "The ante of every player", under "Turbo
+and hyper-turbo").
 
 ## Calling an all-in
 
@@ -1268,6 +1282,156 @@ big blind against an all-in from the button:
   tables must have 10 points of equity to spare over everything it needs,
   hand by hand; the close ones are folded as everywhere.
 
+### The ante of every player
+
+GGPoker takes the ante from every player in every hand: about an eighth of
+a big blind each (25 at 100/200, 75 at 300/600). The second solution is that
+game. The quick guide reads it with Ante on "Every player", `quick` with
+`--ante player`, and a tracked table or the table app whenever the ante of
+the hand is that one (`short.covered` picks the game from the antes).
+
+It is another game in two ways.
+
+- **The money in the pot goes with the table.** 1.125bb of ante at nine
+  players, 1bb at eight, 0.875bb at seven, 0.75bb at six, 0.375bb at three,
+  where a big blind ante puts one big blind in at every table. So every
+  table from 3 to 9 players is solved as such, where with a big blind ante
+  7 and 8 players are read from the last seats of the nine. For 7 and 8
+  that changed little: read from the nine, a table of eight would play
+  1.3% of hands differently first in and 0.6% of the calls (0.0004bb a
+  decision, about the size of the noise), a table of seven 1.8% and 1.0%.
+  It grows as the table shrinks: six players 2.1% and 1.5%, three players
+  4.3% and 2.7%, with first-in ranges 3 points of hands too wide.
+- **The big blind has paid an eighth, not a whole big blind.** At eight
+  players the pot is the same, but he keeps one big blind more behind.
+  Against an all-in of 5bb he has 3.9bb left to call with, not 3bb, and
+  with 2bb he is not all-in from posting.
+
+The second counts for more than it sounds. The big blind against an all-in
+at a table of eight: the share of hands that call, with each ante.
+
+| The all-in from, and the ante | 2bb | 3bb | 4bb | 5bb | 6bb | 7bb | 8bb | 9bb | 10bb | 12bb | 16bb | 20bb |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| the first seat, big blind ante | 100% | 100% | 95% | 61% | 37% | 30% | 22% | 19% | 16% | 10% | 8% | 6% |
+| the first seat, every player | 100% | 99% | 68% | 44% | 32% | 26% | 22% | 18% | 14% | 10% | 6% | 6% |
+| the button, big blind ante | 100% | 100% | 96% | 73% | 52% | 45% | 36% | 33% | 31% | 28% | 23% | 18% |
+| the button, every player | 100% | 99% | 76% | 58% | 46% | 40% | 35% | 32% | 30% | 28% | 23% | 18% |
+| the small blind, big blind ante | 100% | 100% | 97% | 79% | 70% | 61% | 56% | 50% | 48% | 43% | 34% | 30% |
+| the small blind, every player | 100% | 99% | 82% | 71% | 62% | 57% | 53% | 48% | 45% | 41% | 34% | 29% |
+
+Up to 3bb nothing changes: most of his stack is in the pot with either
+ante. From 4 to 7bb the last big blind is his to keep, and he calls with
+far fewer hands: against the button 76% for 96% with 4bb, 58% for 73% with 5bb,
+46% for 52% with 6bb. From 8bb the two are within 4 points of hands.
+
+First in at a table of eight with the ante of every player: the share
+of hands that are a profitable all-in.
+
+| Seat | 2bb | 3bb | 4bb | 5bb | 6bb | 7bb | 8bb | 9bb | 10bb |
+|---|---|---|---|---|---|---|---|---|---|
+| UTG | 37% | 30% | 28% | 25% | 23% | 22% | 20% | 18% | 16% |
+| UTG+1 | 38% | 33% | 31% | 27% | 25% | 23% | 21% | 20% | 19% |
+| LJ | 41% | 37% | 33% | 32% | 30% | 28% | 25% | 25% | 23% |
+| HJ | 46% | 39% | 35% | 33% | 32% | 31% | 30% | 29% | 28% |
+| CO | 50% | 43% | 42% | 39% | 37% | 36% | 33% | 32% | 31% |
+| BTN | 57% | 53% | 49% | 48% | 46% | 42% | 42% | 40% | 39% |
+| SB | 98% | 85% | 79% | 76% | 75% | 73% | 71% | 67% | 67% |
+
+With 3bb:
+
+| Seat | All-in with |
+|---|---|
+| UTG | 44+, A2s+, K4s+, Q8s+, J8s+, T8s+, 98s, 87s, A4o+, K9o+, QTo+, JTo |
+| UTG+1 | 44+, A2s+, K3s+, Q6s+, J8s+, T8s+, 97s+, A3o+, K9o+, Q9o+, JTo |
+| LJ | 33+, A2s+, K2s+, Q6s+, J7s+, T7s+, 97s+, 87s, A2o+, K9o+, Q9o+, J9o+, T9o |
+| HJ | 33+, A2s+, K2s+, Q5s+, J7s+, T7s+, 97s+, 87s, A2o+, K7o+, Q9o+, J9o+, T9o |
+| CO | 33+, A2s+, K2s+, Q3s+, J7s+, T7s+, 97s+, 87s, A2o+, K5o+, Q8o+, J8o+, T9o |
+| BTN | 22+, A2s+, K2s+, Q2s+, J4s+, T6s+, 97s+, 87s, A2o+, K2o+, Q6o+, J7o+, T8o+, 98o |
+| SB | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 92s+, 82s+, 73s+, 63s+, 53s+, A2o+, K2o+, Q2o+, J2o+, T2o+, 92o+, 84o+, 75o+ |
+
+With 6bb:
+
+| Seat | All-in with |
+|---|---|
+| UTG | 22+, A2s+, K9s+, Q9s+, J9s+, T9s, A7o+, A5o, KTo+, QJo |
+| UTG+1 | 22+, A2s+, K7s+, Q9s+, J9s+, T9s, A5o+, KTo+, QJo |
+| LJ | 22+, A2s+, K6s+, Q9s+, J9s+, T9s, A2o+, KTo+, QTo+, JTo |
+| HJ | 22+, A2s+, K4s+, Q8s+, J8s+, T8s+, 98s, A2o+, KTo+, QTo+, JTo |
+| CO | 22+, A2s+, K2s+, Q7s+, J7s+, T8s+, 98s, 87s, A2o+, K8o+, Q9o+, JTo, T9o |
+| BTN | 22+, A2s+, K2s+, Q2s+, J7s+, J5s, T7s+, 97s+, 86s+, A2o+, K3o+, Q8o+, J9o+, T9o |
+| SB | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 92s+, 84s+, 74s+, 64s+, 53s+, 43s, A2o+, K2o+, Q2o+, J2o+, T5o+, 96o+, 86o+, 76o |
+
+With 10bb:
+
+| Seat | All-in with |
+|---|---|
+| UTG | 33+, A3s+, K9s+, Q9s+, J9s+, T9s, ATo+, KQo |
+| UTG+1 | 22+, A2s+, K9s+, Q9s+, J9s+, T9s, A9o+, KJo+ |
+| LJ | 22+, A2s+, K9s+, Q9s+, J9s+, T8s+, 98s, A7o+, A5o, KJo+, QJo |
+| HJ | 22+, A2s+, K8s+, Q9s+, J9s+, T8s+, 98s, A3o+, KTo+, QJo, JTo |
+| CO | 22+, A2s+, K6s+, Q8s+, J8s+, T8s+, 98s, 87s, A2o+, KTo+, QTo+, JTo |
+| BTN | 22+, A2s+, K2s+, Q5s+, J7s+, T7s+, 97s+, 86s+, 76s, 65s, A2o+, K9o+, Q9o+, J9o+, T9o |
+| SB | 22+, A2s+, K2s+, Q2s+, J2s+, T2s+, 94s+, 84s+, 74s+, 64s+, 53s+, A2o+, K2o+, Q2o+, J6o+, T7o+, 97o+, 87o, 76o |
+
+Calling one all-in at a table of eight with the ante of every player:
+the share of hands that call.
+
+| You, and the all-in from | 2bb | 3bb | 4bb | 5bb | 6bb | 7bb | 8bb | 9bb | 10bb | 12bb | 16bb | 20bb |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| UTG+1, UTG | 30% | 24% | 19% | 16% | 12% | 11% | 10% | 9% | 8% | 7% | 5% | 4% |
+| BTN, UTG | 39% | 29% | 23% | 19% | 16% | 13% | 12% | 10% | 10% | 8% | 6% | 5% |
+| BTN, CO | 41% | 35% | 30% | 27% | 23% | 20% | 18% | 17% | 16% | 15% | 12% | 10% |
+| SB, BTN | 84% | 62% | 48% | 38% | 34% | 31% | 29% | 29% | 25% | 22% | 18% | 15% |
+| BB, UTG | 100% | 99% | 68% | 44% | 32% | 26% | 22% | 18% | 14% | 10% | 6% | 6% |
+| BB, CO | 100% | 98% | 74% | 53% | 38% | 33% | 30% | 27% | 26% | 23% | 16% | 12% |
+| BB, BTN | 100% | 99% | 76% | 58% | 46% | 40% | 35% | 32% | 30% | 28% | 23% | 18% |
+| BB, SB | 100% | 99% | 82% | 71% | 62% | 57% | 53% | 48% | 45% | 41% | 34% | 29% |
+
+Short-handed there is less in the pot to win than a big blind ante puts
+there. First in from the button and from the small blind, with a big blind
+ante and with the ante of every player:
+
+| Table, seat, ante | 3bb | 5bb | 8bb | 10bb | 16bb | 20bb |
+|---|---|---|---|---|---|---|
+| 6 players, button, big blind ante | 54% | 49% | 43% | 40% | 33% | 33% |
+| 6 players, button, every player | 52% | 47% | 40% | 37% | 33% | 30% |
+| 6 players, small blind, big blind ante | 99% | 80% | 74% | 70% | 58% | 53% |
+| 6 players, small blind, every player | 84% | 77% | 70% | 63% | 53% | 46% |
+| 3 players, button, big blind ante | 57% | 54% | 48% | 43% | 34% | 33% |
+| 3 players, button, every player | 50% | 45% | 40% | 35% | 32% | 25% |
+| 3 players, small blind, big blind ante | 100% | 85% | 77% | 71% | 60% | 54% |
+| 3 players, small blind, every player | 84% | 75% | 67% | 63% | 52% | 45% |
+
+- **In the big blind, count your own stack.** With the ante of every player
+  you call an all-in of 4 to 7bb with far fewer hands than a chart made for
+  a big blind ante says: at a table of eight against the button
+  58% for 73% with 5bb, at a table of three 55% for 89%. That chart is
+  right for a player who has one big blind less than you have.
+- **First in, a full table plays nearly the same hands with either ante.**
+  At eight players the seats before the blinds move all-in with
+  0.5 points of hands more on average with 5 to 10bb, the small blind with
+  2 fewer. With 2 to 4bb they part a little: the seats before the blinds
+  have 3 points more (the big blind folds some hands now), and the small
+  blind 9 fewer with 3 and 4bb (the big blind who calls has a whole stack to
+  win with). At nine players, where the pot has an eighth of a big blind
+  more, the seats before the blinds have 0.8 points more with 5 to 10bb and
+  the small blind 2 fewer.
+- **Short-handed, everybody is tighter than the big blind ante's chart**,
+  because there is less to win: with 5 to 10bb the button moves in with
+  3 points of hands fewer at six players and 7 fewer at three, the
+  small blind with 4 and 9 fewer.
+- **An ante that is not quite an eighth.** The levels of a structure move
+  around it: 30 at 125/250 is 0.12 of a big blind, 40 at 150/300 is 0.133.
+  Every ante from 0.115 to 0.135 is read from this solution, and the answer
+  says so. Solved again with 0.12 and with 0.133 (six players, 6 and 10bb,
+  both passes), 0.3 to 1.9% of hands change sides, and no more than 2
+  hands in 10,000 do so outside the 0.05bb that is marked close anyway; a
+  hand near zero moves by 0.04bb at most on average, a range by a point.
+- **Everything else is as above.** Two passes, the same stacks, a straight
+  line between them, at most two players all-in before you, equal stacks or
+  players behind who cover you, chips only; up to 10bb the whole answer,
+  from 11 to 20bb the all-in's number.
+
 ### What it was checked against
 
 - **The solver against a second program.** `tools/check_short.py` plays the
@@ -1317,14 +1481,36 @@ checks, and two of its own:
 
 - **The solver against the second program.** `tools/check_short.py` reads
   the ante from the solution it is given, and its pots were written again
-  for an ante from every player. @@CHECKED@@
-- **The solver against itself.** @@SELF@@
-- **A straight line between stacks.** @@LINE@@
+  for an ante from every player. At 304 decision points (26 solutions,
+  every table from three to nine players, 3 to 16bb) the two agree within
+  the noise of both. With 6,000 deals 78 points were more than 0.12bb
+  apart; those were played out again with 60,000 deals, and the 28 still
+  more than 0.11bb apart were sampled again by the solver with 400,000
+  deals a hand. Each gap was the first pass's noise or the play-out's: the
+  widest one left is 0.17bb, on a hand far from zero (72o first in with
+  16bb at six players), and it came to 0.02bb when that hand was played
+  out 300,000 times. Of the 54 hands within 0.15bb of zero with nobody or
+  one player all-in, where the second pass's number is kept, the widest
+  gap is 0.12bb, and each is on the same side of zero in both programs or
+  within 0.05bb of it. With two players all-in, where the first pass
+  stands, one kept number was 0.3bb out (QJs with 8bb at nine players:
+  +0.03, where 400,000 deals give +0.28); the guide marks it close.
+- **The solver against itself.** What the strategy it trained gives up to
+  the best reply each time a decision comes up, at every table size: with
+  nobody all-in before 0.002bb at most; with one player all-in 0.006bb at
+  most, and under 0.002bb at nine decision points in ten; with two players
+  all-in under 0.016bb at nine in ten and 0.1bb at most (20bb spots that
+  come up rarely). Noise in a number near zero counts as a loss in these,
+  so they are upper limits.
+- **A straight line between stacks.** The answers at 10bb, drawn from 8bb
+  and 12bb as if 10bb had not been solved: 0.8 to 1.8% of hands change
+  sides first in (by table size) and 0.5 to 0.8% of the calls, all at the
+  edge of a range (0.0001 to 0.0004bb a decision).
 - **An ante near an eighth.** Solved again with 0.12 and with 0.133 of a
   big blind a player in place of 0.125 (six players, 6 and 10bb, both
-  passes): 0.3 to 1.9% of hands change sides, all but 2 in 10,000 of them
-  inside the 0.05bb that is marked close; a hand near zero moves by 0.04bb
-  at most on average.
+  passes): 0.3 to 1.9% of hands change sides, and no more than 2 hands in
+  10,000 do so outside the 0.05bb that is marked close; a hand near zero
+  moves by 0.04bb at most on average.
 - **The big blind ante's tables after the change.** All 109,188 spots of the
   guide were built again with the engine as it is now and came out the
   same, table for table: the second game changed no answer of the first.
@@ -1332,7 +1518,7 @@ checks, and two of its own:
   page 1,400 random spots (first in, against one all-in and against two,
   and two players; both antes, every kind of opponent and both styles, at
   the real table size) and compares each answer with the engine asked with
-  the ante the table was made for: @@PAGE@@
+  the ante the table was made for: 1,400 of 1,400 the same.
 
 ### Limits
 
@@ -1344,10 +1530,11 @@ checks, and two of its own:
 - In the quick guide the Ante choice changes the tables that are read from
   the exact solution, at every table size, and the tables for two players.
   Every other table is made with the big blind ante whichever is chosen: a
-  raise that does not commit the raiser, re-raises, three players in the
-  pot, and everything above 20bb with three players or more. The chart
-  says so under it. Asked again with the ante of every player at the real
-  table size, a sample of 300 such spots a table size
+  raise that does not commit the raiser, players who only called with 7bb
+  or more, re-raises, three players in the pot, and everything above 20bb
+  with three players or more. The chart says so under it. Asked again
+  with the ante of every player at the real table size, a sample of 300
+  such spots a table size
   (`tools/check_guide_ante.py`) plays 1.2% of hands differently at eight
   players and at nine, 2.4% at six and 4.4% at three; the hands that change
   and are not marked close are 0.2% at eight, 0.1% at nine, 0.3% at six and
@@ -1358,8 +1545,16 @@ checks, and two of its own:
   three the big blind's stack is the one played for, and he has about one
   big blind more than a big blind ante leaves him: read at one big blind
   deeper, the same tables are within 0.1% (against a raise) and 1.1%
-  (his all-in) at eight players. First in above 20bb nothing changes at
-  all: the opening rows do not look at the ante.
+  (his all-in) at eight players. The changes that are not close sit in
+  three places: after your raise, a re-raise and an all-in (2% of hands at
+  every table size); behind players who only called with 7 to 20bb at a
+  short table (2.5% at six players, 6% at three); and at three players
+  after your raise was re-raised (2%). Single spots there change a lot: at
+  three players the big blind behind a button's call with 17bb moves
+  all-in on the page with most of his hands, and with the ante of every
+  player 32% of all hands check and 24% raise small instead. First in
+  above 20bb nothing changes at all: the opening rows do not look at the
+  ante.
 - They are for equal stacks, or for players behind who cover you. With a
   shorter stack still to act, with prizes counted, or with a strong read on
   a player, the engine's solver answers as before and says in a warning that
@@ -1380,7 +1575,9 @@ checks, and two of its own:
   and inside that band a hand can be in at one stack and out at the next.
   With two players all-in before you only the first pass was run: those
   numbers are good to 0.05bb with a few big blinds and 0.2bb with 20, and a
-  play within 0.15bb or more is marked close.
+  play within 0.15bb or more is marked close. That is the usual error:
+  among the thousands of such numbers some are three times as far out (the
+  check above met one, 0.3bb with 8bb).
 - Against a raise that does not commit the raiser, and behind a player who
   only called with 7bb or more, the engine's solver answers, with neither of
   the two effects above. What that costs can be read off the check above: a

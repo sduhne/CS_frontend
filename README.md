@@ -23,9 +23,10 @@ Cards, seat, stack in big blinds, what happened before you: the play, one
 sentence of why, the numbers behind it and the whole chart, at once. Nothing
 is worked out while you play: every answer is read from tables that
 `tools/build_guide.py` made by asking the engine about each of the 169 hands
-of every spot before the flop (@@SPOTS@@ spots, @@TABLES@@ different tables: every seat, 28 stack
-sizes, five sizes of a raise and four of a re-raise, three kinds of opponent, two styles, and for
-the short stacks both kinds of ante).
+of every spot before the flop (153,726 spots, 55,520 different tables:
+every seat, 28 stack sizes, five sizes of a raise and four of a re-raise,
+three kinds of opponent, two styles, and for the short stacks both kinds of
+ante).
 
 **To open it:** double-click `guide/index.html` ("Open Quick Guide.bat" on
 Windows). It is a page on your own computer: no Python, no internet. On a
@@ -146,28 +147,47 @@ table. On GGPoker every player pays an eighth of a big blind in every hand
 instead. At eight players that is the same money in the pot, and still
 another game: the big blind keeps one big blind more behind, and a smaller
 table plays for a smaller pot (0.75bb of ante at six players, 0.375bb at
-three, a quarter with two). With a short stack that moves the answers:
-at a table of eight the big blind calls a button all-in of 5bb with 58% of
-hands, where he calls with 73% when the whole ante was his, and one of 4bb
-with 76% for 96%; at six players the small blind moves all-in first with
-63% of hands for 70% with 10bb. So the all-ins of 20bb or less are solved a second time for
-that ante, at every table size from 3 to 9, each as such (with a big blind
-ante 7 and 8 players are read from the nine; here the pot would be wrong),
-and the tables for two players are made a second time, since the engine is
-exact there and the pot is a quarter of a big blind of ante in place of
-one. Ante set to "Every player" reads those. Every other table (a raise
-that does not commit the raiser, re-raises, three players in the pot,
-anything above 20bb with three players or more) is the one made with the
-big blind ante whichever is chosen, and the chart says so under it. What
-that leaves out was measured by asking the engine again with the ante of
-every player at the real table size (`tools/check_guide_ante.py`, 300
-spots a table size): 1.2% of hands play differently at eight and at nine
-players, 2.4% at six and 4.4% at three; all but 0.2% (0.7% at three) are
-hands the tables mark close. Most of it is where the big blind's stack is
-the one played for (you are the big blind against a raise, or the big
-blind moved all-in over your raise, with 20bb or less): he has about one
-big blind more than those tables count, and the table one big blind deeper
-is the nearer one. The blinds clock follows the choice.
+three, a quarter with two). With a short stack that moves the answers: at a
+table of eight the big blind calls a button all-in of 5bb with 58% of hands,
+where he calls with 73% when the whole ante was his, and one of 4bb with 76%
+for 96%; at six players the small blind moves all-in first with 63% of hands
+for 70% with 10bb. So the all-ins of 20bb or less are solved a second time
+for that ante, at every table size from 3 to 9, each as such, because the
+pot goes with the number of players (with a big blind ante 7 and 8 players
+are read from the nine; read that way here, a table of eight would play 1.3%
+of hands differently first in, about the size of the noise, and a table of
+three 4.3%), and the tables for two players are made a second time, since
+the engine is exact there and the pot is a quarter of a big blind of ante in
+place of one. Ante set to "Every player" reads those. Every other table (a
+raise that does not commit the raiser, players who only called with 7bb or
+more, re-raises, three players in the pot, anything above 20bb with three
+players or more) is the one made with the big blind ante whichever is
+chosen, and the chart says so under it. What that leaves out was measured by
+asking the engine again with the ante of every player at the real table size
+(`tools/check_guide_ante.py`, 300 spots a table size): 1.2% of hands play
+differently at eight and at nine players, 2.4% at six and 4.4% at three; all
+but 0.2% (0.7% at three) are hands the tables mark close. Most of it is
+where the big blind's stack is the one played for (you are the big blind
+against a raise, or the big blind moved all-in over your raise, with 20bb or
+less): he has about one big blind more than those tables count, and the
+table one big blind deeper is the nearer one. The changes that are not close
+sit behind players who only called with 7 to 20bb at a short table (2.5% of
+hands at six players, 6% at three) and after your raise met a re-raise and
+an all-in (2%); `PLAYBOOK.md` names the spots. The blinds clock follows the
+choice.
+
+**The same solution in the table app.** The table app and a tracked table
+(`sync`, `advise`) take a tournament to have the ante of every player, so
+they read the second solution too. With chips only, an all-in of 20bb or
+less is the exact answer, first in and as a call. With prizes counted your
+own decision is the prize calculation's as before, and the hands an all-in
+player is taken to hold, and the hands that call one, come from the exact
+game. They are fewer and better than the engine's own solver had them (a
+cutoff all-in of 15bb is a quarter of all hands, where it was 29%),
+so some plays that were close are folds now: against an all-in of 5bb and a
+raise over it only JJ+ and AK move in, where 99+ and AQ did. A player tagged
+nit, lag, station or maniac, or one sitting out, sends the spot to the
+engine's own solver as before.
 
 **Limits.** Stacks are taken as equal. Spots with three players in the pot
 are made for the big blind and four first seats, and the page says so when
@@ -188,25 +208,23 @@ is solved for an eighth of a big blind each; an ante from 0.115 to 0.135 is
 read from it (0.12 and 0.133 are levels of the same structures, and move a
 hand at the edge by a few hundredths of a big blind). First in the exact
 answers are for players who call correctly: the Opponents choice does not
-move them. It
-moves the calls, through the hands an all-in player is taken to hold: with
-Standard the solved range itself up to 10bb, and a little tighter from
-there, a tenth at 20bb, as the deeper tables assume. Their numbers come from
-dealing cards: every hand 10,000 times, and the hands that came out near
-zero another 100,000 times, which leaves those good to about 0.02bb with
-6bb, 0.03bb with 10bb and 0.06bb with 20bb. A play within 0.05bb (0.1bb with
-20bb) is marked close, and inside that band a hand can still be in from one
-seat and out from the next. With two players all-in before you only the
-first pass was run: those numbers are good to 0.05bb with a few big blinds
-and 0.2bb with 20, and a play within 0.15bb or more is marked close. Between
-two solved stacks (11, 13 to 15, 17 and 18bb) the numbers are read off a
-straight line. With a big blind ante, tables of 7 and 8 players are read
-from the nine-player solution (at eight that costs about 0.001bb a hand).
-Behind a player who
-only called with 6bb or less, they are that player's all-in with a caller's
-hands in its place. On the Bubble stage a call read from them must have 10
-points of equity to spare, hand by hand. Checked in headless Chromium on
-Linux only.
+move them. It moves the calls, through the hands an all-in player is taken
+to hold: with Standard the solved range itself up to 10bb, and a little
+tighter from there, a tenth at 20bb, as the deeper tables assume. Their
+numbers come from dealing cards: every hand 10,000 times, and the hands that
+came out near zero another 100,000 times, which leaves those good to about
+0.02bb with 6bb, 0.03bb with 10bb and 0.06bb with 20bb. A play within 0.05bb
+(0.1bb with 20bb) is marked close, and inside that band a hand can still be
+in from one seat and out from the next. With two players all-in before you
+only the first pass was run: those numbers are good to 0.05bb with a few big
+blinds and 0.2bb with 20, and a play within 0.15bb or more is marked close.
+Between two solved stacks (11, 13 to 15, 17 and 18bb) the numbers are read
+off a straight line. With a big blind ante, tables of 7 and 8 players are
+read from the nine-player solution (at eight that costs about 0.001bb a
+hand). Behind a player who only called with 6bb or less, they are that
+player's all-in with a caller's hands in its place. On the Bubble stage a
+call read from them must have 10 points of equity to spare, hand by hand.
+Checked in headless Chromium on Linux only.
 
 It is a chart. Most real-money sites forbid charts and outside help while
 you play: use it to study, to review hands and where help is allowed.
@@ -868,7 +886,7 @@ you play.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests        # about 720 tests, nine minutes
+python3 -m unittest discover -s tests        # about 790 tests, seven minutes
 ```
 
 The data files in `poker_coach/data/` are generated:

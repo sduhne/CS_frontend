@@ -551,8 +551,8 @@ SAME_IN_EVERY_STYLE = {"allin", "two_allin", "two_short", "hu_allin"}
 # page reads it when the table is that size and falls back to the family itself everywhere else.
 #
 # With the ante of every player the same families have tables for every table size the solution has, the
-# nine included ("name+each", "name+each@8"): there the pot goes with the number of players, and no table
-# size can be read from another.  Two players: every family of theirs, at every stack ("hu_open+each").
+# nine included ("name+each", "name+each@8"): there the pot goes with the number of players, and every
+# table size has a solution of its own.  Two players: every family of theirs, at every stack ("hu_open+each").
 SMALL = tuple(n for n in short.games() if n < N)
 EACH_TABLES = short.games("player")                       # 3 to 9
 SIZED = ("open", "limp", "limp_sb", "allin", "two_short", "vsraise")

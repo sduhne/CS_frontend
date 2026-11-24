@@ -121,8 +121,8 @@ To set it up again, or somewhere else:
 To update: copy the folder again over `/opt/menlo-guide` (all of it: the
 tables and the script belong together, and `index.html` names them with
 their numbers, `data.js?v=4` and `guide.js?v=7` in page 7, so a browser
-fetches the new ones). The tables are one file of @@DATAMB@@ MB; with `encode` the
-web server sends it compressed, about @@GZIPMB@@ MB. The live site answers with
+fetches the new ones). The tables are one file of 9.8 MB; with `encode` the
+web server sends it compressed, about 1.2 MB. The live site answers with
 `Cache-Control: private, no-cache`: the browser keeps its copy and asks
 each time whether it is still the current one, so an update shows at once.
 
@@ -136,4 +136,6 @@ a login, from outside, each after its swap: all 14 files are byte for byte
 those of the commit (158b83c, then 6faa24e), a wrong password and no login
 are refused (the page and `data.js` both), and `/poker` redirects. The page
 behind the real login was not opened in a browser by either session, and
-not on a phone: that check is the owner's.
+not on a phone: that check is the owner's. Page 7 (the Ante choice, the
+tables of both antes) was made in a session with no access to the server:
+it is live only once the folder has been copied.

@@ -14,9 +14,12 @@ Two games are solved, one for each kind of ante (``KINDS``), and kept side by si
   there count as players who folded, which costs about a thousandth of a big blind a hand at eight).
 * ``"player"``: every player pays an ante of an eighth of a big blind (``PLAYER_ANTE``), as on GGPoker.
   Tables of 9, 8, 7, 6, 5, 4 and 3 players, every one solved as such: here the money in the pot goes with
-  the number of players (1.125bb at nine, 1bb at eight, 0.75bb at six, 0.375bb at three), so a table of
-  eight cannot be read from the nine.  Against the first game the big blind keeps one big blind more
-  behind (with 2bb he is not all-in from posting) and a short-handed table plays for a smaller pot.
+  the number of players (1.125bb at nine, 1bb at eight, 0.75bb at six, 0.375bb at three), so no table is
+  read from another.  (Measured afterwards: read from the last seats of the nine, a table of eight would
+  play 1.3% of hands differently first in and 0.6% of the calls, about the size of the noise; a table of
+  six 2.1% and 1.5%, a table of three 4.3% and 2.7%.)  Against the first game the big blind keeps one big
+  blind more behind (with 2bb he is not all-in from posting) and a short-handed table plays for a smaller
+  pot.
 
 ``covered`` says which of the two a spot of the engine is, from the antes of its setup.  An ante of
 every player within ``ANTE_BAND`` of an eighth (0.12 and 0.133 are levels of the same structures) is

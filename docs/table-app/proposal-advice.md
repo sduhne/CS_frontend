@@ -109,7 +109,7 @@ Cost on six first-in spots (8 to 15bb): the guard removes 8 to 13% of hands (25%
 | ICM | plus average stack, or entrants and starting stack | real field stack |
 | ICM EXACT | plus the smallest prize and the final-table prizes | the real ladder |
 
-The same shove (A8o BTN 12bb, 185 left) is +1.57bb with ICM off, +0.69 with players left and paid, +0.88 once a 40bb average is entered. With inputs missing the panel still answers and puts the missing field inline; the guard treats the hand as before the money. Players left carries its age: a warning after 10 hands, after 3 on the bubble. The fold clock needs two updates of players left a minute apart; until then it shows orbits and minutes of blinds, plus the share of the sit-out line (`latereg.zone`) when the average stack is known.
+The same shove (A8o BTN 12bb, 185 left) is +1.57bb with ICM off, +0.69 with players left and paid, +0.88 once a 40bb average is entered. (Those were the numbers when this was written. With ICM off an all-in of 20bb or less is now read from the exact solution of that game, `poker_coach/short.py`, and this one is +1.27bb.) With inputs missing the panel still answers and puts the missing field inline; the guard treats the hand as before the money. Players left carries its age: a warning after 10 hands, after 3 on the bubble. The fold clock needs two updates of players left a minute apart; until then it shows orbits and minutes of blinds, plus the share of the sit-out line (`latereg.zone`) when the average stack is known.
 
 ## 6. Opponent types and notes
 
