@@ -111,7 +111,11 @@ def itself(work: str) -> None:
             if not B.kept(path):
                 continue
             sol = B.read(path)
-            B.fine(None, sol, path, False)
+            try:
+                B.fine(None, sol, path, False)
+            except SystemExit as err:           # a solution whose later passes are not there (yet)
+                print(f"{players} players, {stack}bb: left out ({err})")
+                continue
             out = {}
             for nd in sol["nodes"]:
                 if B.all_ins(nd["mask"]) <= S.MOST_ALL_IN:
