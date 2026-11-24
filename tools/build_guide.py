@@ -4,7 +4,7 @@ The quick guide is a page that answers a spot before the flop at once: seat, sta
 It computes nothing: every answer is looked up in tables made here, by asking the engine
 (``poker_coach.preflop.advise``, on chips) about each of the 169 hands of every spot.
 
-    python3 tools/build_guide.py                 # everything, about 40 minutes on four processors
+    python3 tools/build_guide.py                 # everything, about 50 minutes on four processors
     python3 tools/build_guide.py --quick         # a small set (three stacks, one opponent type), a few minutes
     python3 tools/build_guide.py --only open,vsraise --jobs 4
 

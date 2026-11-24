@@ -419,7 +419,7 @@ python3 tools/build_short.py --ante player           # all-ins of 2 to 20bb solv
                                                      # (a minute from the solver's kept output in tools/short_work/; --fresh solves again: seven hours, needs gcc)
 python3 tools/build_short.py --ante bb               # ... the big blind ante (four hours: its solver output was not kept)
 python3 tools/check_short.py work/player_n8_s6.json  # one solution against a second program (after build_short.py --work work/)
-python3 tools/build_guide.py                         # every table -> guide/data.js (about @@BUILDMIN@@ minutes on four processors)
+python3 tools/build_guide.py                         # every table -> guide/data.js (about 50 minutes on four processors)
 python3 tools/check_guide_ante.py 8                  # what the page's Ante choice leaves unchanged, measured at a table of eight
 python3 tools/build_guide.py --only open,vsraise --styles win    # some again; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py <folder>           # one HTML file and data.json, to publish as an Artifact
@@ -1020,5 +1020,5 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   Without `--fresh` the ante of every player is read from the solver's
   kept output in `tools/short_work/`, which `--pack` writes), then
   `python3 tools/build_guide.py` (the quick guide's tables, about
-  @@BUILDMIN@@ minutes; needed after any change to the engine's answers
+  50 minutes; needed after any change to the engine's answers
   before the flop).

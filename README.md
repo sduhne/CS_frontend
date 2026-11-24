@@ -234,7 +234,7 @@ python3 tools/build_short.py --ante player   # the exact answers for all-ins of 
                                              # a minute from the solver's kept output (tools/short_work/); --fresh solves again, about seven hours (needs gcc)
 python3 tools/build_short.py --ante bb       # the same for the big blind ante: about four hours, its output was not kept
 python3 tools/check_short.py work/player_n8_s6.json   # one solution played out by a second program (after build_short.py --work work/)
-python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about @@BUILDMIN@@ minutes on four processors
+python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 50 minutes on four processors
 python3 tools/check_guide_ante.py 8          # what the Ante choice leaves unchanged, measured at a table of eight (about five minutes)
 python3 tools/build_guide.py --only open --styles win    # some of them; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py out/       # the page as one file, with data.json beside it
@@ -903,5 +903,6 @@ python3 tools/build_binary.py       # all-in or fold tournament tables, half a m
 python3 tools/build_tag.py          # tight-aggressive sheet for 6, 7 and 8 players, about a minute and a half
 python3 tools/build_spin.py         # spin tables (3 players and heads-up), about 7 minutes
 python3 tools/spin_sim.py           # whole spin games played with those tables, about 6 minutes
-python3 tools/build_guide.py        # the quick guide's tables (guide/data.js), about 40 minutes; after any change to the engine before the flop
+python3 tools/build_short.py --ante player   # all-ins of 2 to 20bb solved exactly (data/short.json): a minute from tools/short_work/; --fresh about seven hours, --ante bb about four
+python3 tools/build_guide.py        # the quick guide's tables (guide/data.js), about 50 minutes; after any change to the engine before the flop
 ```

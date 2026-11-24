@@ -1514,6 +1514,9 @@ checks, and two of its own:
 - **The big blind ante's tables after the change.** All 109,188 spots of the
   guide were built again with the engine as it is now and came out the
   same, table for table: the second game changed no answer of the first.
+- **The whole file, built twice.** The guide's tables with both antes
+  (153,726 spots) were built a second time from nothing, in one run of 48
+  minutes on four processors: the same file, byte for byte.
 - **The page against the engine, with either ante.** A browser run asks the
   page 1,400 random spots (first in, against one all-in and against two,
   and two players; both antes, every kind of opponent and both styles, at
