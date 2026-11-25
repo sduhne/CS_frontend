@@ -1374,7 +1374,17 @@ through wins two thirds more there, so every range is wider: the tournament
 tables at three players are too loose for a spin, and most of all in the
 calls. Share of hands, three equal stacks, tournament table / spin:
 
-{TOUR_VS_SPIN}
+| Spot | 3bb | 4bb | 5bb | 6bb | 8bb | 10bb | 12bb | 16bb | 20bb |
+|---|---|---|---|---|---|---|---|---|---|
+| Button first in | 57 / 43 | 55 / 43 | 54 / 39 | 49 / 38 | 48 / 36 | 43 / 33 | 40 / 30 | 34 / 25 | 33 / 23 |
+| Small blind first in | 100 / 76 | 92 / 73 | 85 / 69 | 82 / 70 | 77 / 61 | 71 / 55 | 67 / 52 | 60 / 44 | 54 / 40 |
+| Small blind calls the button | 72 / 47 | 58 / 35 | 46 / 31 | 42 / 28 | 35 / 22 | 29 / 18 | 26 / 16 | 20 / 13 | 15 / 10 |
+| Big blind calls the button | 100 / 89 | 100 / 60 | 89 / 44 | 70 / 37 | 48 / 29 | 37 / 23 | 31 / 21 | 25 / 15 | 20 / 11 |
+| Big blind calls the small blind | 100 / 89 | 100 / 70 | 92 / 60 | 80 / 50 | 64 / 44 | 54 / 36 | 47 / 33 | 38 / 25 | 33 / 20 |
+| Big blind calls both | 100 / 81 | 96 / 54 | 75 / 37 | 59 / 29 | 37 / 17 | 27 / 13 | 19 / 10 | 13 / 7 | 11 / 6 |
+
+(First in from 12bb up, the share whose all-in earns; beside it both games
+also raise small with other hands.)
 
 That is the "very aggressive" of the tournament guide used for a spin.
 
@@ -1418,7 +1428,17 @@ blind ante) move in with 49% of hands, a spin with 38%; the big blind with
 42% in a spin. How much the other stacks change a play when they are not
 equal:
 
-{UNEQUAL}
+- **The button first in with 10bb** moves all-in with 33% of hands when
+  both blinds have 10bb, 35% when either blind has 3 to 6bb (a short blind
+  calls more, but can only win his stack), and 24% when the big blind has
+  1bb: he is all-in already, calls every time, and the small blind comes
+  along cheaply.
+- **The small blind first in with 10bb** moves in with 55% of hands against
+  a big blind of 10bb, 70% against 5bb, 78% against 3bb and every hand
+  against 1bb.
+- **A short button against deep blinds** (15bb each): with 3bb the big
+  blind calls his all-in with 94% of hands, with 6bb with 38%, with 10bb
+  with 24%.
 
 ### The players you meet
 
@@ -1440,7 +1460,14 @@ The Opponents choice reads three solved answers:
 
 Share of hands, three equal stacks, Standard / Loose / Tight:
 
-{PROFILES}
+| Spot | 4bb | 6bb | 8bb | 10bb | 12bb | 16bb | 20bb |
+|---|---|---|---|---|---|---|---|
+| Button first in | 43 / 40 / 52 | 38 / 35 / 58 | 36 / 29 / 51 | 33 / 26 / 51 | 30 / 23 / 44 | 25 / 16 / 31 | 23 / 15 / 30 |
+| Small blind first in | 73 / 70 / 96 | 70 / 57 / 99 | 61 / 50 / 88 | 55 / 44 / 86 | 52 / 38 / 73 | 44 / 32 / 72 | 40 / 27 / 66 |
+| Small blind calls the button | 35 / 39 / 33 | 28 / 27 / 22 | 22 / 23 / 18 | 18 / 18 / 14 | 16 / 15 / 13 | 13 / 11 / 10 | 10 / 11 / 9 |
+| Big blind calls the button | 60 / 63 / 54 | 37 / 36 / 30 | 29 / 30 / 24 | 23 / 23 / 18 | 21 / 19 / 15 | 15 / 13 / 11 | 11 / 12 / 10 |
+| Big blind calls the small blind | 70 / 72 / 60 | 50 / 55 / 44 | 44 / 43 / 33 | 36 / 36 / 28 | 33 / 33 / 27 | 25 / 25 / 18 | 20 / 22 / 15 |
+| Big blind calls both | 54 / 56 / 49 | 29 / 33 / 24 | 17 / 23 / 14 | 13 / 16 / 11 | 10 / 13 / 9 | 7 / 9 / 7 | 6 / 8 / 4 |
 
 Every player around you has to be of that kind (Opponents sets them all);
 with one solid player behind, Standard is the answer.
@@ -1478,8 +1505,8 @@ read by smaller tables, stay the engine's answers:
   to 15%): an unknown player is now taken to re-raise 12.5% of hands
   three-handed and 16% heads-up, a tight one a step less, a loose-aggressive
   one a step more (`ranges.threebet_range` with `players`), and the all-in
-  over it goes by what it earns. The button now goes on with {RE3} of hands
-  there.
+  over it goes by what it earns. The button now goes on with 10% of hands
+  there (4% before), about a quarter of the hands it raised.
 - **The small blind behind a limp.** The full-table rule limps behind only
   with small pairs and suited cards from 25bb, so the small blind folded
   three hands in four behind the button's limp, where completing costs half
@@ -1503,7 +1530,13 @@ and a solver also limps with most of the hands the guide folds.
   0.4 and 0.5bb with 12bb) were checked again with fresh sets of 30,000 to
   40,000 deals and the solver's number sampled 400,000 times: the two then
   agree within 0.1bb.
-- **The solver against itself.** {EXPLOIT}
+- **The solver against itself.** At all 2,842 decisions the trained strategy gives
+  up 0.001bb on average (half that, the median) each time the decision
+  comes up, to the best reply. Fourteen give up more than 0.01bb and the
+  most is 0.04bb, all of them decisions that rarely come (a big blind
+  facing two all-ins of 25 to 30bb, a small blind of 1.5bb who folded).
+  Twenty-eight never come in the solution and were answered with trembling
+  hands.
 - **Against the older spin tables.** The spin command's tables
   (`tools/build_spin.py`, equal stacks, made earlier and separately): with
   the same equal stacks the new solution differs on 1 to 4% of hands, all

@@ -106,7 +106,8 @@ is one more line in the `basic_auth` block.
 To set it up again, or somewhere else:
 
 1. Copy `guide/` (`index.html`, `guide.css`, `guide.js`, `fonts.css`,
-   `fonts/`, `data.js`) to a folder the web server can read.
+   `fonts/`, `data.js`, and from page 7 `spin.js`, the Spin & Go tables)
+   to a folder the web server can read.
 2. Put the second block of `deploy/Caddyfile.snippet` inside the site's
    block, with the hash from `caddy hash-password`, then
    `caddy validate --config /etc/caddy/Caddyfile` and `systemctl reload caddy`.
