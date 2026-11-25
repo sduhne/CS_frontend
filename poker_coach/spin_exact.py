@@ -207,12 +207,15 @@ def profile_of(types, actor: int) -> str:
     return "solid"
 
 
+CLOSE_PER_BB = 0.008       # ... and this much for each big blind of the stack
+
 def close(stack_bb: float, all_in: int = 1, profile: str = "solid") -> float:
     """How near to zero a play is called close, in big blinds: about twice the noise of the number.
 
-    The equilibrium is sampled 50,000 times a hand, the best replies 20,000 times; the noise grows with the
-    stack (an all-in of 20bb swings more than one of 5bb)."""
-    base = max(CLOSE_BB, 0.005 * stack_bb)
+    The equilibrium is sampled 50,000 times a hand: a call of an all-in swings by about the stack each time,
+    so its number is good to about 0.004bb for each big blind (0.05bb with 12bb; checked against 400,000
+    samples).  The best replies are sampled 20,000 times, half again as noisy."""
+    base = max(CLOSE_BB, CLOSE_PER_BB * stack_bb)
     return base if profile == "solid" else base * 1.5
 
 

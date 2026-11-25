@@ -166,7 +166,7 @@ class Reading(unittest.TestCase):
 
     def test_what_is_called_close_goes_by_the_noise_of_the_number(self):
         self.assertEqual(SX.close(5), SX.CLOSE_BB)
-        self.assertAlmostEqual(SX.close(20), 0.1)
+        self.assertAlmostEqual(SX.close(20), 0.16)
         self.assertGreater(SX.close(20, profile="loose"), SX.close(20))
 
     def test_the_plays_of_an_opponent_who_plays_more_or_fewer_hands(self):

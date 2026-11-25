@@ -1428,7 +1428,9 @@ The Opponents choice reads three solved answers:
 - **Loose** is the best reply to players who move all-in as the solution
   does but call an all-in with half as many hands again: the common
   mistake of low-stakes spins. The weak steals go, the strong hands stay:
-  tighter all-ins, a few more calls.
+  fewer all-ins first in (with 10bb the button 26% of hands instead of 33%,
+  as the spin command's loose table has it); the calls stay about the same,
+  a few more against two all-ins.
 - **Tight** is the best reply to players who move in and call with a fifth
   fewer hands: far more all-ins, fewer calls. A best reply goes all the way:
   against callers a third tighter the button would move in with three hands
@@ -1493,14 +1495,14 @@ and a solver also limps with most of the hands the guide folds.
 ### What it was checked against
 
 - **The solver against a second program.** `tools/check_short.py` plays the
-  game out in plain Python with the real stacks and no ante: at seven setups (three players with the short stack in each seat, 4 to
-  10bb, and heads-up with 20bb), the two hands nearest zero and one clear
-  hand at every decision, 117 numbers. They agree within the noise of the
-  check (about 0.1bb with 4,000 to 6,000 deals; 0.15bb heads-up with 20bb
-  and 30,000 deals). The largest gap, 0.26bb for pocket threes calling a
-  button all-in from the small blind with 9, 9 and 3bb, was 0.05bb on a
-  fresh set of 40,000 deals, and the solver's own number for it, sampled
-  400,000 times, did not move.
+  game out in plain Python with the real stacks and no ante: at nine setups (three players with the short stack in each seat, 4 to
+  12bb, and heads-up with 20bb), the two hands nearest zero and one clear
+  hand at every decision, 153 numbers. With 4,000 to 6,000 deals the check
+  is good to about 0.1bb (0.15bb with 12bb), and 148 of them are within
+  twice that, as many as noise allows. The largest gaps (0.26bb with 9bb,
+  0.4 and 0.5bb with 12bb) were checked again with fresh sets of 30,000 to
+  40,000 deals and the solver's number sampled 400,000 times: the two then
+  agree within 0.1bb.
 - **The solver against itself.** {EXPLOIT}
 - **Against the older spin tables.** The spin command's tables
   (`tools/build_spin.py`, equal stacks, made earlier and separately): with
@@ -1525,9 +1527,12 @@ and a solver also limps with most of the hands the guide folds.
   chips`, or the table app.
 - A limp and then a raise (the small blind limps, the big blind raises)
   has no table.
-- Every number comes from dealing cards: an all-in or call within about
-  0.05bb (more with a deeper stack, half again for Loose and Tight) is
-  marked close.
+- Every number comes from dealing cards, each hand 50,000 times at every
+  decision (the Loose and Tight answers 20,000 times): a call is good to
+  about 0.004bb for each big blind of the stack, 0.05bb with 12bb, as a
+  check with 400,000 deals showed. A play within twice that (at least
+  0.05bb; 0.1bb with 12bb, 0.16bb with 20bb; half again for Loose and
+  Tight) is marked close, and inside that band a hand can fall either way.
 - The deeper plays (small raises, limps, calls of a raise) are the
   engine's rules, not a solver's; the table above is how far they are
   from one.
