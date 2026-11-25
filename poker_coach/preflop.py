@@ -840,14 +840,22 @@ _SB_COMPLETE_MARGIN = 0.04      # over the price: the big blind raises two limpe
                                 # the small blind gives its half big blind up then
 
 
+def _spin_game(setup: HandSetup) -> bool:
+    """The game of a spin: three players or two, no ante.  Its re-raises are read from the short-handed ranges,
+    and its small blind completes behind a limp (``_sb_completes``).  A tournament keeps its own reading at
+    every table size, so the quick guide's tournament tables (made for nine players and read by smaller
+    tables) stay the engine's answers there."""
+    return setup.n <= 3 and not any(a > 1e-9 for a in setup.antes)
+
+
 def _sb_completes(spot: Spot, limpers: list[int], eff: float, adv: Advice | None = None) -> bool:
-    """Three-handed, the small blind behind the button's limp: complete when the hand's equity against the
+    """In a spin, the small blind behind the button's limp: complete when the hand's equity against the
     limper and the big blind, times the share of it a hand keeps out of position (``bb_realised``), beats the
     price by ``_SB_COMPLETE_MARGIN``.  (Spin solvers complete most of the hands they do not raise there; the
     full-table rule, limping behind only with small pairs and suited cards from 25bb, folded three hands in
     four.)"""
     setup, hero, hand = spot.setup, spot.hero, spot.hand
-    if setup.n != 3 or spot.nb(hero) != 1 or len(limpers) != 1 or spot.nb(limpers[0]) != 2:
+    if not _spin_game(setup) or setup.n != 3 or spot.nb(hero) != 1 or len(limpers) != 1 or spot.nb(limpers[0]) != 2:
         return False
     inv = setup.invested({limpers[0]: spot.bb})
     to_call = spot.bb - inv[hero]
@@ -967,7 +975,7 @@ def _scaled_range(sol, ptype: str, size_bb: float = 0.0) -> tuple[list[float], f
     """The range of a player who moved all-in for ``size_bb``: the solver's, as wide as his type makes it."""
     base = range_pct(sol.shove_range)
     if sol.exact and sol.game == "spin":
-        # the spin game's opponents: a tight player moves in with two thirds of the solved hands, every other
+        # the spin game's opponents: a tight player moves in with four fifths of the solved hands, every other
         # one with the solved hands (a loose player's mistake is calling too much, not moving in too much)
         if norm_type(ptype) != "tight":
             return list(sol.shove_range), base
@@ -1785,7 +1793,7 @@ def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
                                 "their range is modelled as a re-shove and may be tighter")
         return adv
     v_type = spot.types[villain]
-    rng = threebet_range(max(1, spot.nb(hero)), v_type, setup.n)
+    rng = threebet_range(max(1, spot.nb(hero)), v_type, setup.n if _spin_game(setup) else 9)
     eq = eq_vs_range(hand, rng)[0]
     inv = setup.invested({hero: hero_open, villain: three_to})
     pot = sum(setup.antes) + sum(inv)
@@ -1816,12 +1824,12 @@ def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
 
     edge_kept = _bar(_NEVER_FOLD_EDGE, 0.05)
 
-    short_handed = setup.n <= 3
+    short_handed = _spin_game(setup)
 
     def clears(h: int, e: float) -> bool:
-        """45bb or less: the all-in earns what the engine wants of it.  At a full table it must also hold its own
-        against the whole re-raising range (a re-raise there is mostly strong hands); with three players or two
-        the re-raises are wide and bluff often (``threebet_range``), and what the all-in earns decides."""
+        """45bb or less: the all-in earns what the engine wants of it.  In a tournament it must also hold its own
+        against the whole re-raising range (taken as mostly strong hands); in a spin the re-raises are wide and
+        bluff often (``threebet_range``), and what the all-in earns decides."""
         return sol.ev_bb(h) > _bar(0.5, 0.25) and (short_handed or e >= _bar(0.45, 0.42) or bool(_PREMIUM[h]))
 
     def kept(h: int, e: float) -> bool:
@@ -1988,7 +1996,7 @@ def cold_vs_3bet(spot: Spot, opener: int, raise_to: float, threebettor: int, thr
     live = setup.live
     bb = spot.bb
     eff = min(live[hero], max(live[opener], live[threebettor])) / bb
-    rng = threebet_range(spot.nb(opener), spot.types[threebettor], setup.n)
+    rng = threebet_range(spot.nb(opener), spot.types[threebettor], setup.n if _spin_game(setup) else 9)
     open_rng = _opened(spot, opener)
     over_allin = raise_to >= live[opener] - 1e-9
     if over_allin:

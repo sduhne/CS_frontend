@@ -17,7 +17,7 @@ big blinds too.  So this game is solved as it is played (``tools/build_spin_exac
   calling one or two all-ins earns (``preflop``).
 * Three sets of answers: ``solid`` (the equilibrium), ``loose`` (the best reply to opponents who move all-in
   first in as solved but call with half as many hands again: the common mistake of low-stakes spins) and
-  ``tight`` (the best reply to opponents who move all-in and call with two thirds of the solved hands).
+  ``tight`` (the best reply to opponents who move all-in and call with four fifths of the solved hands).
 
 Seats are the engine's places at the table: three players 0 the button, 1 the small blind, 2 the big blind;
 heads-up 0 the small blind (the button), 1 the big blind.  A mask has the bit of every player all-in before.
@@ -35,7 +35,7 @@ _PATH = os.path.join(os.path.dirname(__file__), "data", "spin_exact.json")
 DATA_VERSION = 1
 SEATS = ("BTN", "SB", "BB")
 PROFILES = ("solid", "loose", "tight")
-SHOVE_CALL = {"solid": (1.0, 1.0), "loose": (1.0, 1.5), "tight": (2 / 3, 2 / 3)}   # opponents' all-ins and calls,
+SHOVE_CALL = {"solid": (1.0, 1.0), "loose": (1.0, 1.5), "tight": (0.8, 0.8)}       # opponents' all-ins and calls,
                                                                                     # as a share of the solved ones
 CLOSE_BB = 0.05             # a play worth less than this either way is close (more with a deeper stack: ``close``)
 Y_FLOOR = 1.0               # a short stack under one big blind is read as one big blind (it is all-in from the blind)

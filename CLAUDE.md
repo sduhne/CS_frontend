@@ -484,7 +484,7 @@ python3 -m unittest tests.test_guide tests.test_short tests.test_spin_exact    #
   `poker_coach/spin_exact.py`): the biggest stack is cut down to the
   second, so two stacks of X and one of Y in its seat, X 2 to 30bb, Y from
   1bb, heads-up 1 to 30bb, 491 games; with the best replies to loose
-  callers (1.5 times the calls) and to tight players (two thirds of the
+  callers (1.5 times the calls) and to tight players (four fifths of the
   all-ins and calls) for the Opponents choice. Up to about 10bb that is the
   whole answer; deeper, the all-ins and the calls of all-ins, beside the
   engine's raises (Play to win rows). Play to win only (no Style, no
@@ -504,11 +504,15 @@ python3 -m unittest tests.test_guide tests.test_short tests.test_spin_exact    #
     covered: the table app with the prizes typed.
   - **Deeper than 10bb** the plays are the engine's, checked against
     published spin solver figures (@PLAYBOOK.md, "Spin & Go in the quick
-    guide"). Three-handed and heads-up a small re-raise is read as wide
-    (`ranges.threebet_range` with `players`: an unknown player 12.5%
-    three-handed, 16% heads-up), and the heads-up button's raise as 80% of
-    hands (`villain_open_range(..., heads_up=True)`); both also changed the
-    tournament guide's heads-up tables.
+    guide"). In a spin (`preflop._spin_game`: no ante, three players or
+    two) a small re-raise is read as wide (`ranges.threebet_range` with
+    `players`: an unknown player 12.5% three-handed, 16% heads-up) and the
+    small blind completes behind the button's limp at the right price
+    (`_sb_completes`); tournaments keep their readings at every table size,
+    so their nine-player tables stay the engine's answers. Heads-up, in
+    both games, the button's raise is read as 80% of hands
+    (`villain_open_range(..., heads_up=True)`), which changed the tournament
+    guide's heads-up tables.
 - **All-ins of 20bb or less are solved exactly** (`poker_coach/short.py`,
   `data/short.json`; `tools/build_short.py` runs `tools/aof_solver.c` with a
   big blind ante for tables of 9, 6, 5, 4 and 3 players: real cards, every

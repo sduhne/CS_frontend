@@ -62,7 +62,7 @@ class Data(unittest.TestCase):
         self.assertEqual((d["sb"], d["bb"], d["ante"]), (0.5, 1, 0))
         self.assertEqual((d["train"], d["samples"], d["br_samples"]), (20_000_000, 50_000, 20_000))
         self.assertEqual((tuple(d["x"]), tuple(d["y"]), tuple(d["hu"])), (X_GRID, Y_GRID, HU_GRID))
-        self.assertEqual(d["profiles"], {"loose": [1.0, 1.5], "tight": [2 / 3, 2 / 3]})
+        self.assertEqual(d["profiles"], {"loose": [1.0, 1.5], "tight": [0.8, 0.8]})
         self.assertEqual(set(d["games"]["2"]), {f"{e:g}" for e in HU_GRID})
         want = set()
         for x in X_GRID:
@@ -247,6 +247,22 @@ class Engine(unittest.TestCase):
         # the button's raise re-raised small with 20bb: a pair of fives goes on, a hand like K9o does not
         self.assertEqual(first(spin([20, 20, 20], "55", BTN, "hero raise 2bb, SB raise 6bb").action), "ALL-IN")
         self.assertEqual(first(spin([20, 20, 20], "K9o", BTN, "hero raise 2bb, SB raise 6bb").action), "FOLD")
+
+    def test_three_handed_the_small_blind_completes_behind_a_limp(self):
+        """Half a big blind for a pot of three: the small blind completes the hands that keep enough of their
+        equity, where the full-table rule folded three hands in four.  With 16bb or less it moves in or folds."""
+        self.assertEqual(spin([20, 20, 20], "Q9o", SB, "BTN limp").action, "CALL (limp behind)")
+        self.assertEqual(first(spin([20, 20, 20], "72o", SB, "BTN limp").action), "FOLD")
+        self.assertIn(first(spin([20, 20, 20], "AJs", SB, "BTN limp").action), ("RAISE", "ALL-IN"))
+        self.assertIn(first(spin([12, 12, 12], "Q9o", SB, "BTN limp").action), ("ALL-IN", "FOLD"))
+        # a full table keeps its rule
+        h, cards = parse_hand("Q9o")
+        spot = P.quick_spot(h, cards, 30, 9, "SB", "BTN limp", ante=False)
+        R.set_style("win")
+        try:
+            self.assertEqual(first(P.advise(spot).action), "FOLD")
+        finally:
+            R.set_style("tag")
 
     def test_loose_callers_take_the_weak_steals_away(self):
         for x in (6, 10, 16):

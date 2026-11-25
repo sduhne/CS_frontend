@@ -876,6 +876,13 @@ class Tables(unittest.TestCase):
             style = rng.choice(B.STYLES)
             R.set_style(style)
             self.assertEqual(B.unpack(self.table("hu_vsraise", style, "unknown", key)["a"]), B.table(opp="unknown", **question)["a"], key)
+        # heads-up the raiser is the button, who raises most hands: the page is given that range for the numbers
+        # under the big blind's answer (it once got none, and showed nothing there)
+        for key, _question in B.FAMILIES["hu_vsraise"][1]():
+            if B.RAISE_SIZES[key[0]] < B.COMMITS * key[-1]:
+                facts = self.table("hu_vsraise", "win", "unknown", key).get("f", {})
+                self.assertIn("v", facts, key)
+                self.assertAlmostEqual(range_pct([float(c) for c in self.d["ranges"][facts["v"]]]), 80, delta=2, msg=str(key))
         self.assertEqual(self.d["sizes"], {"raise": list(B.RAISE_SIZES), "reraise": list(B.RERAISE_TIMES), "commit": B.COMMITS})
         self.assertEqual(self.d["usual"], json.loads(json.dumps(B.usual_sizes())))
 
@@ -1138,9 +1145,10 @@ class SpinTables(unittest.TestCase):
                     self.assertRegex(self.d["ranges"][v], r"^[01]{169}$")
 
     def test_no_table_has_a_pair_folding_where_a_lower_pair_plays(self):
+        """Pairs marked close are left out: their numbers are within the noise of zero."""
         for t in self.d["tables"]:
             a = B.unpack(t["a"])
-            plays = [a[14 * i] not in "fFxX" for i in range(13)]
+            plays = [a[14 * i] not in "fx" for i in range(13) if a[14 * i] not in B.CLOSE]
             self.assertEqual(plays, sorted(plays, reverse=True), a)
 
     def test_the_tables_are_what_the_engine_answers_today(self):

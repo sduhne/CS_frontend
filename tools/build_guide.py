@@ -656,7 +656,8 @@ def main() -> int:
             if family in ("vsraise", "hu_vsraise") and "vp" in facts and "vr" not in facts:
                 # the engine prints the size of the raiser's range, not the hands: ask for them the way it does
                 R.set_style(style)
-                rng = R.villain_open_range(key[0] if family == "vsraise" else 1, opp, float(key[-1]))
+                rng = R.villain_open_range(key[0] if family == "vsraise" else 1, opp, float(key[-1]),
+                                           heads_up=family == "hu_vsraise")
                 if abs(range_pct(rng) - facts["vp"]) <= 0.6:
                     facts["vr"] = format_range(rng)
             raised_to = RAISE_SIZES[key[3] if family == "vsraise" else key[0]] if family in ("vsraise", "hu_vsraise") else 0.0

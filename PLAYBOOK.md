@@ -1336,3 +1336,200 @@ big blind against an all-in from the button:
   play the guide has for those hands, and it swings.
 - The clock's levels are averages. A real structure has its own steps.
 - Nothing here has been measured against results at the table.
+
+## Spin & Go in the quick guide
+
+The quick guide's Game choice has a second game besides the tournament:
+Spin & Go (GGPoker's Spin & Gold, PokerStars' Spin & Go). Same page, same
+controls; what changes is the game behind the tables. This section says
+what is different, why, and what it was checked against.
+
+### What matters in a spin, and what does not
+
+- **The game.** Three players (two once one is out), blinds of a half and
+  one big blind, no ante, and one prize in nearly every game (all of
+  GGPoker's x2 to x5 games, 97.6% of them). With one prize, chips are
+  money: the play that wins the most chips is the right one.
+- **The buy-in does not change the play.** A $1 spin and a $50 spin are
+  the same game; the buy-in only tells you what kind of players you meet.
+- **The multiplier does not change it either**, except in the games that
+  pay second place (GGPoker x10 and up, about one game in forty). There
+  prizes are counted (ICM) and the guide's tables are not the answer: call
+  all-ins tighter while a shorter stack can still bust first, and use the
+  table app with the prizes typed for the exact answer.
+- **Being the chip leader is no reason to play tighter.** The chips the
+  biggest stack has over the second biggest can never change hands, so a
+  leader with 8bb against 6bb and 5bb plays exactly as if he had 6bb. And
+  with one prize a chip lost costs what a chip won is worth: there is no
+  survival bonus to protect.
+- **Play to win only.** The guide's Tight style is the tournament's,
+  built to survive until a prize. In a spin there is nothing to survive
+  for, so the Style choice is not offered.
+
+### Why it plays tighter than the tournament tables
+
+The tournament tables are made with a big blind ante of one big blind: 2.5bb
+in the pot before the cards, where a spin has 1.5bb. Every all-in that gets
+through wins two thirds more there, so every range is wider: the tournament
+tables at three players are too loose for a spin, and most of all in the
+calls. Share of hands, three equal stacks, tournament table / spin:
+
+{TOUR_VS_SPIN}
+
+That is the "very aggressive" of the tournament guide used for a spin.
+
+### Unequal stacks, solved exactly
+
+Stacks in a spin are rarely equal, and the short stack is often short in
+big blinds too. So the spin tables are not made for "the effective stack"
+but for every player's stack:
+
+- **Two numbers matter.** The biggest stack is cut down to the second, and
+  what is left is two players with the same stack `X` and one with `Y`
+  (no more than `X`), in one of the three seats, or three equal stacks.
+  Heads-up only the smaller stack matters.
+- **The grid.** `X` of 2 to 10bb in steps of one, then 12, 14, 16, 18, 20,
+  25 and 30bb; `Y` of 1, 1.5, 2 to 10bb, 12 to 20bb in steps of two, and
+  25bb, under `X`; the short stack on the button, in the small blind or in
+  the big blind. Heads-up 1 to 30bb. 491 games in all
+  (`tools/build_spin_exact.py`, about two and a half hours on four
+  processors), each solved by the solver of the All-In or Fold tables
+  (`tools/aof_solver.c`: real cards, every showdown and side pot) with 20
+  million training deals, and then every hand of every decision dealt
+  50,000 times against the solved strategies (`poker_coach/spin_exact.py`,
+  `data/spin_exact.json`).
+- **Decisions that never come.** With 1bb in the small blind a player calls
+  every all-in, so "the small blind folded" never happens in the solution.
+  Real players do fold there, so such a decision is trained as if it came
+  now and then and sampled with the earlier players' hands trembling (each
+  play at least 2% likely).
+- **What the engine takes from it.** With about 10bb or less every hand is
+  an all-in or a fold and the solved game is the whole answer. Deeper, an
+  all-in first in and every call of one or two all-ins are read from it
+  (up to 30bb); the small raises and the calls of a raise are the engine's
+  opening rows and price tests, as in the tournament tables. `advise` and
+  `quick --spin --stacks "BTN=12,SB=8,BB=5"` read it whenever the game is a
+  spin's: two or three players, no ante.
+
+The chip leader who is short in big blinds plays the short game. Stacks of
+9, 6 and 5bb, the leader on the button: the tournament tables (6bb, a big
+blind ante) move in with 49% of hands, a spin with 38%; the big blind with
+5bb calls that all-in with 89% of hands in the tournament tables and with
+42% in a spin. How much the other stacks change a play when they are not
+equal:
+
+{UNEQUAL}
+
+### The players you meet
+
+The Opponents choice reads three solved answers:
+
+- **Standard** is the equilibrium: nobody can do better against it.
+- **Loose** is the best reply to players who move all-in as the solution
+  does but call an all-in with half as many hands again: the common
+  mistake of low-stakes spins. The weak steals go, the strong hands stay:
+  tighter all-ins, a few more calls.
+- **Tight** is the best reply to players who move in and call with a fifth
+  fewer hands: far more all-ins, fewer calls. A best reply goes all the way:
+  against callers a third tighter the button would move in with three hands
+  in four with 10bb, which costs a lot if the table is only a little tight,
+  so the gentler model was chosen. Use it for a table that has been seen
+  folding a lot.
+
+Share of hands, three equal stacks, Standard / Loose / Tight:
+
+{PROFILES}
+
+Every player around you has to be of that kind (Opponents sets them all);
+with one solid player behind, Standard is the answer.
+
+### Deeper than about 10bb
+
+The solved game has only all-ins. Deeper, spins are played with small
+raises and limps, and there the tables are the engine's own plays, in the
+Play to win style, with the exact all-in numbers beside them. Against
+published solver figures for three-player spins without an ante (GTO
+Gecko's):
+
+| Spot | Solver | Guide |
+|---|---|---|
+| Button first in, 25bb | raises about 40% | {BTN25} |
+| Big blind against the button's min-raise | defends 65 to 70% | {BBDEF} |
+| Heads-up, the button first in, 15 to 25bb | plays 70 to 80% | {HUSB} |
+| Heads-up, the big blind against a min-raise | defends about 70% | {HUBB} |
+| Small blind against the big blind | plays about two hands in three, many as a limp | {SBVBB} |
+
+Three things were wrong for three players or two, and were changed. The
+first holds in tournaments too and changed the tournament guide's heads-up
+tables, which were built again; the other two hold in a spin only (no ante,
+three players or two), so the tournament tables, made for nine players and
+read by smaller tables, stay the engine's answers:
+
+- **The heads-up raise.** Heads-up the engine took a raise from the button
+  to be a small blind's raise at a full table (36 to 50% of hands); it is
+  now the heads-up button's 80% (`ranges.villain_open_range`, `heads_up`).
+  The big blind's defence went from 57% to the figure above.
+- **A small re-raise.** It was taken from the full table's ranges: about 7%
+  of hands, mostly strong ones, so a button that raised folded 96% of hands
+  to a re-raise to 6bb with 20bb. Three-handed and heads-up a re-raise is
+  much wider (a spin guide puts the big blind's against the button at 10
+  to 15%): an unknown player is now taken to re-raise 12.5% of hands
+  three-handed and 16% heads-up, a tight one a step less, a loose-aggressive
+  one a step more (`ranges.threebet_range` with `players`), and the all-in
+  over it goes by what it earns. The button now goes on with {RE3} of hands
+  there.
+- **The small blind behind a limp.** The full-table rule limps behind only
+  with small pairs and suited cards from 25bb, so the small blind folded
+  three hands in four behind the button's limp, where completing costs half
+  a big blind for a pot of three. Three-handed with 17bb or more it now
+  completes every hand whose equity against the limper and the big blind,
+  times the share of it a hand keeps out of position, beats the price by
+  4 points (the big blind raises two limpers about a fifth of the time):
+  {SBLIMP}. With 16bb or less it moves all-in or folds, as before.
+
+The small blind first in is the gap left: the guide raises or folds there,
+and a solver also limps with most of the hands the guide folds.
+
+### What it was checked against
+
+- **The solver against a second program.** `tools/check_short.py` plays the
+  game out in plain Python with the real stacks and no ante: at seven setups (three players with the short stack in each seat, 4 to
+  10bb, and heads-up with 20bb), the two hands nearest zero and one clear
+  hand at every decision, 117 numbers. They agree within the noise of the
+  check (about 0.1bb with 4,000 to 6,000 deals; 0.15bb heads-up with 20bb
+  and 30,000 deals). The largest gap, 0.26bb for pocket threes calling a
+  button all-in from the small blind with 9, 9 and 3bb, was 0.05bb on a
+  fresh set of 40,000 deals, and the solver's own number for it, sampled
+  400,000 times, did not move.
+- **The solver against itself.** {EXPLOIT}
+- **Against the older spin tables.** The spin command's tables
+  (`tools/build_spin.py`, equal stacks, made earlier and separately): with
+  the same equal stacks the new solution differs on 1 to 4% of hands, all
+  at the edge of a range.
+- **The page against the engine.** {CROSS}
+- **The tables against the engine.** `tests/test_spin_exact.py` holds the
+  engine to the solution, and `tests/test_guide.py` asks a sample of the
+  spin tables again.
+
+### Limits
+
+- The page reads the nearest solved stacks, in the same proportion, and
+  says so under the answer. The engine (`advise`, `quick`) draws the
+  answers between them in a straight line.
+- A short stack under one big blind is read as one big blind.
+- Above 30bb the page reads 30bb. In the x2 and x3 games (15bb to start)
+  no effective stack is ever that deep.
+- Games that pay second place (x10 and up) are not covered: prizes count
+  there, and the table app with the prizes typed answers by ICM.
+- Six-player spins (6-Max) are not in the guide: `quick --players 6 --goal
+  chips`, or the table app.
+- A limp and then a raise (the small blind limps, the big blind raises)
+  has no table.
+- Every number comes from dealing cards: an all-in or call within about
+  0.05bb (more with a deeper stack, half again for Loose and Tight) is
+  marked close.
+- The deeper plays (small raises, limps, calls of a raise) are the
+  engine's rules, not a solver's; the table above is how far they are
+  from one.
+- Checked in headless Chromium on Linux only. Nothing here has been
+  measured against results at the table.

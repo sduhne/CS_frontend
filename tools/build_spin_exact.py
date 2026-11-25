@@ -20,7 +20,9 @@ For each of them, three answers:
 * ``solid``: the equilibrium (nobody can do better against it), and what going in earns, hand by hand;
 * ``loose``: the best reply to opponents who move all-in first in as solved but call with half as many
   hands again (the common mistake of low-stakes spins);
-* ``tight``: the best reply to opponents who move all-in and call with two thirds of the solved hands.
+* ``tight``: the best reply to opponents who move all-in and call with four fifths of the solved hands (a
+  third fewer made the best reply move in with three hands in four from the button with 10bb: too far to
+  follow against players who are only a little tight).
 The best replies are sampled 20,000 times a hand; the equilibrium 50,000 times a hand at every decision.
 
 Some decisions never come in the equilibrium: with 1bb in the small blind a player calls every all-in, so
@@ -49,7 +51,7 @@ Y_GRID = (1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 25)  # the sho
 HU_GRID = (1, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 25, 30)
 SEATS = ("BTN", "SB", "BB")                                             # three players, in the order they act
 TRAIN, EVAL, REFINE, BR = 20_000_000, 1_000_000, 50_000, 20_000
-PROFILES = {"loose": (1.0, 1.5), "tight": (2 / 3, 2 / 3)}             # opponents: (first-in all-ins, calls) as a
+PROFILES = {"loose": (1.0, 1.5), "tight": (0.8, 0.8)}                 # opponents: (first-in all-ins, calls) as a
                                                                         # multiple of the solved number of hands
 
 
