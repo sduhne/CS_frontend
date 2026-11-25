@@ -198,7 +198,8 @@ def fam_re_allin(quick):
     for tok, st, _x in configs3(quick):
         for h, by in ((2, 1), (2, 0), (1, 0)):
             mine = own_raise(h, st, 3)
-            if mine < st[h] and behind(by, st) > 0:
+            # an all-in no bigger than your raise is only a call: there is nothing left to decide
+            if mine < st[h] and behind(by, st) > 0 and st[by] > mine + 1e-9:
                 yield (h, by, tok), q(h, st, f"hero raise {mine:g}bb, {NAMES3[by]} allin")
 
 
@@ -341,11 +342,18 @@ def spots_of(family: str, quick: bool):
 
 
 def work(job):
+    """One job: every spot of a family for one opponent.  A spot the engine cannot answer is reported, not
+    raised, so the other jobs of the run are kept."""
     style, opp, family, quick = job
     R.set_style(style)
     started = time.time()
-    rows = [(key, table(opp=opp, **question)) for key, question in spots_of(family, quick)]
-    return job, rows, time.time() - started
+    rows, errors = [], []
+    for key, question in spots_of(family, quick):
+        try:
+            rows.append((key, table(opp=opp, **question)))
+        except Exception as exc:                        # noqa: BLE001 - reported with the spot below
+            errors.append(f"{family} {key} {question}: {exc}")
+    return job, rows, time.time() - started, errors
 
 
 def main() -> int:
@@ -371,11 +379,19 @@ def main() -> int:
     started = time.time()
     if todo:
         size = {job: sum(1 for _ in spots_of(job[2], job[3])) for job in todo}
+        failed = []
         with Pool(a.jobs) as pool:
-            for job, rows, seconds in pool.imap_unordered(work, sorted(todo, key=lambda j: -size[j])):
+            for job, rows, seconds, errors in pool.imap_unordered(work, sorted(todo, key=lambda j: -size[j])):
+                if errors:                              # kept out of the cache, so a run after the fix asks again
+                    failed += errors
+                    print(f"  {job[2]:14s} {job[1]:8s} {job[0]:5s} FAILED at {len(errors)} spots, e.g. {errors[0]}", flush=True)
+                    continue
                 with open(cache_path(job), "w") as fh:
                     json.dump([[list(key), tab] for key, tab in rows], fh)
                 print(f"  {job[2]:14s} {job[1]:8s} {job[0]:5s} {len(rows):6d} tables {seconds:7.1f}s   ({time.time() - started:6.0f}s)", flush=True)
+        if failed:
+            print(f"{len(failed)} spots the engine could not answer; the other jobs are kept in the cache", flush=True)
+            return 1
 
     unique, index, data, ranges, range_index = [], {}, {}, [], {}
 

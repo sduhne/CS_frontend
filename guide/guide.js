@@ -288,6 +288,7 @@
     const id = o ? o[key.join(",")] : null;
     return id == null ? null : SD.tables[id];
   }
+  const SMALL_ALLIN = "Their all-in is no bigger than your raise: it is only a call, and the hand goes on to the flop.";
   function spinLookup(st) {
     if (!SD) return {notes: [spinFailed ? "The spin tables did not load. Reload the page." : "Loading the spin tables\u2026"]};
     const n = st.players, h = st.seat, c = spinCfg(st), notes = [];
@@ -298,6 +299,8 @@
       if (st.line === "raise") { pre = [spinRaiseIndex(st)]; if (!spinRaiseChoices(st).length) why = "A raise this short is an all-in: read \u201cAll-in\u201d."; }
       if (st.line === "re3") { pre = [spinReraiseIndex(st)]; why = deep; }
       if (st.line === "re_allin" || st.line === "sq_allin") why = "With these stacks your raise is all your chips.";
+      /* (heads-up the table is read at the smaller stack: the real stacks say whether the all-in was only a call) */
+      if (st.line === "re_allin" && st.sstacks[0] <= spinOwnRaise(1, st.sstacks, 2) + 1e-9 && st.sstacks[1] > spinOwnRaise(1, st.sstacks, 2) + 1e-9) why = SMALL_ALLIN;
     } else {
       switch (st.line) {
         case "open": fam = "s_open"; pre = [h]; break;
@@ -311,7 +314,12 @@
         case "raise_allin": fam = "s_raise_allin"; why = "A raise this short is an all-in: read \u201c2 all-ins\u201d."; break;
         case "raise3": fam = "s_raise3"; why = "With these stacks the re-raise puts the stack in: read \u201cRaise + all-in\u201d."; break;
         case "re3": fam = "s_re3"; pre = [h, st.by3, spinReraiseIndex(st)]; why = deep; break;
-        case "re_allin": fam = "s_re_allin"; pre = [h, st.byAll]; why = "With these stacks your raise is all your chips."; break;
+        case "re_allin": {
+          fam = "s_re_allin"; pre = [h, st.byAll];
+          const mine = spinOwnRaise(h, c.stacks, n);
+          why = c.stacks[h] > mine + 1e-9 && c.stacks[st.byAll] <= mine + 1e-9 ? SMALL_ALLIN : "With these stacks your raise is all your chips.";
+          break;
+        }
         case "re3_allin": fam = "s_re3_allin"; why = "With these stacks a re-raise puts the stack in."; break;
         case "sq_allin": fam = "s_sq_allin"; pre = [st.from, h]; why = "With these stacks your re-raise is all your chips."; break;
       }
