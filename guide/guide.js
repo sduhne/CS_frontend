@@ -1113,7 +1113,9 @@
     const speed = spin ? st.sspeed : st.speed, sp = spin ? SPIN_SPEED[speed] : SPEED[speed];
     const n = st.players, c = clock(st.stack, n, st.seat, speed);
     const one = (x) => (x >= 10 ? Math.round(x) : Math.round(x * 10) / 10) + "bb";
-    const steps = [`<span class="step"><b>${one(st.stack)}</b><i>now</i></span>`];
+    /* in a spin the clock counts the stack in play, which is smaller than yours when you cover the others */
+    const covers = spin && st.sstacks[st.seat] > st.stack + 0.01;
+    const steps = [`<span class="step"><b>${one(st.stack)}</b><i>${covers ? "in play now" : "now"}</i></span>`];
     if (c.hands > 0) steps.push(`<span class="step${c.atBlind < LOW ? " low" : ""}"><b>${one(c.atBlind)}</b><i>at your big blind, ${c.hands === 1 ? "next hand" : "in " + c.hands + " hands"}</i></span>`);
     steps.push(`<span class="step${c.orbit < LOW ? " low" : ""}"><b>${c.gone ? "0" : one(c.orbit)}</b><i>after a round of folding</i></span>`);
     let say;
@@ -1195,8 +1197,10 @@
     } else if ((res.fam === "re3" || res.fam === "hu_re3") && a.name === "RERAISE") {
       rules.push("If they move all-in: call. This hand is never folded before the flop.");
     } else if ((res.fam === "vsraise" || res.fam === "hu_vsraise") && a.name === "CALL") {
-      rules.push(st.seat <= 1 ? "After the flop you act first: check to the raiser, go on with a pair or a real draw, fold the rest to a bet."
-                              : "After the flop you act last: go on with a pair or a real draw, and bet when the raiser checks twice.");
+      /* the big blind acts last after the flop against the small blind's raise, unless heads-up (there the small blind is the button) */
+      const last = st.seat >= 2 || (st.seat === 0 && st.from === 1 && n > 2);
+      rules.push(last ? "After the flop you act last: go on with a pair or a real draw, and bet when the raiser checks twice."
+                      : "After the flop you act first: check to the raiser, go on with a pair or a real draw, fold the rest to a bet.");
     }
     if (!rows.length && !rules.length) return "";
     return `<div class="card plan"><span class="eyebrow">If the hand goes on</span>
@@ -1341,7 +1345,7 @@
         <p><b>The game</b> is a spin: three players (two once one is out), blinds of a half and one big blind, no ante, and one prize in nearly every game. With one prize, chips are money: the play that wins the most chips is the right one. Being the chip leader is no reason to play tighter: the chips you have over the second biggest stack can never change hands, so with 8bb against 6bb and 5bb you play the 6bb hand. The buy-in does not change the play either; it only tells you what kind of players you meet.</p>
         <p><b>Why it is tighter than the tournament tables</b>: those are made with a big blind ante, 2.5bb in the pot before the cards where a spin has 1.5bb. Every all-in that gets through wins more there, so they move in and call with far more hands. At three players with 6bb the button moves in with 49% of hands there and 38% here; the big blind calls the button's all-in with 70% there and 37% here.</p>
         <p><b>Stacks</b>: every player's, in big blinds, as the table shows them (GGPoker can show stacks in big blinds). Tap a seat's name and the number buttons set that seat. The tables use two numbers: the biggest stack is cut down to the second, so two stacks of the same size and a short one, in its seat. Stacks between two that were solved are read at the nearest, in the same proportion; the answer says so. Next hand moves every stack on with its player.</p>
-        <p><b>All-ins and calls of all-ins are solved exactly</b> for these stacks: real cards, every player who can still call, every side pot. With about 10bb or less every hand is an all-in or a fold, and that is the whole answer. Deeper, the all-in is one play beside a small raise: the raise follows the opening ranges, the big blind's call of a raise goes by its price, and a small re-raise is taken to be as wide as three-handed play makes it (about one hand in eight; heads-up one in six).</p>
+        <p><b>All-ins and calls of all-ins are solved exactly</b> for these stacks: real cards, every player who can still call, every side pot. First in with about 10bb or less every hand is an all-in or a fold, and that is the whole answer of the solved game. With 9 to 12bb a solver with every play would also raise small or limp many of the hands the page folds (heads-up with 10bb it plays nearly nine hands in ten, the page about six in ten): the all-ins are right, the folds give up a little. From 13bb the all-in is one play beside a small raise: the raise follows the opening ranges, the big blind's call of a raise goes by its price, and a small re-raise is taken to be as wide as three-handed play makes it (about one hand in eight; heads-up one in six).</p>
         <p><b>Opponents</b>: Standard is the solved game. Loose is the best answer to players who call your all-ins with half as many hands again (the common mistake in low-stakes spins): the weak steals go. Tight is the best answer to players who move in and call with a fifth fewer hands: far more all-ins (with 10bb the button moves in with about half its hands), fewer calls. Use it only for a table you have seen fold a lot: every player there is taken to be of that kind.</p>
         <p><b>Style</b> is always Play to win: the tournament's Tight style is built to survive until a prize, and a spin has nothing to survive for.</p>
         <p><b>Games that pay second place</b> (GGPoker x10 and up, about one game in forty) are not what these tables are for: there, call all-ins tighter while a shorter stack can still bust first, and use the table app with the prizes typed for the exact answer.</p>

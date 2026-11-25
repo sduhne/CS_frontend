@@ -1482,11 +1482,11 @@ Gecko's):
 
 | Spot | Solver | Guide |
 |---|---|---|
-| Button first in, 25bb | raises about 40% | {BTN25} |
-| Big blind against the button's min-raise | defends 65 to 70% | {BBDEF} |
-| Heads-up, the button first in, 15 to 25bb | plays 70 to 80% | {HUSB} |
-| Heads-up, the big blind against a min-raise | defends about 70% | {HUBB} |
-| Small blind against the big blind | plays about two hands in three, many as a limp | {SBVBB} |
+| Button first in, 25bb | raises about 40% | raises 41% |
+| Big blind against the button's min-raise | defends 65 to 70% | 65% (12% all-in, 53% call) |
+| Heads-up, the button first in, 15 to 25bb | plays 70 to 80% | 80% |
+| Heads-up, the big blind against a min-raise | defends about 70% | 69% (24% all-in, 45% call) |
+| Small blind against the big blind | plays about two hands in three, many as a limp | 50%, as raises or all-ins, no limps |
 
 Three things were wrong for three players or two, and were changed. The
 first holds in tournaments too and changed the tournament guide's heads-up
@@ -1514,10 +1514,18 @@ read by smaller tables, stay the engine's answers:
   completes every hand whose equity against the limper and the big blind,
   times the share of it a hand keeps out of position, beats the price by
   4 points (the big blind raises two limpers about a fifth of the time):
-  {SBLIMP}. With 16bb or less it moves all-in or folds, as before.
+  with 20bb it raises 24% of hands, completes 38% and folds 38%. With
+  16bb or less it moves all-in or folds, as before.
 
-The small blind first in is the gap left: the guide raises or folds there,
-and a solver also limps with most of the hands the guide folds.
+Two gaps are left. The small blind first in raises or folds, where a
+solver also limps with most of the hands the guide folds. And with 9 to
+12bb every first-in play is an all-in or a fold: the small raise starts at
+13bb, as in the tournament tables, and below that the solved all-in or fold
+game answers. A solver raises small or limps most of the hands the guide
+folds there: heads-up with 10bb it plays 88% of hands, the guide 57% (80%
+from 13bb). So a hand can be an all-in with 8bb, a fold with 9 to 12bb and
+a raise with 14bb (Q5o heads-up). The all-ins are right; the folds give up
+what a small raise or a limp would have won.
 
 ### What it was checked against
 
@@ -1541,7 +1549,7 @@ and a solver also limps with most of the hands the guide folds.
   (`tools/build_spin.py`, equal stacks, made earlier and separately): with
   the same equal stacks the new solution differs on 1 to 4% of hands, all
   at the edge of a range.
-- **The page against the engine.** {CROSS}
+- **The page against the engine.** A browser run gives the page 800 random spots (every family, three players and two, unequal stacks, the three kinds of opponents) and compares its answer for six hands of each, 4,800 in all, with the engine asked afresh: none differ, nor do the big blind's numbers under the answer (408 hands).
 - **The tables against the engine.** `tests/test_spin_exact.py` holds the
   engine to the solution, and `tests/test_guide.py` asks a sample of the
   spin tables again.

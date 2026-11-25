@@ -23,9 +23,9 @@ Cards, seat, stack in big blinds, what happened before you: the play, one
 sentence of why, the numbers behind it and the whole chart, at once. Nothing
 is worked out while you play: every answer is read from tables that
 `tools/build_guide.py` made by asking the engine about each of the 169 hands
-of every spot before the flop (109,188 spots, 42,968 different tables: every seat, 28 stack
+of every spot before the flop (109,188 spots, 42,881 different tables: every seat, 28 stack
 sizes, five sizes of a raise and four of a re-raise, three kinds of opponent, two styles), and
-for spins its own tables ({SPIN_SPOTS} spots, below).
+for spins its own tables (47,868 spots, below).
 
 **To open it:** double-click `guide/index.html` ("Open Quick Guide.bat" on
 Windows). It is a page on your own computer: no Python, no internet. On a
@@ -203,8 +203,8 @@ python3 tools/build_guide.py                 # all the tables again -> guide/dat
 python3 tools/build_guide.py --only open --styles win    # some of them; finished jobs are kept in guide/.cache
 python3 tools/build_guide_page.py out/       # the page as one file, with data.json and spin.json beside it
 python3 tools/build_spin_exact.py --work DIR     # spins solved exactly with unequal stacks -> poker_coach/data/spin_exact.json, about two and a half hours (needs gcc)
-python3 tools/build_spin_guide.py            # the Spin & Go tables -> guide/spin.js, {SPIN_BUILD_TIME} on four processors
-python3 -m unittest tests.test_guide tests.test_short tests.test_spin_exact   # about {GUIDE_TEST_TIME}
+python3 tools/build_spin_guide.py            # the Spin & Go tables -> guide/spin.js, about an hour and a half on four processors
+python3 -m unittest tests.test_guide tests.test_short tests.test_spin_exact   # about a minute
 python3 -m poker_coach clock --stack 12 --pos BTN --players 8 --speed hyper    # the blinds clock in words
 ```
 

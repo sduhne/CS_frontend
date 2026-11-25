@@ -1187,7 +1187,8 @@ class SpinTables(unittest.TestCase):
                 if G.behind(o, st) <= 0:
                     continue
                 t = self.table("s_allin", "unknown", (o, hero, tok))
-                evs, played = SX.node(3, stacks, 2 - hero, 1 << (2 - o)), "cCaA"
+                # covering a short all-in with a player behind, the all-in is an isolating one (I)
+                evs, played = SX.node(3, stacks, 2 - hero, 1 << (2 - o)), "cCaAiI"
             letters = B.unpack(t["a"])
             wrong = [HANDS[h] for h in range(169) if (letters[h] in played) != (evs[h] > 0)
                      and abs(evs[h]) >= SX.close(x) and letters[h] not in B.CLOSE]
