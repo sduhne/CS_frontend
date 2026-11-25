@@ -1,0 +1,877 @@
+/* Menlo coach: the table app.
+   Contents: 1 fonts, 2 tokens and sizes by width, 3 base, 4 page grid, 5 header and strip,
+   6 advice, 7 table, 8 cards, 9 hand line, 10 action bar, 11 menus and sheets, 12 forms,
+   13 toast, 14 first run, 15 wider screens, 16 a window shorter than the page, 17 motion.
+   Colour rules: yellow = do this now; a white ring = your next key lands here;
+   green and red only on chips or big blinds won or lost; state is shown by brightness.
+   Sizes: no text under 12px; numbers in the condensed face; the edge of a control is Grey (3:1 on Ink).
+   Nothing moves under the pointer: the slab is one height under 1024, the table, hand line and action
+   bar stand at one place in every state, a toast takes no room.
+   A window shorter than the page: the answer stays at the top and the action bar at the window's foot;
+   the table between them takes a shorter form, and scrolls when that is not enough (section 16). */
+
+/* ---------- 1. Fonts (latin subsets, SIL Open Font License, see fonts/OFL-*.txt) ---------- */
+@font-face{font-family:"Barlow Semi Condensed";font-weight:700;font-style:normal;font-display:swap;src:url(fonts/barlow-semi-condensed-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:"Barlow Semi Condensed";font-weight:800;font-style:normal;font-display:swap;src:url(fonts/barlow-semi-condensed-latin-800-normal.woff2) format("woff2")}
+@font-face{font-family:"Barlow Semi Condensed";font-weight:800;font-style:italic;font-display:swap;src:url(fonts/barlow-semi-condensed-latin-800-italic.woff2) format("woff2")}
+@font-face{font-family:Inter;font-weight:400;font-style:normal;font-display:swap;src:url(fonts/inter-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:Inter;font-weight:500;font-style:normal;font-display:swap;src:url(fonts/inter-latin-500-normal.woff2) format("woff2")}
+@font-face{font-family:Inter;font-weight:600;font-style:normal;font-display:swap;src:url(fonts/inter-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:Inter;font-weight:700;font-style:normal;font-display:swap;src:url(fonts/inter-latin-700-normal.woff2) format("woff2")}
+/* Fallbacks sized to the real faces, so nothing moves when they arrive. */
+@font-face{font-family:"MB Display Fallback";font-weight:700 800;
+  src:local("Arial Bold"),local("Arial-BoldMT"),local("Liberation Sans Bold");
+  size-adjust:83%;ascent-override:120.5%;descent-override:24.1%;line-gap-override:0%}
+@font-face{font-family:"MB Display Fallback";font-weight:800;font-style:italic;
+  src:local("Arial Bold Italic"),local("Arial-BoldItalicMT"),local("Liberation Sans Bold Italic");
+  size-adjust:77%;ascent-override:130%;descent-override:26%;line-gap-override:0%}
+@font-face{font-family:"MB Body Fallback";
+  src:local("Arial"),local("ArialMT"),local("Liberation Sans");
+  size-adjust:107.5%;ascent-override:90.1%;descent-override:22.4%;line-gap-override:0%}
+
+/* ---------- 2. Tokens ---------- */
+:root{
+  color-scheme:dark;                     /* the browser's own parts (scroll bars, the list of a select) follow the page */
+  --ink:#0A0A0B;--panel:#151518;--line:#26262B;--line-strong:#3A3A42;
+  --yellow:#FFD60A;--yellow-hover:#E6B800;
+  --yellow-wash:#1E1A0B;                 /* hero's turn: 8% yellow on Ink, made solid */
+  --yellow-tint:rgba(255,214,10,.18);    /* a close cell on the range chart */
+  --white:#FFFFFF;--soft:#C9C9D1;--grey:#9A9AA3;
+  --win:#3DDC84;--loss:#FF5C5C;
+  --win-tint:rgba(61,220,132,.18);--loss-tint:rgba(255,92,92,.18);
+  --display:"Barlow Semi Condensed","MB Display Fallback",Arial,sans-serif;
+  --body:Inter,"MB Body Fallback",system-ui,"Segoe UI",Arial,sans-serif;
+  --r-card:16px;--r-tile:14px;--r-btn:14px;--r-ctl:12px;--r-in:10px;--r-pill:999px;
+
+  /* Sizes that change with the width: under 1024 here, then two steps in section 15. */
+  --gut:16px;--gap:8px;
+  --table-h:304px;--table-h-aof:240px;
+  --pod-w:104px;--pod-h:64px;--hero-w:192px;--hero-h:72px;
+  --pos:18px;--stack:17px;
+  --card-w:36px;--card-h:50px;--hcard-w:40px;--hcard-h:56px;
+  --chip-h:22px;--chip-f:13px;--deal:18px;
+  --verb:60px;--verb-lh:50px;--size:28px;--pot:24px;
+}
+
+/* ---------- 3. Base ---------- */
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--ink);color:var(--white);font:400 14px/1.45 var(--body);min-width:544px;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+button,input,select,textarea{font:inherit;color:inherit;margin:0}
+button{cursor:pointer;background:none;border:0;padding:0;text-align:inherit}
+button:disabled{cursor:default}
+h1,h2,h3,p{margin:0}
+[hidden]{display:none!important}
+::selection{background:var(--white);color:var(--ink)}       /* selected text: white, as everything that is selected */
+:focus{outline:0}
+:focus-visible{outline:2px solid var(--white);outline-offset:2px;box-shadow:0 0 0 2px var(--ink)}
+.num{font-family:var(--display);font-weight:800;line-height:1;font-variant-numeric:tabular-nums lining-nums}
+.eyebrow{font:700 12px/1.2 var(--body);letter-spacing:.1em;text-transform:uppercase;color:var(--grey);white-space:nowrap}
+.win{color:var(--win)}.loss{color:var(--loss)}
+.hint{font-size:12px;color:var(--grey)}          /* small print under a form or a choice (a part may set its own) */
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.skip{position:absolute;left:8px;top:-60px;z-index:50;padding:10px 14px;background:var(--white);color:var(--ink);
+  border-radius:var(--r-in);font-weight:700;text-decoration:none}
+.skip:focus{top:8px}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+kbd{font:700 12px/1 var(--body);min-width:18px;height:18px;padding:0 4px;display:inline-grid;place-items:center;
+  border:1px solid var(--line-strong);border-radius:5px;color:var(--grey);letter-spacing:0;text-transform:uppercase;white-space:nowrap}
+.icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* ---------- 4. Page grid: header, advice, table, hand line, action bar ---------- */
+.app{display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:var(--gap);
+  min-height:100%;padding:0 var(--gut) 8px;max-width:640px;margin:0 auto}
+/* Every part has its row. The toast shares the cell of the advice and lies over its last line. */
+.header,.advice,.table,.line,.toasts,.actions,.first-run{grid-column:1}
+.header{grid-row:1}
+.advice,.toasts{grid-row:2}
+.table{grid-row:3}
+.line{grid-row:4}
+.actions{grid-row:5}
+.first-run{grid-row:2}
+.app.first .toasts{grid-row:3}
+
+/* ---------- 5. Header and strip ---------- */
+.header{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"bar tools" "strip strip";
+  align-items:center;column-gap:12px;margin:0 calc(-1*var(--gut));padding:0 var(--gut) 1px;position:relative}
+/* Its rules run across the whole window, also where the page is a column narrower than the window
+   (--bleed: how far the window reaches beyond the page on each side; render.js keeps it). */
+.header::after,.strip::before{content:"";position:absolute;left:calc(-1*var(--bleed,0px));right:calc(-1*var(--bleed,0px));height:1px;background:var(--line)}
+.header::after{bottom:0}
+.strip::before{top:0}
+.bar{grid-area:bar;display:flex;align-items:center;gap:12px;height:48px;min-width:0}
+.brand{display:flex;align-items:center;gap:10px;flex:none}
+.brand .mark{width:28px;height:28px;flex:none;display:block}
+.word{display:none;font:italic 800 24px/1 var(--display);text-transform:uppercase;letter-spacing:-.01em}
+.word b{color:var(--yellow);font-weight:800}
+
+/* A track of choices: the mode tabs, and the small either-or controls. */
+.tabs{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-pill);flex:none}
+/* A tab is 44 high to the finger; its fill is drawn 2px inside, so it looks 40 high in the track. */
+.tab{height:44px;min-width:44px;padding:0 12px;border-radius:var(--r-pill);font-weight:600;font-size:13px;color:var(--grey);
+  white-space:nowrap;text-align:center;transition:background-color .12s,color .12s}
+.tab:hover{color:var(--white)}
+.tab[aria-selected=true],.tab[aria-checked=true]{background:var(--line);color:var(--white);box-shadow:inset 0 0 0 2px var(--panel)}
+.tab:focus-visible{box-shadow:0 0 0 2px var(--ink)}
+
+.tools{grid-area:tools;display:flex;gap:4px}
+.tool{width:44px;height:44px;flex:none;border-radius:var(--r-ctl);color:var(--grey);display:grid;place-items:center;
+  transition:background-color .12s,color .12s}
+.tool:hover{color:var(--white)}
+.tool:active{background:var(--line)}
+.tool:disabled{color:var(--line-strong)}
+
+.strip{grid-area:strip;display:flex;align-items:center;gap:6px;height:52px;min-width:0;
+  margin:0 calc(-1*var(--gut));padding:1px var(--gut) 0;position:relative}
+.stat{display:flex;align-items:center;gap:2px;flex:none}
+.stat .v{font-size:20px;white-space:nowrap}
+.stat small{font:700 13px/1.2 var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--soft);white-space:nowrap}
+.stat .text{font:600 13px/1.2 var(--body);color:var(--white);white-space:nowrap}
+/* A strip value is a button: a click turns it into an input. */
+.value{min-height:44px;min-width:44px;padding:0 4px;border-radius:var(--r-in);display:flex;flex-direction:column;
+  justify-content:center;gap:1px;transition:background-color .12s}
+button.value:hover{background:var(--line)}
+.value .row{display:flex;flex-direction:column;align-items:flex-start}      /* under 1024 the small print goes below the number */
+.value .row small{line-height:1.1}
+.value .unset{display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px dashed var(--grey);border-radius:var(--r-pill);
+  font:700 12px/1 var(--body);letter-spacing:.02em;text-transform:uppercase;color:var(--white)}
+.step{width:40px;height:44px;flex:none;border:1px solid var(--grey);background:var(--ink);border-radius:var(--r-ctl);
+  font:800 24px/1 var(--display);color:var(--white);text-align:center;transition:border-color .12s,background-color .12s}
+.step:hover{border-color:var(--white)}
+.step:active{background:var(--line)}
+.step.due{border-color:var(--yellow);color:var(--yellow);animation:due 1s steps(2,jump-none) infinite}
+.pill{display:inline-flex;align-items:center;height:22px;padding:0 10px;border-radius:var(--r-pill);
+  font:700 12px/1 var(--body);letter-spacing:.02em;text-transform:uppercase;background:var(--line);color:var(--soft);white-space:nowrap}
+.pill.near{background:none;box-shadow:inset 0 0 0 1px var(--white);color:var(--white)}
+.pill.bubble{background:var(--yellow);color:var(--ink)}
+.pill.money{background:var(--win-tint);color:var(--win)}
+.pill.you{background:var(--white);color:var(--ink)}
+/* The pill that says how far the money is stays whole at every width; what gives way is listed in render.js (fitStrip).
+   (It leaves the strip, whole, only while the places paid or the average stack are being typed and their field needs its room.) */
+.strip .stage{flex:none;padding:0 8px}
+.strip .in{width:132px}
+.strip .in.short{width:84px}
+.strip .from-avg,.strip .from-style{display:none}
+.header.no-avg .strip .from-avg,.header.no-ante .stat.level small,.header.no-paid .stat.paid,.header.no-stage .strip .stage{display:none}
+.header.no-prizes .strip .stat.prizes.plain,.header.no-tally .strip .tally{display:none}      /* Spin & Gold */
+.header.no-word .word{display:none}
+
+/* ---------- 6. Advice ---------- */
+.advice{display:flex;flex-direction:column;gap:var(--gap);min-width:0}
+/* Under 1024 the slab has one height whatever it says, so the table and the action bar below never move:
+   the eyebrow row, one row for the verb (the same line box in every tone and size) with its size and
+   its pill, and one line for the spot. From 1024 it stands in its own column and takes the room it needs. */
+.slab{border-radius:var(--r-card);padding:10px 16px;background:var(--panel);border:1px solid var(--line-strong);
+  display:flex;flex-direction:column;gap:2px;min-width:0;height:112px;overflow:hidden}
+.slab.attack{background:var(--yellow);border-color:var(--yellow);color:var(--ink)}
+.slab.attack .eyebrow,.slab.attack .spot{color:var(--ink)}
+.slab.passive{border:2px solid var(--white);padding:9px 15px}
+.slab.fold{border:1px solid var(--line-strong)}
+.slab.wait{background:var(--ink);border:1px dashed var(--grey);color:var(--grey)}
+.slab .head{display:flex;justify-content:space-between;align-items:center;gap:12px;min-width:0}
+/* Style and moves (and re-entry, bounty): under 1024 between the eyebrow and the pips, from 1024 on a line of their own. */
+.slab .mode{flex:1 1 0;min-width:0;height:20px;margin:-2px 0;padding:0 2px;border-radius:6px;text-align:right;font:600 12px/20px var(--body);color:inherit;opacity:.85;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slab .mode:hover{opacity:1;text-decoration:underline;text-underline-offset:3px}
+.slab .mode{position:relative}
+.slab .mode::after{content:"";position:absolute;left:0;right:0;top:-12px;bottom:-12px}     /* the line is 20 high, the room that takes the click 44 */
+/* "Why": opens the reasons. Shown only where the line under the slab has given its row to the table (section 16). */
+.slab .whybtn{display:none;flex:none;align-items:center;height:20px;margin:-2px -6px -2px 0;padding:0 2px 0 6px;border-radius:6px;position:relative;
+  font:700 12px/20px var(--body);color:inherit;white-space:nowrap}
+.slab .whybtn:hover{text-decoration:underline;text-underline-offset:3px}
+.slab .whybtn .icon{width:14px;height:14px}
+.slab .whybtn::after{content:"";position:absolute;left:0;right:0;top:-12px;bottom:-12px}
+.sure{display:flex;align-items:center;gap:6px}
+.pips{display:flex;gap:3px}
+.pips i{width:6px;height:12px;border-radius:2px;border:1.5px solid currentColor}
+.pips i.on{background:currentColor}
+/* (the row is lifted 3px: capitals have nothing under the baseline, and so stand in the middle of their row) */
+.act{display:flex;align-items:baseline;column-gap:12px;height:var(--verb-lh);min-width:0;margin:-3px 0 3px}
+.verb{font:italic 800 var(--verb)/var(--verb-lh) var(--display);text-transform:uppercase;letter-spacing:-.01em;padding-right:.06em;
+  white-space:nowrap;flex:none}
+.verb.long{font-size:calc(var(--verb)*.75)}
+.verb.xlong{font-size:calc(var(--verb)*.6)}
+.slab.wait .verb{font-size:48px}
+.slab.wait .verb.xlong{font-size:36px}
+.size{font:800 var(--size)/1 var(--display);text-transform:uppercase;font-variant-numeric:tabular-nums lining-nums;white-space:nowrap;flex:none}
+/* The pill shares the verb's row. It may take two lines; with a pill the size keeps its first unit only
+   (the Follow button says the other), so the row never needs a second one. */
+.slab .pill{align-self:flex-end;flex:0 1 auto;min-width:0;height:auto;min-height:22px;max-height:36px;padding:4px 10px;border-radius:11px;
+  white-space:normal;line-height:14px;overflow:hidden;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}    /* a third line ("..., if BB, HJ and CO check") ends in dots; the tooltip has it all */
+.slab.has-pill .size .also{display:none}
+.slab.attack .pill{background:var(--ink);color:var(--white)}
+.spot{font-size:13px;line-height:19px;font-weight:500;color:var(--soft);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slab.wait .spot{color:var(--grey)}
+.spot-full{font-size:14px;font-weight:500;color:var(--white)}
+/* Where the tournament stands, from the answer before, for the moment the new answer takes: dimmed. */
+.panel.where.old{opacity:.45}
+/* Under 1024 a slab that waits (hand over, folded, no chips, whose turn it is) says a sentence, not an
+   answer: its word is smaller and the sentence has two lines, so "... press N for the next hand" and
+   "... or start a new tournament" are read in full at 560. The slab keeps its one height, so nothing
+   below it moves. (An answer keeps the big word and one line for the spot; the Why sheet has it in full.) */
+@media (max-width:1023px){
+  .slab.wait .act{height:28px;margin:-2px 0 2px}
+  .slab.wait .verb,.slab.wait .verb.long,.slab.wait .verb.xlong{font-size:28px;line-height:28px}
+  .slab.wait .spot{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+}
+
+/* Under 1024 the reasons are one line that opens the full panel as a sheet. */
+.whyline{display:flex;align-items:center;gap:12px;min-height:44px;width:100%;padding:0 4px;border-radius:var(--r-in);font-size:13px;color:var(--soft)}
+/* (two lines inside the row's 44px: at 560 the fold-clock sentence is read in full without opening the sheet) */
+.whyline .text{flex:1;min-width:0;line-height:17px;max-height:34px;overflow:hidden;text-align:left;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.whyline .more{flex:none;display:inline-flex;align-items:center;gap:2px;font-weight:600;color:var(--white)}
+button.whyline:hover{background:var(--panel)}
+.advice-tabs{display:none;align-self:flex-start}
+.advice-tabs .tab{min-width:84px}
+
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:12px 14px;
+  display:flex;flex-direction:column;gap:10px;min-width:0}
+.advice > .panel{display:none}
+.where{padding-top:10px;padding-bottom:10px}
+.why .reason{font-size:15px;color:var(--soft)}
+.why p{font-size:13px;color:var(--soft)}
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.tile{background:var(--ink);border:1px solid var(--line);border-radius:var(--r-tile);padding:12px 14px;min-width:0}
+.tile .eyebrow{white-space:normal}
+.tile .num{font-size:36px;margin-top:4px;white-space:nowrap}
+.tile .num.long{font-size:26px;margin-top:9px;margin-bottom:5px}
+.tile .num.xlong{font-size:19px;margin-top:13px;margin-bottom:8px}
+.tile.wide{grid-column:1/-1}
+.tile.wide .num.xlong{font-size:22px;line-height:1.1;white-space:normal;margin-top:8px;margin-bottom:4px}
+.tile .sub{font-size:12px;color:var(--grey);margin-top:2px}
+.group{display:flex;flex-direction:column;gap:4px}
+.group ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
+.group li{font-size:13px;color:var(--soft)}
+.group li b{color:var(--white);font-weight:600}
+.source{font-size:12px;color:var(--grey);border-top:1px solid var(--line);padding-top:8px}
+.context{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:12px;row-gap:6px;align-items:baseline}
+.context dt,.context dd{margin:0}
+.context dd{font-size:13px;color:var(--soft)}
+
+.chart .head{display:flex;justify-content:space-between;gap:12px}
+.chart .head .eyebrow:first-child{white-space:normal}
+.grid13{display:grid;grid-template-columns:repeat(13,minmax(0,1fr));gap:1px}
+.cell{height:24px;display:grid;place-items:center;font:700 12px/1 var(--display);background:var(--ink);color:var(--grey);border-radius:3px}
+.cell.r{background:var(--yellow);color:var(--ink)}
+.cell.c{background:var(--white);color:var(--ink)}
+.cell.x{background:#3F3815;color:var(--yellow)}          /* the yellow tint on Panel, made solid */
+.cell.me{box-shadow:0 0 0 2px var(--ink),0 0 0 4px var(--white);position:relative;z-index:1}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--soft);align-items:center}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:12px;height:12px;border-radius:3px;background:var(--ink);box-shadow:inset 0 0 0 1px var(--line-strong)}
+.legend i.r{background:var(--yellow);box-shadow:none}
+.legend i.c{background:var(--white);box-shadow:none}
+.legend i.x{background:#3F3815;box-shadow:none}
+.legend i.me{background:var(--ink);box-shadow:inset 0 0 0 2px var(--white)}
+
+/* ---------- 7. Table ---------- */
+.table{position:relative;height:var(--table-h);min-width:0}
+.table.aof{height:var(--table-h-aof)}
+.felt{position:absolute;left:calc(var(--pod-w)/2);right:calc(var(--pod-w)/2);top:calc(var(--pod-h)/2);bottom:calc(var(--hero-h)/2);
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-pill)}
+/* A pod has three rows. Under 1280: position and seat key; the stack; then the stack in the other unit
+   with the player's type (hero: the YOU pill) at the right. From 1280: position and key; the stack with
+   the other unit beside it; then the type and the name. Nothing in a pod is cut silently: what cannot
+   be shortened (position, stack, type, YOU) has its own room. */
+.pod{position:absolute;width:var(--pod-w);height:var(--pod-h);background:var(--ink);border:1px solid var(--line-strong);
+  border-radius:var(--r-tile);padding:5px 7px;display:flex;flex-direction:column;justify-content:space-between;
+  text-align:left;color:var(--white);transition:border-color .12s}
+button.pod:hover{border-color:var(--grey)}
+.pod .top{display:flex;justify-content:space-between;align-items:center;gap:4px;min-width:0}
+.pos{font:800 var(--pos)/1 var(--display);text-transform:uppercase;letter-spacing:.01em;white-space:nowrap}
+.key{min-width:18px;height:18px;padding:0 4px;display:grid;place-items:center;flex:none;border:1px solid var(--line-strong);
+  border-radius:5px;font:700 12px/1 var(--body);color:var(--grey)}
+.stack{display:flex;align-items:baseline;column-gap:3px;height:var(--stack);min-width:0;white-space:nowrap}
+.stack .num{font-size:var(--stack);line-height:var(--stack)}
+.stack u{text-decoration:none;font:700 12px/1 var(--display);color:var(--grey)}
+/* The stack in the other unit, and the word of a seat that is away or out: on the third row under 1280, beside the stack from 1280. */
+.other,.pod .tag{font:700 12px/14px var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--grey);white-space:nowrap}
+.pod .tag{letter-spacing:.04em;text-transform:uppercase}
+.stack .other,.stack .tag{display:none;margin-left:auto;padding-left:4px}
+.pod .more{display:flex;align-items:center;gap:4px;height:14px;min-width:0}
+.pod .more .other{flex:0 1 auto;min-width:0;overflow:hidden}      /* (if the row is ever too short, this gives way, not the type) */
+/* The player's type: a small tag of its own, never cut (it changes the advice). */
+.pod .type{flex:none;height:14px;padding:0 3px;border-radius:4px;background:var(--line);color:var(--white);
+  font:800 12px/14px var(--display);text-transform:uppercase;white-space:nowrap}
+.pod .more .type,.pod .more .pill.you{margin-left:auto}
+.pod .name{display:none;min-width:0;font:500 12px/14px var(--body);color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pod.out,.pod.out .num,.pod.out .name,.pod.out .type{color:var(--grey)}
+.pod.out{border-color:var(--line)}
+.pod.away{border-style:dashed;border-color:var(--line-strong)}
+.pod.stale:not(.allin) .stack .num{color:var(--grey)}      /* (an all-in player is in the hand: never grey) */
+.pod.allin .stack .num{font-style:italic}
+.pod.target{border:2px solid var(--white);padding:4px 6px}
+/* The seat that is up (the next action is recorded for it): Menlo yellow, for the user and for every other player. */
+.pod.turn{border:2px solid var(--yellow);padding:4px 6px;background:var(--yellow-wash);box-shadow:0 0 0 3px var(--yellow-tint)}
+button.pod.turn:hover{border-color:var(--yellow)}
+.pod.turn .pos,.pod.turn .key{color:var(--yellow)}
+.pod.empty{border:1px dashed var(--grey);background:none;align-items:center;justify-content:center;color:var(--grey);font:600 13px/1 var(--body)}
+.pod.empty:hover{color:var(--white);border-color:var(--white)}
+.pod.empty.target{border-width:2px;border-style:solid;color:var(--white)}
+
+/* Hero's pod: his two cards (one button), then position, YOU and stack (another). */
+.pod.hero{width:var(--hero-w);height:var(--hero-h);flex-direction:row;gap:8px;align-items:stretch;justify-content:flex-start;padding:5px 7px}
+.pod.hero.turn,.pod.hero.target{padding:4px 6px}
+.pod.hero .hand{display:flex;gap:4px;align-items:center;flex:none;border-radius:6px}
+.pod.hero .info{display:flex;flex-direction:column;justify-content:space-between;flex:1;min-width:0;padding:3px 0;border-radius:6px;color:inherit}
+.pod.hero .more{height:16px}
+.pod.hero .pill.you{flex:none;height:16px;padding:0 6px;font-size:12px}
+
+.chip{position:absolute;height:var(--chip-h);min-width:36px;padding:0 6px;display:grid;place-items:center;border-radius:var(--r-pill);
+  background:var(--line);color:var(--white);font:800 var(--chip-f)/1 var(--display);font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.chip.allin{background:var(--white);color:var(--ink)}
+.table .exact{display:none}              /* a bet or the pot written twice: short where the table is small, exact from 1280 */
+.chip.won{background:#1C392B;color:var(--win)}       /* the win and loss tints on Panel, made solid */
+.chip.lost{background:#3F2224;color:var(--loss)}
+.deal{position:absolute;width:var(--deal);height:var(--deal);border-radius:50%;background:var(--white);color:var(--ink);
+  display:grid;place-items:center;font:800 max(12px,calc(var(--deal)*.62))/1 var(--display);box-shadow:0 0 0 2px var(--ink);z-index:2}
+.centre{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:6px}
+.pot{display:flex;align-items:baseline;gap:8px;height:26px;white-space:nowrap}
+.pot .num{font-size:var(--pot);line-height:26px}
+.pot small{font:700 13px/1 var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--grey)}
+.pots{font:700 13px/14px var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--soft);white-space:nowrap;margin-top:-4px}
+.board{display:flex;gap:8px}
+.street{display:flex;gap:4px;padding:0 4px;margin:0 -4px;border-radius:6px}
+.table-tools{position:absolute;right:0;top:0}
+
+/* ---------- 8. Cards ---------- */
+.card{width:var(--card-w);height:var(--card-h);background:var(--white);color:var(--ink);border-radius:calc(var(--card-w)*.13);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;flex:none}
+.card b{font:800 calc(var(--card-h)*.5)/.9 var(--display);letter-spacing:-.02em}
+.card .suit{width:calc(var(--card-h)*.3);height:calc(var(--card-h)*.3)}
+.card .so{font:700 calc(var(--card-h)*.24)/1 var(--body);height:calc(var(--card-h)*.3);color:var(--ink);text-transform:lowercase}
+.card.big{width:var(--hcard-w);height:var(--hcard-h);border-radius:calc(var(--hcard-w)*.13)}
+.card.big b{font-size:calc(var(--hcard-h)*.5)}
+.card.big .suit{width:calc(var(--hcard-h)*.3);height:calc(var(--hcard-h)*.3)}
+.card.big .so{font-size:calc(var(--hcard-h)*.24);height:calc(var(--hcard-h)*.3)}
+.card.slot{background:none;border:1.5px dashed var(--grey)}
+.card.slot.now{border:2px solid var(--white)}
+/* Suits: spades and clubs solid, hearts and diamonds drawn as outlines (the one-ink deck). */
+.suit{fill:currentColor;stroke:currentColor;stroke-width:0;stroke-linejoin:round;flex:none}
+.suit.open{fill:none;stroke-width:2.4}
+.txt{white-space:nowrap}
+.txt .suit{width:1em;height:1em;vertical-align:-.14em;margin-left:1px}      /* in a sentence a suit is as tall as its rank */
+/* The four-colour deck: these inks appear only inside a white card. */
+.deck-four .card.h{color:#B3121A}
+.deck-four .card.d{color:#1D4ED8}
+.deck-four .card.c{color:#0B6B32}
+.deck-four .card .suit.open{fill:currentColor;stroke-width:0}
+
+/* ---------- 9. Hand line ---------- */
+.line{display:flex;align-items:center;height:44px;margin:-4px 0;min-width:0}
+.events{display:flex;align-items:center;gap:6px;height:44px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;padding:0 3px;margin:0 -3px}
+.events::-webkit-scrollbar{display:none}
+.evb{flex:none;height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-pill)}
+.evb:focus-visible{outline:0;box-shadow:none}
+.evb:focus-visible .ev{outline:2px solid var(--white);outline-offset:1px}
+.ev{height:28px;padding:0 10px;display:inline-flex;align-items:center;gap:4px;border-radius:var(--r-pill);background:var(--panel);
+  border:1px solid var(--line);font-size:13px;font-weight:600;color:var(--soft);white-space:nowrap;transition:border-color .12s}
+.ev b{font:800 15px/1 var(--display);color:var(--white);font-variant-numeric:tabular-nums lining-nums}
+.evb:hover .ev{border-color:var(--grey)}
+.ev.auto{background:none;color:var(--grey)}
+.ev.auto b{color:var(--grey)}
+.ev.sel{border-color:var(--white);color:var(--white)}
+.line .hint{font-size:13px;color:var(--grey);padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* The amount row takes the hand line's place while a bet or raise is typed. */
+.amount{display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:44px}
+.amount .field{width:160px;flex:none}
+.amount .btn kbd{display:none}
+.actions .amount{flex:0 1 auto}
+.presets{display:flex;gap:6px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;padding:3px;margin:-3px}
+.presets::-webkit-scrollbar{display:none}
+.preset{flex:none;height:44px;min-width:40px;padding:0 8px;border:1px solid var(--grey);border-radius:var(--r-pill);background:var(--ink);
+  font:800 15px/1 var(--display);color:var(--white);text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums lining-nums;transition:border-color .12s}
+.preset:hover{border-color:var(--white)}
+.preset:active{background:var(--line)}
+
+/* ---------- 10. Action bar ---------- */
+/* Two rows: whose action the keys record, then the buttons. While a hand is played the buttons sit in
+   six fixed slots (the coach's button, four moves, the rest), so no button turns up where another was. */
+.actions{display:flex;flex-direction:column;gap:4px;min-width:0}
+.actions .whose{display:flex;align-items:baseline;gap:8px;height:16px;min-width:0;padding:0 2px;white-space:nowrap;overflow:hidden}
+.actions .whose b{font:800 15px/16px var(--display);text-transform:uppercase;letter-spacing:.02em;color:var(--white);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.who{text-transform:none}                /* a player's name inside a heading: as it was typed */
+.actions .whose .eyebrow.up,.actions .whose .eyebrow.up+b{color:var(--yellow)}      /* the seat that is yellow on the table */
+.actions .whose .note{font:500 12px/16px var(--body);color:var(--soft);min-width:0;overflow:hidden;text-overflow:ellipsis}
+.actions .whose .note .long{display:none}          /* under 1280 the note is said in fewer words (see render.js whoseHtml) */
+.actions .row{display:flex;gap:6px;align-items:stretch;min-width:0}
+/* Five buttons or more in the row (a showdown with four players, a split being ticked): no keycaps and
+   less padding where the bar is narrow, so every word stays inside its button. */
+.actions .row.many .btn{min-width:0;padding:0 4px}
+.actions .row.many .btn kbd{display:none}
+.actions .row.many .btn .label{min-width:0;max-width:100%;font-size:15px;gap:4px}
+.actions .slots{display:grid;grid-template-columns:minmax(0,1.8fr) repeat(4,minmax(0,1fr)) minmax(0,1.3fr);gap:6px;align-items:stretch;min-width:0}
+.actions .slots .btn{min-width:0;grid-row:1;padding:0 2px}
+.actions .slots .btn .label{gap:4px;font-size:15px}
+.actions .slots [data-fk=rest] kbd,.actions .slots [data-fk^=skip-] kbd{display:none}     /* under 1440 the last slot has no room for the word Enter */
+.btn.tick .box{width:14px;height:14px;border:2px solid var(--grey);border-radius:4px;flex:none}
+.btn.tick[aria-checked=true]{border-color:var(--white)}
+.btn.tick[aria-checked=true] .box{background:var(--white);border-color:var(--white)}
+.field .unit{flex:none;font:700 12px/1 var(--display);color:var(--grey)}
+.btn{min-height:48px;min-width:44px;padding:0 8px;border-radius:var(--r-btn);border:1px solid var(--grey);background:var(--ink);color:var(--white);
+  font:800 16px/1 var(--display);text-transform:uppercase;letter-spacing:.02em;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:3px;white-space:nowrap;flex:1 1 0;transition:border-color .12s,background-color .12s}
+.btn .label{display:inline-flex;align-items:center;gap:6px}
+.btn .sub{font:700 13px/1 var(--display);letter-spacing:.01em;text-transform:none;color:var(--soft);font-variant-numeric:tabular-nums lining-nums;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis}
+/* What a provisional answer takes for granted ("if BB and CO check"), under Follow: up to two lines, inside the button's 48px. */
+.btn .sub.assumed{white-space:normal;text-align:center;line-height:13px;max-height:26px;margin-top:-2px;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.btn:hover{border-color:var(--white)}
+.btn:active{background:var(--line)}
+.btn.primary{background:var(--yellow);border-color:var(--yellow);color:var(--ink)}
+.btn.primary:hover{background:var(--yellow-hover);border-color:var(--yellow-hover)}
+.btn.primary kbd{border-color:var(--ink);color:var(--ink)}
+.btn.primary .sub{color:var(--ink)}
+.btn.wide{flex:1.8 1 0}
+.btn:disabled,.btn.primary:disabled{background:var(--line);border-color:var(--line);color:var(--grey)}
+/* The action bar takes a pointer click on a button once it has stood in its place for 400 ms (render.js, noteBar).
+   Until then the button is held, and is drawn dimmer while the pointer is on the bar: a click on it is dropped. */
+.actions:hover .btn.held:not(:disabled){opacity:.45}
+.btn:disabled kbd,.btn:disabled .sub{border-color:var(--line-strong);color:var(--grey)}
+.btn.compact{min-height:44px;flex:none;padding:0 14px;font-size:15px;flex-direction:row;gap:6px}
+
+/* ---------- 11. Menus and sheets ---------- */
+/* A menu lies over the middle of the table, a little above it, so hero's cards stay in sight below. */
+.pop{position:absolute;left:50%;top:calc(50% - var(--hero-h)/3);transform:translate(-50%,-50%);z-index:6;width:min(400px,calc(100% - 12px));
+  background:var(--panel);border:1px solid var(--line-strong);border-radius:14px;box-shadow:0 0 0 4px var(--ink);
+  padding:8px 10px 10px;display:flex;flex-direction:column;gap:8px}
+/* All-In or Fold under 1024: the table box is only 240 high, so a menu there would cover hero's pod and the
+   top pod. It opens over the head of the page instead, and the whole table stays in sight. */
+.table.aof .pop{position:fixed;top:12px;transform:translateX(-50%);z-index:19;width:min(400px,calc(100vw - 32px))}
+.pop.seat{width:min(460px,calc(100% - 12px))}          /* a seat's menu: five buttons with their keys in one row */
+.table.aof .pop.seat{width:min(460px,calc(100vw - 32px))}
+.pop.seat .menu-btn[data-save]{flex:.8 1 0}
+.pop-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:36px}
+.pop-head h2{font:italic 800 18px/1 var(--display);text-transform:uppercase;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pop-head h2 small{font:500 12px/1 var(--body);font-style:normal;color:var(--grey);text-transform:none;letter-spacing:0;margin-left:2px}
+.pop-head .tool{margin:-4px -6px -4px 0}
+.pop .two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.pop .row{display:flex;gap:6px}
+.menu-btn{flex:1 1 0;min-width:44px;height:44px;padding:0 6px;border:1px solid var(--grey);border-radius:var(--r-in);background:var(--ink);
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;font:600 13px/1 var(--body);color:var(--white);white-space:nowrap;transition:border-color .12s}
+.menu-btn:hover{border-color:var(--white)}
+.menu-btn:active{background:var(--line)}
+.menu-btn:disabled{color:var(--grey);border-color:var(--line)}
+.menu-count{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:6px;font:600 13px/1 var(--body);color:var(--soft);white-space:nowrap}
+.menu-count .num{font-size:20px;color:var(--white)}
+.pop .choice .tab{min-width:36px;padding:0 6px}          /* the New table menu: up to nine seats in one row */
+.pop-tools{display:flex;margin:-4px -6px -4px 0}
+.pop-tools .tool{margin:0}
+.pop .hint{font-size:12px;color:var(--soft)}
+/* The card picker: rank, then suit, as on the keyboard. */
+.picker .slots{display:flex;gap:4px;align-items:center}
+.picker .slots .card{--card-w:26px;--card-h:36px}
+.ranks{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.suits{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.suits.with-class{grid-template-columns:repeat(6,minmax(0,1fr))}
+.pick{height:44px;min-width:44px;border:1px solid var(--grey);border-radius:var(--r-in);background:var(--ink);display:grid;place-items:center;
+  font:800 20px/1 var(--display);color:var(--white);transition:border-color .12s}
+.pick:hover{border-color:var(--white)}
+.pick.on{background:var(--white);border-color:var(--white);color:var(--ink)}
+.pick:disabled{color:var(--grey);border-color:var(--line);background:none}
+.pick .suit{width:20px;height:20px}
+.pick.word{font:600 13px/1 var(--body)}
+/* The exact holdings of a hand typed as a class: one button each, drawn as its two cards. */
+.holdings{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.holdings.n6{grid-template-columns:repeat(3,minmax(0,1fr))}
+.pick.holding{display:flex;align-items:center;justify-content:center;gap:3px;height:48px}
+.pick.holding .card{--card-w:26px;--card-h:36px}
+.pick.holding:disabled .card{opacity:.35}
+
+.scrim{position:fixed;inset:0;width:100%;height:100%;background:rgba(10,10,11,.74);z-index:20;cursor:default}
+.sheet{position:fixed;z-index:21;top:12px;left:50%;transform:translateX(-50%);width:min(608px,calc(100vw - 32px));max-height:calc(100vh - 24px);
+  background:var(--panel);border:1px solid var(--line-strong);border-radius:14px;box-shadow:0 0 0 4px var(--ink);display:flex;flex-direction:column}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 8px 8px 16px;border-bottom:1px solid var(--line);flex:none}
+.sheet-head h2{font:italic 800 24px/1 var(--display);text-transform:uppercase;letter-spacing:-.01em}
+.sheet-body{padding:14px 16px 16px;overflow-y:auto;display:flex;flex-direction:column;gap:18px;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+.sheet-body .panel{background:none;border:0;padding:0;border-radius:0}
+.section{display:flex;flex-direction:column;gap:8px}
+.sheet-body > *,.section > *{flex:none}          /* the sheet scrolls: nothing in it is squeezed to make it fit */
+/* (a section's heading is a small heading in the display face, so it does not read as one more field label) */
+.section > h3{font:italic 800 16px/1 var(--display);letter-spacing:.01em;text-transform:uppercase;color:var(--white)}
+.notice{font-size:13px;color:var(--soft);padding:10px 12px;border:1px solid var(--line-strong);border-radius:var(--r-in)}
+.cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.choice{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
+.choice > span{font-size:14px;color:var(--soft)}
+.choice .tabs{flex:0 1 auto;min-width:0;flex-wrap:wrap;justify-content:flex-end;border-radius:22px}
+/* A choice whose options each carry a line of words: the label over the track, the options side by side. */
+.choice.tall{flex-direction:column;align-items:stretch;gap:6px}
+.choice.tall .tabs{flex-wrap:nowrap}
+.choice.tall .tab{flex:1 1 0;min-width:0;height:auto;min-height:48px;padding:6px 10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;white-space:normal}
+.choice.tall .tab b{font-weight:600}
+.choice.tall .tab small{font:500 12px/1.2 var(--body)}
+/* A field with its label on a line over it. */
+.over{display:flex;flex-direction:column;gap:4px;min-width:0}
+.over .eyebrow{overflow:hidden;text-overflow:ellipsis}
+.buttons{display:flex;flex-wrap:wrap;gap:8px}
+
+.keys{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 14px;align-items:center}
+.keys dt{display:flex;gap:4px 10px;flex-wrap:wrap;max-width:190px}
+.keys .combo{display:inline-flex;gap:3px}
+.keys dd{margin:0;font-size:13px;color:var(--soft)}
+.history{display:flex;flex-direction:column}
+.history .hrow{display:grid;grid-template-columns:44px 64px 56px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:44px;width:100%;border-bottom:1px solid var(--line);font-size:13px;color:var(--soft);text-align:left}
+.history .hrow:hover,.history .hrow[aria-expanded=true]{background:var(--ink)}
+.history .htext{display:flex;flex-direction:column;gap:8px;padding:10px 0 12px;border-bottom:1px solid var(--line)}
+.history .htext pre{margin:0;font:500 12px/1.5 var(--body);color:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
+.history .hrow .num{font-size:16px;color:var(--white)}
+.history .hrow .num.win{color:var(--win)}
+.history .hrow .num.loss{color:var(--loss)}
+.history .hrow b{color:var(--white);font-weight:600}
+.history .pill{height:18px;padding:0 7px;font-size:12px;margin-left:6px}
+.empty-note{font-size:14px;color:var(--grey)}
+
+/* ---------- 12. Forms ---------- */
+.field{display:flex;align-items:center;gap:8px;height:44px;padding:0 10px;background:var(--ink);border:1px solid var(--grey);border-radius:var(--r-in);min-width:0;
+  transition:border-color .12s}
+.field:focus-within{border-color:var(--white);outline:2px solid var(--white);outline-offset:2px}
+.field .eyebrow{flex:none;max-width:60%;overflow:hidden;text-overflow:ellipsis}
+/* The all-stacks sheet: who it is on a line over the field, then the field as wide as its cell. */
+.sweeps{row-gap:12px}
+.sweep{display:flex;flex-direction:column;gap:4px;min-width:0;cursor:text}
+.sweep .who{display:flex;align-items:center;gap:6px;height:18px;min-width:0}
+.sweep .who b{flex:none;font:800 15px/1 var(--display);text-transform:uppercase;letter-spacing:.01em}
+.sweep .who .name{min-width:0;font:500 12px/18px var(--body);color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.field input,.field select{flex:1;min-width:0;width:100%;height:100%;background:none;border:0;padding:0;outline:0;box-shadow:none;
+  font:800 20px/1 var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--white)}
+.field input.words,.field select{font:500 14px/1 var(--body)}
+.field input::placeholder{color:var(--grey);font:500 13px/1 var(--body);opacity:1}
+.field select{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:18px;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%239A9AA3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right center/12px}
+.field select option{background:var(--panel);color:var(--white)}
+.in{height:44px;padding:0 10px;background:var(--ink);border:1px solid var(--grey);border-radius:var(--r-in);min-width:0;
+  font:800 20px/1 var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--white)}
+.in:focus-visible{border-color:var(--white)}
+textarea.in{height:auto;min-height:96px;padding:10px;font:500 13px/1.5 var(--body);resize:vertical;width:100%}
+.check{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--soft);cursor:pointer}
+.check:hover{color:var(--white)}
+/* A drawn box: empty it is Ink with a Grey edge; ticked it is White with an Ink tick (a white fill means "on", as everywhere). */
+.check input{appearance:none;-webkit-appearance:none;width:20px;height:20px;flex:none;cursor:pointer;margin:0;
+  background:var(--ink);border:1px solid var(--grey);border-radius:6px;transition:border-color .12s,background-color .12s}
+.check input:hover{border-color:var(--white)}
+.check input:checked{border-color:var(--white);
+  background:var(--white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 10.5l3.4 3.4L15 6.8' fill='none' stroke='%230A0A0B' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/18px no-repeat}
+/* A value the server refused: the field is marked with a dashed white edge and the reason stands under it. */
+.field.bad,.in[aria-invalid=true]{border:2px dashed var(--white)}
+.field.bad{padding:0 9px}
+.field-error{margin:0;padding:8px 10px;background:var(--ink);border:1px solid var(--white);border-radius:var(--r-in);
+  font:500 13px/1.35 var(--body);color:var(--white);min-width:0}
+.field-error small{display:block;font-size:12px;color:var(--soft)}
+/* In the strip and on the action bar there is no room in the row: the reason floats under (over) the field. */
+.editing{position:relative;display:inline-flex}
+.editing .field-error{position:absolute;left:0;top:calc(100% + 6px);z-index:9;width:max-content;max-width:min(340px,70vw);box-shadow:0 0 0 4px var(--ink)}
+.actions .amount{position:relative}
+.actions .amount .field-error{position:absolute;left:0;bottom:calc(100% + 8px);z-index:9;width:max-content;max-width:min(380px,80vw);box-shadow:0 0 0 4px var(--ink)}
+.line .amount .field-error{flex:1;padding:4px 10px;line-height:1.25;max-height:44px;overflow:hidden}
+.line .amount .field-error small{display:inline;margin-left:6px}
+
+/* ---------- 13. Toast ---------- */
+/* The toast lies over the "Why and range" line under the slab (first run: its own row under the form; in a
+   window too short to show that row, over the form's title: section 16). */
+.toasts{align-self:end;z-index:8;display:flex;justify-content:center;min-width:0;pointer-events:none}
+.app.first .toasts{align-self:start}
+.toasts:empty{display:none}
+.sheet-toast{flex:none;display:flex;justify-content:center;padding:10px 12px 12px;border-top:1px solid var(--line)}
+.sheet-toast .toast{box-shadow:none}
+.toast{pointer-events:auto;display:flex;align-items:center;gap:6px;min-height:44px;max-width:100%;padding:0 4px 0 14px;background:var(--panel);
+  border:1px solid var(--line-strong);border-radius:14px;box-shadow:0 0 0 4px var(--ink);font-size:13px;color:var(--white)}
+.toast .text{padding:8px 6px 8px 0;min-width:0}
+.toast .text small{display:block;font-size:12px;color:var(--grey)}
+.toast .link{flex:none;height:44px;padding:0 10px;border-radius:var(--r-in);font:800 15px/1 var(--display);text-transform:uppercase;letter-spacing:.02em;color:var(--white);text-decoration:underline;text-underline-offset:3px}
+
+/* ---------- 14. First run ---------- */
+.setup{max-width:560px;width:100%;margin:16px auto 0;display:flex;flex-direction:column;gap:14px}
+.setup h1{font:italic 800 48px/.95 var(--display);text-transform:uppercase;letter-spacing:-.01em}
+.setup .lead{font-size:14px;color:var(--soft)}
+.stacked{display:flex;flex-direction:column;gap:10px}
+.btn.start{flex:none;align-self:stretch;font-size:18px;flex-direction:row;gap:8px}
+
+/* ---------- 15. Narrower and wider screens ---------- */
+/* Under 560 the table box is 512 wide: pods and board cards give up a few pixels so five cards still fit between the bets. */
+@media (max-width:559px){
+  :root{--pod-w:96px;--card-w:34px;--card-h:47px}
+  .board{gap:10px}
+  .street{padding:0 5px;margin:0 -5px}
+}
+@media (min-width:1024px){
+  :root{--gut:16px;--gap:12px;--table-h:360px;--table-h-aof:300px;
+    --pod-w:112px;--pod-h:72px;--hero-w:216px;--hero-h:80px;--pos:20px;--stack:18px;
+    --card-w:44px;--card-h:62px;--hcard-w:48px;--hcard-h:66px;--chip-h:24px;--chip-f:14px;--deal:20px;
+    --verb:88px;--verb-lh:.9;--size:32px}
+  /* Two columns. The last row takes what is left of the window, so the advice column reaches the bottom. */
+  .app{max-width:1640px;height:100%;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:auto auto auto minmax(auto,1fr);column-gap:16px}
+  .header{grid-column:1/-1}
+  .bar{height:52px}
+  .word{display:block}
+  .brand .mark{width:32px;height:32px}
+  /* The advice column scrolls by itself, so the table never moves. */
+  /* It keeps the room of its scroll bar from the start (the bar lies in the page's own margin), so the
+     slab is not made narrower the moment an answer is long enough to scroll. --sbw: render.js measures it. */
+  .advice{grid-column:2;grid-row:2/5;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;
+    scrollbar-gutter:stable;padding:4px;margin:-4px calc(-4px - var(--sbw,0px)) -4px -4px;align-self:stretch;min-height:0}
+  .table,.line,.actions{grid-column:1}
+  .table{grid-row:2}
+  .line{grid-row:3}
+  .actions{grid-row:4;align-self:start}
+  .first-run{grid-column:1/-1}
+  /* From 1024 the toast lies in the table column, over the hand line: straight above the action bar,
+     where the eyes are. What to do instead follows on the same line, so the toast keeps to that row. */
+  /* (It takes no room of its own: the row keeps the hand line's height, so the action bar does not move
+     when a toast comes or goes.) */
+  .toasts{grid-column:1;grid-row:3;align-self:end;position:relative;height:0}
+  .toasts .toast{position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:max-content}
+  .toast .text small{display:inline;margin-left:8px}
+  .app.first .toasts{grid-column:1/-1;grid-row:3;height:auto}
+  .app.first .toasts .toast{position:static;transform:none;width:auto}
+  .whyline{display:none}
+  .advice-tabs{display:flex}
+  .advice[data-panel=why] > .why,.advice[data-panel=why] > .where{display:flex}
+  .advice[data-panel=range] > .chart{display:flex}
+  .slab{padding:16px 20px;gap:4px;height:auto;overflow:visible}
+  .slab.passive{padding:15px 19px}
+  .slab .head{flex-wrap:wrap;row-gap:2px}
+  .slab .mode{order:3;flex:1 0 100%;text-align:left;padding:0}
+  .slab .mode::after{top:-6px;bottom:-6px}
+  .act{flex-direction:column;align-items:flex-start;row-gap:4px;height:auto;margin:0}
+  .verb.xlong{font-size:calc(var(--verb)*.48)}
+  .verb.xlong.two{font-size:calc(var(--verb)*.75);white-space:normal}
+  .verb.two > span{display:block}
+  /* (one line is the 22px pill it always was; a pill longer than the slab is wide takes a second line, never leaves the slab) */
+  .slab .pill{align-self:flex-start;margin-top:2px;max-width:100%;max-height:none;-webkit-line-clamp:3}
+  .slab.has-pill .size .also{display:inline}
+  .spot{white-space:normal;overflow:visible}
+  .pod{padding:6px 9px}
+  .pod.target,.pod.turn{padding:5px 8px}
+  .pod.hero{padding:5px 7px}
+  .pod.hero.turn,.pod.hero.target{padding:4px 6px}
+  .other,.pod .tag{font-size:13px}
+  .chip{min-width:40px;padding:0 8px}
+  .strip{gap:8px}
+  .strip .stage{padding:0 10px}
+  .step{width:44px}
+  .stat{gap:6px}
+  .value{padding:0 6px;gap:2px}
+  .value .row{flex-direction:row;align-items:baseline;gap:6px}
+  .value .row small{line-height:1.2}
+  .table.aof .pop{position:absolute;top:calc(50% - var(--hero-h)/3);transform:translate(-50%,-50%);z-index:6;width:min(400px,calc(100% - 12px))}
+  .table.aof .pop.seat{width:min(460px,calc(100% - 12px))}
+  .btn{font-size:18px;padding:0 12px}
+  .btn .label{gap:8px}
+  .actions .row,.actions .slots{gap:8px}
+  .actions .slots .btn{padding:0 8px}
+  .actions .slots .btn .label{gap:8px;font-size:18px}
+  .amount .field{width:176px}
+  .preset{min-width:44px;padding:0 10px}
+  .amount .btn kbd{display:inline-grid}
+  .sheet.side{left:auto;right:16px;transform:none;width:440px;bottom:12px}
+}
+@media (min-width:1280px){
+  /* The table takes the height the window has, up to 600: it gives height up on a short window
+     (a laptop at 1366 x 768, or 1280 x 800) so the action bar stays in sight. A small table (2 to 4 seats)
+     stops at 460. Around the table: header 65, hand line 36, action bar 68 (its caption row and the
+     buttons), three gaps of 16 and 8 under the bar: 225. */
+  :root{--gut:24px;--gap:16px;--table-h:clamp(404px,calc(100vh - 226px),600px);--table-h-aof:380px;
+    --pod-w:152px;--pod-h:80px;--hero-w:280px;--hero-h:104px;--pos:26px;--stack:22px;
+    --card-w:56px;--card-h:78px;--hcard-w:64px;--hcard-h:88px;--chip-h:28px;--chip-f:16px;--deal:24px;
+    --verb:104px;--size:36px;--pot:32px}
+  .table:not(.aof)[data-size="2"],.table:not(.aof)[data-size="3"],.table:not(.aof)[data-size="4"]{height:min(var(--table-h),460px)}
+  .app{grid-template-columns:minmax(0,1fr) 440px;column-gap:24px}
+  .header{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"bar strip tools";column-gap:24px}
+  .bar{height:64px;gap:20px}
+  .brand .mark{width:36px;height:36px}
+  .strip{margin:0;padding:0;height:64px;gap:12px}
+  .strip::before{display:none}
+  .stat .v{font-size:24px}
+  .table .exact{display:inline}
+  .table .short{display:none}
+  .slab{padding:20px 24px}
+  .slab.passive{padding:19px 23px}
+  .pod{padding:7px 12px}
+  .pod.target,.pod.turn{padding:6px 11px}
+  .stack .other,.stack .tag{display:block}
+  .pod .more .other,.pod .more .tag{display:none}
+  .pod .more{height:16px;gap:6px}
+  .pod .more .type,.pod .more .pill.you{margin-left:0}
+  .pod .type{height:16px;line-height:16px;padding:0 5px;letter-spacing:.03em}
+  .pod .name{display:block;line-height:16px}
+  .pod.hero{padding:7px 9px;gap:12px}
+  .pod.hero.turn,.pod.hero.target{padding:6px 8px}
+  .pod.hero .more{height:20px}
+  .pod.hero .pill.you{height:20px;padding:0 8px}
+  .pot{height:36px}
+  .pot .num{line-height:36px}
+  .actions .whose .note .long{display:inline}
+  .actions .whose .note .brief{display:none}
+  .actions .row.many .btn{padding:0 8px}
+  .actions .row.many .btn kbd{display:inline-grid}
+  .actions .row.many .btn .label{font-size:18px;gap:8px}
+}
+@media (min-width:1440px){.actions .slots [data-fk=rest] kbd,.actions .slots [data-fk^=skip-] kbd{display:inline-grid}}
+/* Wide but under 630 high: the table of the middle step, so the action bar is not pushed out of the window. */
+@media (min-width:1280px) and (max-height:629px){
+  :root{--table-h:360px;--table-h-aof:300px;
+    --pod-w:112px;--pod-h:72px;--hero-w:216px;--hero-h:80px;--pos:20px;--stack:18px;
+    --card-w:44px;--card-h:62px;--hcard-w:48px;--hcard-h:66px;--chip-h:24px;--chip-f:14px;--deal:20px;--pot:24px}
+  .pod{padding:6px 9px}
+  .pod.target,.pod.turn{padding:5px 8px}
+  .stack .other,.stack .tag{display:none}
+  .pod .more .other,.pod .more .tag{display:block}
+  .pod .more{height:14px;gap:4px}
+  .pod .more .type,.pod .more .pill.you{margin-left:auto}
+  .pod .type{height:14px;line-height:14px;padding:0 3px;letter-spacing:0}
+  .pod .name{display:none}
+  .pod.hero{padding:5px 7px;gap:8px}
+  .pod.hero.turn,.pod.hero.target{padding:4px 6px}
+  .pod.hero .more{height:16px}
+  .pod.hero .pill.you{height:16px;padding:0 6px}
+  .table .exact{display:none}
+  .table .short{display:inline}
+  .pot{height:26px}
+  .pot .num{line-height:26px}
+}
+/* From 1280 the strip shares one row with the tabs. Up to 1536 that row is tight: smaller numbers, closer
+   together, and under 1366 the mark stands without the wordmark. */
+@media (min-width:1280px) and (max-width:1535px){
+  .header{column-gap:16px}
+  .bar{gap:14px}
+  .strip{gap:8px}
+  .stat .v{font-size:20px}
+}
+@media (min-width:1280px) and (max-width:1365px){.word{display:none}}
+/* The average stack (Spin & Gold: the win rate) needs more room than that. */
+@media (min-width:1024px) and (max-width:1279px),(min-width:1536px){.strip .from-avg,.strip .from-style{display:flex}}
+/* Room for the reasons and the range chart together, without scrolling: no tabs.
+   (The reasons carry plans, warnings and a source line, so this takes a window about 1100 high.) */
+@media (min-width:1280px) and (min-height:1100px){
+  .advice-tabs{display:none}
+  .advice > .why,.advice > .chart,.advice > .where{display:flex}
+}
+
+/* ---------- 16. A window shorter than the page ---------- */
+/* The page needs 713px of height under 1024 wide, 605 from 1024 and 577 from 1280 (All-In or Fold 60 less).
+   In a shorter window (half a laptop screen beside a poker client, or a zoomed page) three things hold:
+   - the header and the answer stay at the top, the hand line and the action bar at the window's foot;
+   - the table takes a shorter form first (below);
+   - what still does not fit scrolls inside the box around the table (.scroll). The box is laid out from
+     its lower end, so it rests where the user's own cards, the board and the pot are; the seats at the
+     upper edge are a scroll away (render.js restTable brings an aimed seat into sight).
+   Menus on the table open over the head of the page, so the box never cuts them.
+   The shorter forms, by width:
+   - under 852 (and from 852 while the window is 661 high or more): one column. The line under the slab
+     gives its row to the table (its button, Why, stands in the slab's first row), and the table may lose
+     12px. Everything is in sight from 649 high; under that the box scrolls.
+   - 852 to 1023, under 661 high: two columns, as from 1024: the answer beside the table, in the sizes
+     of the narrow step. Everything is in sight from 529 high (a 1440 x 900 screen at 150%: 960 x 600).
+   - from 1024: the table of the narrow step, as tall as the window lets it be. In sight from 557 high
+     (from 1280: 529).
+   Nothing here applies to a window as tall as the page. The first-run form scrolls as a page; in a short
+   window two things of it are kept in sight (the end of this section): what the program has to say, and Start. */
+.scroll{display:contents}
+@media (max-width:1023px) and (max-height:712px),
+       (min-width:1024px) and (max-width:1279px) and (max-height:612px),
+       (min-width:1280px) and (max-height:584px){
+  .app:not(.first){height:100%;min-height:0}
+  .app:not(.first) .scroll{display:flex;flex-direction:column-reverse;grid-column:1;min-width:0;min-height:0;
+    overflow-x:hidden;overflow-y:auto;scrollbar-width:none;overscroll-behavior:contain}
+  .scroll::-webkit-scrollbar{display:none}
+  .scroll > .table{flex:none}
+  .table .pop,.table.aof .pop{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:19;width:min(400px,calc(100vw - 32px))}
+  .table .pop.seat,.table.aof .pop.seat{width:min(460px,calc(100vw - 32px))}
+  /* A toast lies over the hand line, straight above the action bar (as it does from 1024 in every window). */
+  .app:not(.first) .toasts{grid-column:1;align-self:end;position:relative;height:0}
+  .app:not(.first) .toasts .toast{position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:max-content}
+  .toast .text small{display:inline;margin-left:8px}        /* (what to do instead follows on the same line, so the toast keeps to that row) */
+}
+/* One column. */
+@media (max-width:851px) and (max-height:712px),
+       (min-width:852px) and (max-width:1023px) and (min-height:661px) and (max-height:712px){
+  :root{--table-h:clamp(292px,calc(100vh - 357px),304px)}
+  .app:not(.first){grid-template-rows:auto auto minmax(0,1fr) auto auto}
+  .scroll{grid-row:3}
+  .app:not(.first) .toasts{grid-row:4}
+  .whyline{display:none}
+  .slab .whybtn{display:inline-flex}
+}
+/* Two columns under 1024. The second column is 296 wide where the window is 852 and grows to 360;
+   the table keeps 512 or more, as in a window 544 wide. */
+@media (min-width:852px) and (max-width:1023px) and (max-height:660px){
+  :root{--table-h:clamp(292px,calc(100vh - 237px),360px);--verb-lh:.9}
+  .app:not(.first){max-width:none;grid-template-columns:minmax(0,1fr) clamp(296px,calc(100vw - 652px),360px);column-gap:12px;
+    grid-template-rows:auto minmax(0,1fr) auto auto}
+  .header{grid-column:1/-1}
+  .scroll{grid-row:2}
+  .line{grid-column:1;grid-row:3}
+  .actions{grid-column:1;grid-row:4}
+  .app:not(.first) .toasts{grid-row:3}
+  .advice{grid-column:2;grid-row:2/5;align-self:stretch;min-height:0;overflow-y:auto;scrollbar-width:none}
+  .advice::-webkit-scrollbar{display:none}
+  /* the slab as from 1024: the verb, its size and its pill under one another, the spot in full */
+  .slab{padding:14px 16px;gap:4px;height:auto;overflow:visible;flex:none}
+  .slab.passive{padding:13px 15px}
+  .slab .head{flex-wrap:wrap;row-gap:2px}
+  .slab .mode{order:3;flex:1 0 100%;text-align:left;padding:0}
+  .slab .mode::after{top:-6px;bottom:-6px}
+  .act,.slab.wait .act{flex-direction:column;align-items:flex-start;row-gap:4px;height:auto;margin:0}
+  .verb.xlong{font-size:calc(var(--verb)*.48)}
+  .verb.xlong.two{font-size:calc(var(--verb)*.75);white-space:normal}
+  .verb.two > span{display:block}
+  .slab.wait .verb,.slab.wait .verb.long{font-size:40px;line-height:.9}
+  .slab.wait .verb.xlong{font-size:30px;line-height:.9}
+  .slab .pill{align-self:flex-start;margin-top:2px;max-width:100%;max-height:none;-webkit-line-clamp:3}
+  .slab.has-pill .size .also{display:inline}
+  .spot,.slab.wait .spot{white-space:normal;overflow:visible;display:block}
+  /* the line under the slab: the sentence in full, then what it opens */
+  .whyline{flex:none;flex-direction:column;align-items:flex-start;gap:6px;padding:8px 4px}
+  .whyline .text{flex:none;max-height:none;display:block}
+}
+/* (the table's column is under 528 wide there: pods and board cards as in a window under 560) */
+@media (min-width:852px) and (max-width:867px) and (max-height:660px){
+  :root{--pod-w:96px;--card-w:34px;--card-h:47px}
+  .board{gap:10px}
+  .street{padding:0 5px;margin:0 -5px}
+}
+/* From 1024: the table of the narrow step, as tall as the window lets it be. (The menus stand over the table's column.) */
+@media (min-width:1024px) and (max-width:1279px) and (max-height:612px),
+       (min-width:1280px) and (max-height:584px){
+  :root{--table-h:clamp(304px,calc(100vh - 253px),360px);--table-h-aof:clamp(240px,calc(100vh - 253px),300px);
+    --pod-w:104px;--pod-h:64px;--hero-w:192px;--hero-h:72px;--pos:18px;--stack:17px;
+    --card-w:36px;--card-h:50px;--hcard-w:40px;--hcard-h:56px;--chip-h:22px;--chip-f:13px;--deal:18px;--pot:24px}
+  .app:not(.first){grid-template-rows:auto minmax(0,1fr) auto auto}
+  .scroll{grid-row:2}
+  .app:not(.first) .toasts{grid-row:3}
+  .pod{padding:5px 7px}
+  .pod.target,.pod.turn{padding:4px 6px}
+  .other,.pod .tag{font-size:12px}
+  .chip{min-width:36px;padding:0 6px}
+  .table .pop,.table.aof .pop{left:calc(50% - 188px)}
+}
+@media (min-width:1280px) and (max-height:584px){
+  :root{--table-h:clamp(304px,calc(100vh - 225px),360px);--table-h-aof:clamp(240px,calc(100vh - 225px),300px)}
+  .table .pop,.table.aof .pop{left:calc(50% - 232px)}
+}
+/* Two columns under 1024: the menus stand over the table's column there too. */
+@media (min-width:852px) and (max-width:1023px) and (max-height:660px){
+  .table .pop,.table.aof .pop{left:calc(50% - 6px - clamp(148px,calc(50vw - 326px),180px))}
+}
+
+/* The first-run form in a short window. The tournament's form ends 562px down the page and a toast under it
+   at 628: what the program says there (a saved table that could not be read and was set aside) would be
+   out of sight. It lies over the form's title instead, where no control is. And where Start itself would be
+   under the window's edge, the small print between the fields and Start follows Start. */
+@media (max-height:640px){
+  .app.first .toasts{grid-row:2}
+}
+@media (max-height:524px){
+  .first-run .stacked .hint{order:1}
+}
+
+/* ---------- 17. Motion ---------- */
+@keyframes due{from{border-color:var(--yellow);color:var(--yellow)}to{border-color:var(--grey);color:var(--white)}}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}

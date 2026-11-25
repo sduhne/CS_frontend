@@ -1,0 +1,386 @@
+/* Menlo quick guide: one dark look, phone first.  The colours and the type are the table app's
+   (poker_coach/app/static/app.css, section 2). */
+
+/* ---------- 1. Tokens ---------- */
+:root{
+  color-scheme:dark;
+  --ink:#0A0A0B;--panel:#151518;--raised:#1D1D22;--line:#26262B;--line-strong:#3A3A42;
+  --yellow:#FFD60A;--yellow-hover:#E6B800;--yellow-wash:#1E1A0B;--yellow-deep:#3F3815;
+  --white:#FFFFFF;--soft:#C9C9D1;--grey:#9A9AA3;
+  --win:#3DDC84;--loss:#FF5C5C;--hot:#FF6B4A;
+  --display:"Barlow Semi Condensed","Arial Narrow",Arial,sans-serif;
+  --body:Inter,system-ui,"Segoe UI",Roboto,Arial,sans-serif;
+  --r-card:16px;--r-ctl:12px;--r-in:10px;
+  --gut:16px;
+}
+
+/* ---------- 2. Base ---------- */
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--ink);color:var(--white);font:400 14px/1.45 var(--body);
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-text-size-adjust:100%}
+button,input{font:inherit;color:inherit;margin:0}
+button{cursor:pointer;background:none;border:0;padding:0;text-align:inherit;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+button:disabled{cursor:default}
+h1,h2,h3,p{margin:0}
+[hidden]{display:none!important}
+:focus{outline:0}
+:focus-visible{outline:2px solid var(--white);outline-offset:2px}
+.eyebrow{font:700 11px/1.2 var(--body);letter-spacing:.1em;text-transform:uppercase;color:var(--grey)}
+.hint{font-size:12px;color:var(--grey)}
+.num{font-family:var(--display);font-weight:800;font-variant-numeric:tabular-nums lining-nums}
+
+/* A window that runs edge to edge under a phone's status bar: the page starts below it (a host that pads the
+   page itself, as the Artifact frame does, says the same), and the bar at the top reaches up over that strip. */
+:root{padding-top:env(safe-area-inset-top,0px)}
+html{scroll-padding-top:calc(64px + env(safe-area-inset-top,0px))}       /* what is scrolled to does not hide under the bar */
+.guide{--gl:max(var(--gut),env(safe-area-inset-left,0px));--gr:max(var(--gut),env(safe-area-inset-right,0px));
+  max-width:1180px;margin:0 auto;padding:0 var(--gr) 32px var(--gl)}
+
+/* ---------- 3. Header: it stays at the top of the window, with Reset and Next hand in it ---------- */
+.top{position:sticky;top:0;z-index:8;display:flex;align-items:center;justify-content:space-between;gap:12px;
+  height:calc(52px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) var(--gr) 0 var(--gl);
+  margin:calc(-1 * env(safe-area-inset-top,0px)) calc(-1 * var(--gr)) 0 calc(-1 * var(--gl));background:var(--ink);border-bottom:1px solid transparent}
+.top.scrolled{border-bottom-color:var(--line-strong);box-shadow:0 6px 16px rgba(0,0,0,.5)}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand .mark{width:28px;height:28px;flex:none;display:block}
+.word{font:italic 800 22px/1 var(--display);text-transform:uppercase;letter-spacing:-.01em;white-space:nowrap}
+.word b{color:var(--yellow);font-weight:800}
+.brand .sub{font:700 11px/1 var(--body);letter-spacing:.1em;text-transform:uppercase;color:var(--grey);white-space:nowrap;
+  padding-left:10px;border-left:1px solid var(--line-strong)}
+.tools{display:flex;align-items:center;gap:8px;flex:none}
+.reset{flex:none;height:36px;min-width:36px;padding:0 9px;border-radius:999px;border:1px solid var(--line-strong);background:var(--panel);
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;font:600 13px/1 var(--body);color:var(--soft);white-space:nowrap}
+.reset svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.reset span{display:none}                      /* the word shows where there is room for it (section 11) */
+.reset.undo{padding:0 12px;border-color:var(--yellow);color:var(--yellow);font-weight:700}
+.next{flex:none;height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--line-strong);background:var(--panel);
+  font:600 13px/1 var(--body);color:var(--white);white-space:nowrap}
+.next b{color:var(--yellow);font-weight:700}
+.next .short{display:none}
+
+/* ---------- 4. Columns ---------- */
+.cols{display:flex;flex-direction:column;gap:12px}
+.col{display:contents}
+#answer{order:1}
+/* The answer in one line, in the bar at the top where the name is: it shows while the answer itself is out of
+   sight (the bar is then "away"), and not over the rules for after the flop ("post").  A tap goes back up. */
+#mini{display:none;flex:1 1 auto;min-width:0}
+.minibar{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;height:40px;color:var(--white);text-align:left}
+.minibar b{flex:none;font:800 17px/1 var(--display);padding:5px 7px;border-radius:6px;background:var(--white);color:var(--ink)}
+.minibar .verb{flex:none;font:italic 800 24px/1 var(--display);text-transform:uppercase;white-space:nowrap}
+.minibar .size{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font:800 15px/1 var(--display);text-transform:uppercase;white-space:nowrap}
+.minibar .where{display:none;flex:none;font:600 12px/1 var(--body);color:var(--grey);white-space:nowrap}
+.minibar.attack .verb,.minibar.attack .size{color:var(--yellow)}
+.minibar.fold .verb{color:var(--soft)}
+@media (max-width:959px){
+  .top.away:not(.post) .brand{display:none}
+  .top.away:not(.post) #mini{display:flex}
+}
+@media (max-width:479px){                      /* a phone: the shorter word leaves the answer its room */
+  .top.away:not(.post) .next .long{display:none}
+  .top.away:not(.post) .next .short{display:inline}
+}
+@media (min-width:600px){
+  .minibar .where{display:inline;margin-left:4px}
+}
+#inputs{order:2}
+#clock{order:3}
+#plan{order:4}
+#strip{order:5}
+#chart{order:6}
+#post{order:7}
+#notes{order:8}
+.cols section:empty{display:none}                 /* a part with nothing to say takes no room, and no gap */
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:12px}
+.card > .eyebrow:first-child{margin-bottom:10px}
+
+/* ---------- 5. The answer ---------- */
+.slab{border-radius:var(--r-card);padding:10px 14px 12px;background:var(--panel);border:1px solid var(--line-strong);min-height:96px}
+.slab .spot{display:flex;justify-content:space-between;gap:10px;font:600 12px/1.3 var(--body);color:var(--grey)}
+.slab .spot span:last-child{text-align:right}
+.slab .row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:2px}
+.slab .verb{font:italic 800 44px/1 var(--display);text-transform:uppercase;letter-spacing:-.01em;white-space:nowrap}
+.slab .size{font:800 22px/1 var(--display);text-transform:uppercase;white-space:nowrap}
+.slab .tag{align-self:center;padding:3px 8px;border-radius:999px;font:700 11px/1.2 var(--body);letter-spacing:.06em;text-transform:uppercase;
+  background:var(--ink);color:var(--yellow);white-space:nowrap}
+.slab .why{margin-top:6px;font-size:13px;line-height:1.4;color:var(--soft)}
+.slab .facts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.fact{padding:4px 8px;border-radius:8px;background:rgba(255,255,255,.08);font:600 12px/1.2 var(--body);white-space:nowrap}
+.fact b{font:800 14px/1 var(--display);margin-left:4px}
+.slab.attack{background:var(--yellow);border-color:var(--yellow);color:var(--ink)}
+.slab.attack .spot,.slab.attack .why{color:var(--ink)}
+.slab.attack .fact{background:rgba(10,10,11,.1)}
+.slab.attack .tag{background:var(--ink);color:var(--yellow)}
+.slab.passive{border:2px solid var(--white);padding:9px 13px 11px}
+.slab.fold .verb{color:var(--soft)}
+.slab.idle{border-style:dashed;border-color:var(--line-strong)}
+.slab.idle .verb{font-size:30px;color:var(--grey)}
+
+/* ---------- 6. Inputs ---------- */
+.field{padding:10px 0;border-top:1px solid var(--line)}
+.field:first-child{border-top:0;padding-top:0}
+.field:last-child{padding-bottom:0}
+.field > .head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;min-height:20px}
+.field > .head .hint{text-align:right}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{min-height:40px;min-width:44px;padding:0 12px;border-radius:var(--r-in);border:1px solid var(--line-strong);background:var(--raised);
+  font:600 14px/1 var(--body);color:var(--soft);display:inline-flex;align-items:center;justify-content:center;text-align:center;white-space:nowrap}
+.chip.on{background:var(--yellow);border-color:var(--yellow);color:var(--ink);font-weight:700}
+.chip.small{min-height:34px;padding:0 10px;font-size:13px}
+.chip:disabled{opacity:.35}
+.seats{display:grid;grid-template-columns:repeat(auto-fit,minmax(58px,1fr));gap:6px}
+.seats .chip{padding:0 4px;font:800 16px/1 var(--display);letter-spacing:.01em}
+/* The table from above: seats on the rim of the felt, yours at the bottom. */
+.map{position:relative;aspect-ratio:9/5;max-width:440px;margin:12px auto 0}
+.map .felt{position:absolute;left:10%;right:10%;top:14%;bottom:14%;border-radius:50%;background:#0E0E11;border:2px solid var(--line-strong);
+  box-shadow:inset 0 0 0 5px #131317;display:grid;place-items:center}
+.map .felt .mark{width:26px;height:26px;opacity:.2}
+.pod{position:absolute;transform:translate(-50%,-50%);min-width:50px;height:36px;padding:0 6px;border-radius:9px;border:1px solid var(--line-strong);
+  background:var(--raised);color:var(--white);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;white-space:nowrap}
+.pod b{font:800 14px/1 var(--display);letter-spacing:.01em}
+.pod i{font:700 8.5px/1 var(--body);font-style:normal;letter-spacing:.06em;text-transform:uppercase;color:var(--grey)}
+.pod.fold{opacity:.55}                         /* out of the hand: fainter, the name still easy to read */
+.pod.you,.pod.raised,.pod.reraised{background:var(--yellow);border-color:var(--yellow);color:var(--ink);z-index:1}
+.pod.you i,.pod.raised i,.pod.reraised i{color:var(--ink)}
+.pod.raise,.pod.reraise{border-color:var(--yellow)}
+.pod.raise i,.pod.reraise i{color:var(--yellow)}
+.pod.allin{border-color:var(--hot)}
+.pod.allin i{color:var(--hot)}
+.pod.call,.pod.limp{border-color:var(--white)}
+.pod.call i,.pod.limp i{color:var(--white)}
+button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is less faint than one that only folded */
+.map .dealer{position:absolute;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:50%;background:var(--white);color:var(--ink);
+  font:800 11px/18px var(--display);text-align:center}
+.maphint{margin-top:6px;text-align:center}
+.resetall{display:block;width:100%;min-height:40px;margin-top:12px;border-radius:var(--r-in);border:1px solid var(--line-strong);
+  font:600 14px/1 var(--body);color:var(--soft);text-align:center}
+.resetall.undo{border-color:var(--yellow);color:var(--yellow);font-weight:700}
+.sub{margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sub .eyebrow{flex:none}
+.group{margin-top:10px}
+.group:first-of-type{margin-top:0}
+.group > .eyebrow{display:block;margin-bottom:6px;color:var(--grey)}
+.subhint{margin:6px 2px 0}
+.group .sub{padding:8px 10px;border-radius:var(--r-in);background:var(--ink);border:1px solid var(--line)}
+
+.stepper{display:inline-flex;align-items:center;gap:6px}
+.stepper button{width:40px;height:40px;border-radius:var(--r-in);border:1px solid var(--line-strong);background:var(--raised);
+  font:800 22px/1 var(--display);display:grid;place-items:center;color:var(--white)}
+.stepper .val{min-width:34px;text-align:center;font:800 22px/1 var(--display)}
+.stepper.small button{width:32px;height:32px;font-size:18px}
+.stepper.small .val{font-size:18px;min-width:22px}
+
+.stack{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.stack input{width:76px;height:40px;border-radius:var(--r-in);border:1px solid var(--line-strong);background:var(--ink);
+  text-align:center;font:800 24px/1 var(--display);color:var(--white);-moz-appearance:textfield;appearance:textfield}
+.stack input::-webkit-outer-spin-button,.stack input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.stack input:focus{border-color:var(--yellow)}
+.presets{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px}
+.presets .chip{min-width:0;padding:0;font:800 16px/1 var(--display)}
+/* A spin: every seat's stack, one row each; the buttons under them set the row that is marked. */
+.sstacks{display:grid;gap:6px}
+.srow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 4px 4px 0;border-radius:var(--r-in);border:1px solid transparent}
+.srow.on{border-color:var(--yellow-deep);background:var(--yellow-wash)}
+.sname{flex:1;min-height:40px;padding:0 10px;text-align:left;font:800 18px/1 var(--display);letter-spacing:.01em;color:var(--white);
+  display:flex;align-items:center;gap:8px}
+.sname i{font:700 10px/1 var(--body);font-style:normal;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);background:var(--yellow);
+  padding:3px 6px;border-radius:5px}
+.srow input{width:76px;height:40px;border-radius:var(--r-in);border:1px solid var(--line-strong);background:var(--ink);
+  text-align:center;font:800 22px/1 var(--display);color:var(--white);-moz-appearance:textfield;appearance:textfield}
+.srow input::-webkit-outer-spin-button,.srow input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.srow input:focus{border-color:var(--yellow)}
+.field.game .chips .chip{flex:1}
+.pod u{text-decoration:none;font:700 10.5px/1 var(--body);color:var(--soft)}
+.pod.you u,.pod.raised u,.pod.reraised u{color:var(--ink)}
+.map .pod:has(u){height:44px}
+
+.cardsrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.slot{width:40px;height:52px;border-radius:8px;border:1px solid var(--line-strong);background:var(--ink);display:grid;place-items:center;
+  font:800 30px/1 var(--display)}
+.slot.full{background:var(--white);color:var(--ink);border-color:var(--white)}
+.slot.next{border-color:var(--yellow);box-shadow:0 0 0 2px rgba(255,214,10,.25)}
+.suit{display:inline-flex;border-radius:var(--r-in);overflow:hidden;border:1px solid var(--line-strong)}
+.suit button{min-height:40px;padding:0 12px;font:600 14px/1 var(--body);color:var(--soft);background:var(--raised)}
+.suit button + button{border-left:1px solid var(--line-strong)}
+.suit button.on{background:var(--yellow);color:var(--ink);font-weight:700}
+.suit button:disabled{opacity:.35}
+.clear{margin-left:auto;min-height:40px;padding:0 10px;border-radius:var(--r-in);font:600 13px/1 var(--body);color:var(--grey)}
+.keys{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:8px}
+.key{height:46px;border-radius:var(--r-in);border:1px solid var(--line-strong);background:var(--raised);
+  font:800 24px/1 var(--display);display:grid;place-items:center;color:var(--white)}
+.key:active{background:var(--yellow);color:var(--ink);border-color:var(--yellow)}
+.key.back{font:600 13px/1 var(--body);color:var(--grey)}
+
+/* ---------- 7. What next ---------- */
+.plan .rows{display:flex;flex-direction:column;gap:6px}
+.planrow{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:44px;padding:6px 10px 6px 12px;
+  border-radius:var(--r-in);border:1px solid var(--line);background:var(--raised)}
+.planrow .if{font-size:13px;color:var(--soft);min-width:0}
+.planrow .then{flex:none;display:flex;align-items:center;gap:8px;font:italic 800 20px/1 var(--display);text-transform:uppercase;white-space:nowrap}
+.planrow .then.attack{color:var(--yellow)}
+.planrow .then.fold{color:var(--grey)}
+.planrow .go{width:8px;height:8px;border-right:2px solid var(--grey);border-top:2px solid var(--grey);transform:rotate(45deg);flex:none}
+.plan .rule{font-size:13px;color:var(--soft);padding:2px 2px 0}
+
+/* ---------- 7b. The blinds clock, and one hand at every stack ---------- */
+.clock .steps{display:flex;align-items:stretch;gap:8px}
+.clock .step{flex:1 1 0;min-width:0;padding:8px 10px;border-radius:var(--r-in);background:var(--raised);border:1px solid var(--line)}
+.clock .step b{display:block;font:800 26px/1 var(--display);font-variant-numeric:tabular-nums lining-nums}
+.clock .step i{display:block;margin-top:4px;font:600 11px/1.25 var(--body);font-style:normal;color:var(--grey)}
+.clock .step.low{border-color:var(--hot)}
+.clock .step.low b{color:var(--hot)}
+.clock .to{flex:none;align-self:center;width:7px;height:7px;border-right:2px solid var(--grey);border-top:2px solid var(--grey);transform:rotate(45deg)}
+.clock .rule{font-size:13px;color:var(--soft);padding:8px 2px 0}
+.strip .runs{display:flex;flex-wrap:wrap;gap:6px}
+.run{display:flex;align-items:center;gap:8px;min-height:36px;padding:4px 10px 4px 8px;border-radius:var(--r-in);border:1px solid var(--line);background:var(--raised)}
+.run::before{content:"";flex:none;width:10px;height:22px;border-radius:3px;background:var(--ink);border:1px solid var(--line-strong)}
+.run.r::before,.run.rc::before{background:var(--yellow);border-color:var(--yellow)}
+.run.j::before{background:var(--hot);border-color:var(--hot)}
+.run.c::before{background:var(--white);border-color:var(--white)}
+.run.k::before{background:#34343B}
+.run.b::before{background:var(--yellow-deep);border-color:var(--yellow)}
+.run .bbs{font:800 15px/1 var(--display);font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.run .what{font:600 12px/1.2 var(--body);color:var(--soft);white-space:nowrap}
+.run.on{border-color:var(--white)}
+.run.on .what{color:var(--white)}
+
+/* ---------- 8. The chart ---------- */
+.chart .head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px}
+.chart .title{font:800 18px/1.15 var(--display);text-transform:uppercase;letter-spacing:.01em}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;margin-bottom:8px;font:600 12px/1.3 var(--body);color:var(--soft)}
+.legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.legend i{width:12px;height:12px;border-radius:3px;display:inline-block;flex:none}
+.grid{display:grid;grid-template-columns:repeat(13,1fr);gap:2px;touch-action:manipulation}
+.cell{aspect-ratio:1/.86;display:grid;place-items:center;border-radius:3px;background:var(--ink);color:#6E6E78;
+  font:700 10.5px/1 var(--display);letter-spacing:-.01em;position:relative;min-width:0}
+.cell.r{background:var(--yellow);color:var(--ink)}
+.cell.j{background:var(--hot);color:var(--ink)}
+.cell.c{background:var(--white);color:var(--ink)}
+.cell.k{background:#34343B;color:var(--white)}
+.cell.b{background:var(--yellow-deep);color:var(--yellow)}
+.cell.rc{background:var(--yellow);color:var(--ink);box-shadow:inset 0 -3px 0 var(--hot)}
+.cell.close::after{content:"";position:absolute;top:0;right:0;width:0;height:0;border-style:solid;border-width:0 7px 7px 0;
+  border-color:transparent var(--ink) transparent transparent;border-top-right-radius:3px}
+.cell.f.close::after,.cell.k.close::after,.cell.b.close::after{border-color:transparent var(--yellow) transparent transparent}
+.cell.me{box-shadow:0 0 0 2px var(--ink),0 0 0 4px var(--white);z-index:1}
+.cell.rc.me{box-shadow:inset 0 -3px 0 var(--hot),0 0 0 2px var(--ink),0 0 0 4px var(--white)}
+.cell.band{filter:brightness(1.25)}
+.legend i.r{background:var(--yellow)}.legend i.j{background:var(--hot)}.legend i.c{background:var(--white)}
+.legend i.k{background:#34343B}.legend i.b{background:var(--yellow-deep);border:1px solid var(--yellow)}
+.legend i.f{background:var(--ink);border:1px solid var(--line-strong)}.legend i.rc{background:var(--yellow);box-shadow:inset 0 -3px 0 var(--hot)}
+.chart .foot{margin-top:8px}
+/* the chart of one stack, or the sheet of every stack: a switch in the head of the card */
+.chart .head{align-items:center}
+.mode{flex:none;display:inline-flex;border-radius:8px;overflow:hidden;border:1px solid var(--line-strong)}
+.mode button{min-height:30px;padding:0 9px;font:600 12px/1 var(--body);color:var(--soft);background:var(--raised);white-space:nowrap}
+.mode button + button{border-left:1px solid var(--line-strong)}
+.mode button.on{background:var(--yellow);color:var(--ink);font-weight:700}
+/* the sheet: the deepest stack at which a hand goes in, darker for the shallow ones */
+.cell.num{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:10.5px;font-variant-numeric:tabular-nums lining-nums}
+.cell.num i{font:600 7px/1 var(--body);font-style:normal;opacity:.75;letter-spacing:0}
+.cell.s0{background:var(--ink);color:#6E6E78}
+.cell.s1,.legend i.s1{background:#3A1D15}.cell.s1{color:var(--soft)}
+.cell.s2,.legend i.s2{background:#5C2A1C}.cell.s2{color:var(--white)}
+.cell.s3,.legend i.s3{background:#8A3B25}.cell.s3{color:var(--white)}
+.cell.s4,.legend i.s4{background:#B84C30}.cell.s4{color:var(--white)}
+.cell.s5,.legend i.s5{background:#E05D3D}.cell.s5{color:var(--ink)}
+.cell.s6,.legend i.s6{background:var(--yellow)}.cell.s6{color:var(--ink)}
+.cell.gap::after{content:"";position:absolute;top:2px;right:2px;width:4px;height:4px;border-radius:50%;background:currentColor}
+.cell.num.more{box-shadow:inset 0 -3px 0 var(--yellow)}
+.cell.num.more.me{box-shadow:inset 0 -3px 0 var(--yellow),0 0 0 2px var(--ink),0 0 0 4px var(--white)}
+.legend i.more{background:var(--ink);border:1px solid var(--line-strong);box-shadow:inset 0 -3px 0 var(--yellow)}
+.legend.bands{margin:8px 0 0}
+
+/* ---------- 9. After the flop ---------- */
+.post summary,.notes summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.post summary::-webkit-details-marker,.notes summary::-webkit-details-marker{display:none}
+.post summary .title,.notes summary .title{font:800 18px/1.15 var(--display);text-transform:uppercase}
+.post summary::after,.notes summary::after{content:"";width:9px;height:9px;border-right:2px solid var(--grey);border-bottom:2px solid var(--grey);
+  transform:rotate(45deg);margin-right:4px;flex:none}
+.post[open] summary::after,.notes[open] summary::after{transform:rotate(-135deg)}
+.post .body{margin-top:10px}
+.post .out{margin-top:12px;border-radius:var(--r-ctl);padding:10px 12px;border:1px solid var(--line-strong);background:var(--raised)}
+.post .out.attack{background:var(--yellow);border-color:var(--yellow);color:var(--ink)}
+.post .out.passive{border:2px solid var(--white)}
+.post .out .verb{font:italic 800 30px/1 var(--display);text-transform:uppercase}
+.post .out .size{font:800 18px/1 var(--display);text-transform:uppercase;margin-left:8px}
+.post .out .why{margin-top:6px;font-size:13px}
+.post .out.attack .why{color:var(--ink)}
+.post .q{margin-top:10px}
+.post .out + .q{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.post .q:first-child{margin-top:0}
+.post .q > .eyebrow{display:block;margin-bottom:6px}
+.post .chip{white-space:normal;line-height:1.15;padding:6px 10px;font-size:13px}
+.notes .body{margin-top:10px;font-size:13px;color:var(--soft)}
+.notes .body p + p{margin-top:8px}
+.notes .body b{color:var(--white)}
+
+.loading{padding:48px 0;text-align:center;color:var(--grey)}
+.foot{margin-top:16px;font-size:12px;color:var(--grey);text-align:center}
+
+/* ---------- 10. A pointer that hovers (on a phone these would stay lit after a tap) ---------- */
+@media (hover:hover){
+  .next:hover{border-color:var(--white)}
+  .chip:hover{border-color:var(--grey);color:var(--white)}
+  .stepper button:hover{border-color:var(--grey)}
+  .clear:hover{color:var(--white)}
+  .key:hover{border-color:var(--grey)}
+  button.planrow:hover{border-color:var(--grey)}
+  .run:hover{border-color:var(--grey)}
+  .mode button:not(.on):hover{color:var(--white)}
+  .reset:hover,.resetall:hover{border-color:var(--white);color:var(--white)}
+  .reset.undo:hover,.resetall.undo:hover{border-color:var(--yellow);color:var(--yellow)}
+  button.pod.can:hover{border-color:var(--white);opacity:1}
+  .chip.on:hover{border-color:var(--yellow);color:var(--ink)}
+}
+
+/* ---------- 11. Wider ---------- */
+@media (min-width:480px){
+  .reset{padding:0 12px}
+  .reset span{display:inline}
+}
+@media (max-width:399px){
+  .top{gap:8px}
+  .next{padding:0 10px}
+}
+@media (min-width:560px){
+  .keys{grid-template-columns:repeat(13,1fr)}
+  .key{height:44px;font-size:22px}
+  .key.back{display:none}
+  .presets{grid-template-columns:repeat(12,1fr)}
+  .sstacks + .presets{grid-template-columns:repeat(11,1fr)}
+  .cell{font-size:12px}
+  .cell.num{font-size:12px}
+  .cell.num i{font-size:8px}
+}
+@media (min-width:960px){
+  html{scroll-padding-top:calc(72px + env(safe-area-inset-top,0px))}
+  .top{height:calc(60px + env(safe-area-inset-top,0px))}
+  .brand .mark{width:32px;height:32px}
+  .word{font-size:26px}
+  .cols{display:grid;grid-template-columns:minmax(380px,440px) minmax(0,1fr);gap:16px;align-items:start}
+  .col{display:flex;flex-direction:column;gap:12px;min-width:0}
+  /* the answer, what comes next and the chart stay in sight under the bar while the choices scroll; when
+     they are taller than the window they scroll on their own */
+  .col.right{position:sticky;top:calc(72px + env(safe-area-inset-top,0px));max-height:calc(100vh - 84px - env(safe-area-inset-top,0px));
+    overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;padding-right:2px}
+  .slab{min-height:128px;padding:14px 18px 16px}
+  .slab .verb{font-size:60px}
+  .slab .size{font-size:28px}
+  .slab .why{font-size:14px}
+  .cell{font-size:13px;aspect-ratio:1/.8}
+  .cell.num{font-size:13px}
+  .cell.num i{font-size:9px}
+  .grid{gap:3px}
+  .plan .rows{display:grid;grid-template-columns:1fr 1fr}        /* two side by side: the chart keeps its place in the window */
+}
+@media (max-width:479px){
+  .brand .sub{display:none}
+}
+@media (max-width:359px){
+  .word{font-size:19px}
+  .chip{padding:0 9px}
+  .minibar .size{display:none}                 /* no room for half a number: the answer itself is one tap up */
+}

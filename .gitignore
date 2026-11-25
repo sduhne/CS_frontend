@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+tournament/
+build/
+dist/
+
+# quick guide: finished jobs of tools/build_guide.py, and the copy of the tables made for publishing
+guide/.cache/
+guide/data.json
+guide/spin.json
+guide/.spincache/

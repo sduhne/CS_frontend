@@ -1,0 +1,1677 @@
+/* Menlo quick guide: the page.
+
+   It works nothing out about poker before the flop: every answer is read from the tables in data.js, which
+   tools/build_guide.py makes by asking the engine about each of the 169 hands of each spot.  What the page
+   does itself: find the right table (LOOKUP), count how many hands take each action, work out the equity of
+   a hand against the range the table names (from the engine's hand-against-hand numbers), apply the bubble
+   rule, and the rules of thumb after the flop (POST), which are the playbook's.
+
+   Seats are numbers: the players still to act behind you.  0 is the big blind, 1 the small blind, 2 the
+   button.  The tables are made for nine players; a smaller table uses the last seats of that row. */
+(function () {
+  "use strict";
+
+  const RANKS = "AKQJT98765432";
+  const FIXED = ["BB", "SB", "BTN", "CO", "HJ", "LJ"];
+  const PRESETS = [6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 100];
+  const OPP = {unknown: "Standard", tight: "Tight", loose: "Loose"};
+  const STYLE = {win: "Play to win", tight: "Tight", tag: "Tight"};
+  const STAGE = {chips: "Normal", bubble: "Bubble"};
+  /* How fast the blinds go up: hands a level lasts and how much a level adds (the coach's tournament model,
+     latereg.SPEEDS).  The play for a stack is the same at every speed; what changes is what folding costs. */
+  const SPEED = {regular: {label: "Regular", hands: 12, growth: 1.17, levels: "levels of 10 minutes or more"},
+                 turbo: {label: "Turbo", hands: 6.5, growth: 1.20, levels: "5 or 6 minute levels"},
+                 hyper: {label: "Hyper", hands: 3.5, growth: 1.22, levels: "3 minute levels"}};
+  const ORBIT = {bb: 2, sb: 0.5};       // what the two blinds cost: the big blind posts the ante with it
+  /* Spins (tools/build_spin_guide.py, spin.js): three players or two, no ante, one prize.  How fast the blinds
+     go up there: GGPoker's Spin & Gold x2 has 1-minute levels, x3 and x4 2-minute ones, x5 3-minute ones (about
+     three hands a minute), and its levels add about a quarter each (10/20, 15/30, 20/40, 30/60, 40/80, ...). */
+  const SPIN_SPEED = {x2: {label: "1 min", hands: 3, growth: 1.26, levels: "1-minute levels (x2)"},
+                      x3: {label: "2 min", hands: 6, growth: 1.26, levels: "2-minute levels (x3, x4)"},
+                      x5: {label: "3 min", hands: 9, growth: 1.26, levels: "3-minute levels (x5, PokerStars)"}};
+  const SPIN_ORBIT = {bb: 1, sb: 0.5};  // no ante
+  const GAME = {tour: "Tournament", spin: "Spin & Go"};
+  const SPIN_PRESETS = [2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25];
+  const SPIN_PAGE = 1;                  // the oldest spin tables this page can read
+  const LOW = 6;                        // under this many big blinds an all-in is called far more often than not
+  const BUBBLE_POINTS = 0.10;           // on the bubble a call of an all-in needs this much equity over the price
+  const MARK = '<svg class="mark" viewBox="0 0 40 40" role="img" aria-label="Menlo Bet"><rect width="40" height="40" rx="9" fill="#FFD60A"/>' +
+               '<path d="M8 30V11l12 11 12-11v19h-5V22l-7 6.5L13 22v8z" fill="#0A0A0B"/></svg>';
+  const RESET_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+  const PAGE = 7;                       // the page's own number, shown at the foot: which copy of the page is open
+  const TABLES = 3;                     // the oldest tables this page can read (3: the shortest stacks are the exact solution)
+  const UNDO_MS = 8000;                 // how long Reset can be taken back
+  const BAR = 52;                       // the height of the bar at the top on a phone, in pixels (.top in guide.css), before it is measured
+
+  /* What can have happened before you act.  group 0: your first decision; 1: you raised first; 2: you re-raised. */
+  const LINES = [
+    {id: "open", group: 0, label: "Nobody in"},
+    {id: "limp", group: 0, label: "Limpers"},
+    {id: "raise", group: 0, label: "Raise"},
+    {id: "allin", group: 0, label: "All-in"},
+    {id: "raise3", group: 0, label: "Raise + re-raise"},
+    {id: "raise_allin", group: 0, label: "Raise + all-in"},
+    {id: "two_allin", group: 0, label: "2 all-ins"},
+    {id: "re3", group: 1, label: "Re-raise"},
+    {id: "re_allin", group: 1, label: "All-in"},
+    {id: "re3_allin", group: 1, label: "Re-raise + all-in"},
+    {id: "sq_allin", group: 2, label: "Raiser all-in"},
+  ];
+  const GROUPS = ["Before you", "You raised, then", "You re-raised, then"];
+  /* Families where the answer is a call or a fold against chips that are already in: the bubble rule applies. */
+  const CALL_FAMILIES = ["allin", "re_allin", "sq_allin", "raise_allin", "two_short", "re3_allin", "hu_allin", "hu_re_allin"];
+
+  let D = null, EQ = null, PAIRS = null;
+  let SD = null, spinLoading = null, spinFailed = false;     // the spin tables: loaded the first time Spin is chosen
+  const unpacked = new Map();
+
+  const DEFAULTS = {
+    players: 8, seat: 2, stack: 25, r1: null, r2: null, suited: false,
+    line: "open", from: 3, callers: 0, limpers: 1, by3: 0, byAll: 0,
+    size: null, resize: null,           // the raise and the re-raise you face, as places in D.sizes: null is the usual size
+    opp: "unknown", style: "win", stage: "chips", speed: "regular", sheet: false,
+    game: "tour",                       // tour: the tournament tables; spin: three players, no ante, one prize
+    sstacks: [15, 15, 15], edit: null,   // spin: the stacks by players behind (0 the big blind, 1 the small blind, 2 the button)
+    sspeed: "x2",                       // spin: how fast the blinds go up
+    keep: {tour: {players: 8, seat: 2}, spin: {players: 3, seat: 2}},   // each game's table size and seat, kept apart
+    post: {role: "raiser", n: "hu", pos: "ip", street: "flop", hand: null, board: "dry", facing: "none", spr: "mid"},
+  };
+  let state = JSON.parse(JSON.stringify(DEFAULTS));
+
+  /* ---------- small helpers ---------- */
+
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const pct = (x) => Math.round(100 * x) + "%";
+  const set = (patch) => ` data-set="${esc(JSON.stringify(patch))}"`;
+  const bbText = (x) => (Math.round(x * 10) / 10) + "bb";
+
+  function seatName(nb, players) {
+    if (players === 2) return nb === 1 ? "SB" : "BB";
+    if (nb <= 5) return FIXED[nb];
+    const k = players - 1 - nb;
+    return k ? "UTG+" + k : "UTG";
+  }
+  const range = (a, b) => { const out = []; for (let i = a; i >= b; i--) out.push(i); return out; };      // a down to b
+
+  function handIndex(st) {
+    if (st.r1 == null || st.r2 == null) return null;
+    const hi = Math.min(st.r1, st.r2), lo = Math.max(st.r1, st.r2);
+    if (hi === lo) return 14 * hi;
+    return st.suited ? 13 * hi + lo : 13 * lo + hi;
+  }
+  const handName = (h) => D.hands[h];
+  const combos = (h) => { const i = Math.floor(h / 13), j = h % 13; return i === j ? 6 : i < j ? 4 : 12; };
+
+  function letters(table) {
+    let out = unpacked.get(table);
+    if (!out) {
+      out = table.a.replace(/([A-Za-z])(\d+)/g, (m, ch, count) => ch.repeat(+count));
+      unpacked.set(table, out);
+    }
+    return out;
+  }
+  /* A letter of a table -> {k: number of the action in D.actions, close} */
+  function decode(ch) {
+    let k = D.codes.indexOf(ch);
+    if (k >= 0) return {k, close: false};
+    return {k: D.close.indexOf(ch), close: true};
+  }
+  function equity(h, marks) {
+    let weight = 0, sum = 0;
+    for (let v = 0; v < 169; v++) {
+      if (marks.charCodeAt(v) !== 49) continue;
+      const n = PAIRS[h * 169 + v];
+      weight += n;
+      sum += n * EQ[h * 169 + v];
+    }
+    return weight ? sum / weight / 250 : null;
+  }
+
+  /* ---------- what the table can be: seats, lines and their choices ---------- */
+
+  function can(line, st) {
+    const n = st.players, h = st.seat;
+    if (n === 2) return h === 1 ? ["open", "re3", "re_allin"].includes(line) : ["limp", "raise", "allin", "sq_allin"].includes(line);
+    switch (line) {
+      case "open": return h >= 1;
+      case "limp": return h === 0 || h <= n - 2;
+      case "raise": case "allin": case "sq_allin": return h <= n - 2;
+      case "raise3": case "raise_allin": case "two_allin": return h <= n - 3;
+      case "re3": case "re_allin": return h >= 1;
+      case "re3_allin": return h >= 2;
+    }
+    return false;
+  }
+  /* The seats a line asks about ("raise from", "all-in from"), nearest to you last. */
+  function fromSeats(line, st) {
+    const n = st.players, h = st.seat;
+    if (n === 2) return [];
+    if (line === "raise" || line === "allin" || line === "sq_allin") return range(n - 1, h + 1);
+    if (line === "raise3" || line === "raise_allin" || line === "two_allin") return range(n - 1, h + 2);
+    return [];
+  }
+  function limperChoices(st) {
+    const n = st.players, h = st.seat;
+    if (n === 2) return [];
+    if (isSpin(st)) return h === 0 ? [0, 1, 2] : [1];      // big blind: the small blind only, the button only, both
+    const most = h === 0 ? Math.min(3, n - 2) : Math.min(3, n - 1 - h);
+    const out = [];
+    if (h === 0) out.push(0);                 // 0: the small blind only
+    for (let k = 1; k <= most; k++) out.push(k);
+    return out;
+  }
+  function by3Choices(st) {
+    if (st.players === 2) return [];
+    const out = [];
+    if (st.seat >= 3) out.push(2);
+    if (st.seat >= 2) out.push(1);
+    if (st.seat >= 1) out.push(0);
+    return out;
+  }
+  const byAllChoices = (st) => (st.players === 2 ? [] : range(st.seat - 1, 0));
+  const defaultLine = (st) => (st.seat === 0 ? "raise" : "open");
+
+  /* ---------- how much they raised ---------- */
+
+  const gridStack = (stack) => D.stacks.slice().sort((a, b) => Math.abs(a - stack) - Math.abs(b - stack) || a - b)[0];
+  /* Which of the three usual sizes applies: 0 a raiser who is not a blind, 1 the small blind, 2 two players. */
+  function raiserKind(st) { return st.players === 2 ? 2 : st.line === "raise" && st.from === 1 ? 1 : 0; }
+  function heroKind(st) { return st.players === 2 ? 2 : st.seat === 1 ? 1 : 0; }
+  /* The raise sizes there are tables for at this stack (tools/build_guide.py, own_table).  A raise of the
+     whole stack is an all-in.  Behind callers, a raise that commits the raiser has no table either: with 5bb
+     or less every raise does, and the spot is read as two all-ins. */
+  const ownTable = (bb, stack, callers, commit) => bb < stack && !(callers > 0 && (stack <= 5 || bb >= commit * stack));
+  function raiseChoices(st) {
+    if (!D.sizes) return [];
+    const g = gridStack(st.stack), callers = st.players > 2 ? st.callers : 0;
+    return D.sizes.raise.map((bb, i) => [i, bb]).filter(([, bb]) => ownTable(bb, g, callers, D.sizes.commit));
+  }
+  /* The sizes left out because of the callers, for the line under the choice. */
+  function committing(st) {
+    if (!D.sizes || st.players === 2 || !st.callers) return [];
+    const g = gridStack(st.stack);
+    return D.sizes.raise.filter((bb) => ownTable(bb, g, 0, D.sizes.commit) && !ownTable(bb, g, st.callers, D.sizes.commit));
+  }
+  function usualRaise(st) {
+    const usual = D.usual.raise[String(gridStack(st.stack))][raiserKind(st)];
+    const have = raiseChoices(st).map(([i]) => i);
+    return have.includes(usual) ? usual : have.length ? have[0] : usual;
+  }
+  const raiseIndex = (st) => (st.size != null && raiseChoices(st).some(([i]) => i === st.size) ? st.size : usualRaise(st));
+  function usualReraise(st) { return D.usual.reraise[String(st.players === 2 ? 0 : st.by3)]; }
+  const reraiseIndex = (st) => (st.resize != null && st.resize < D.sizes.reraise.length ? st.resize : usualReraise(st));
+  /* Your own raise, in big blinds, as the tables took it: what their re-raise is a multiple of. */
+  const myRaise = (st) => D.usual.open[String(gridStack(st.stack))][heroKind(st)];
+  /* The re-raises of it there are tables for, in big blinds, as the engine was asked. */
+  const reraiseSizes = (st) => D.usual.reraise_to[String(gridStack(st.stack))][heroKind(st)];
+
+  /* ---------- spins: the stacks, the solved table they are read at, the sizes ---------- */
+
+  const isSpin = (st) => st.game === "spin";
+  /* Your effective stack in a spin: the smaller of yours and the biggest of the others. */
+  function spinEff(st) {
+    let most = 0;
+    for (let nb = 0; nb < st.players; nb++) if (nb !== st.seat) most = Math.max(most, st.sstacks[nb]);
+    return Math.min(st.sstacks[st.seat], most);
+  }
+  const nearestOf = (list, v) => list.reduce((best, x) => (Math.abs(x - v) < Math.abs(best - v) - 1e-9 ? x : best), list[0]);
+  /* The solved configuration a spin's stacks are read at (spin_exact.reduce).  The chips the biggest stack has
+     over the second never change hands, so it is cut down to the second: two stacks of X and a short one of Y
+     in its seat.  Then the nearest X of the grid, and the Y of the same proportion.
+     -> {tok (the key), x, y, short (its players behind; -1 equal), stacks (by players behind, as read), exact} */
+  function spinCfg(st) {
+    const n = st.players, s = st.sstacks.slice(0, n);
+    if (n === 2) {
+      const e = Math.min(s[0], s[1]), g = nearestOf(SD.hu, e);
+      return {tok: "h" + g, x: g, y: g, short: -1, stacks: [g, g], exact: Math.abs(g - e) < 1e-9, e};
+    }
+    const second = s.slice().sort((a, b) => a - b)[1];
+    const capped = s.map((v) => Math.min(v, second)), low = Math.min(...capped);
+    const xg = nearestOf(SD.x, second);
+    let short = low >= second - 1e-9 ? -1 : capped.indexOf(low), yg = xg;
+    if (short >= 0) {
+      yg = nearestOf(SD.y.filter((v) => v < xg - 1e-9).concat([xg]), low * xg / second);
+      if (yg >= xg - 1e-9) { short = -1; yg = xg; }
+    }
+    const stacks = [xg, xg, xg];
+    if (short >= 0) stacks[short] = yg;
+    return {tok: short < 0 ? String(xg) : `${xg}_${yg}_${short}`, x: xg, y: yg, short, stacks,
+            exact: capped.every((v, i) => Math.abs(v - stacks[i]) < 1e-9)};
+  }
+  /* A stack as read, for the words: "12/8/5bb" in seat order (button, small blind, big blind). */
+  const spinStacksText = (stacks, n) => (n === 2 ? [stacks[1], stacks[0]] : [stacks[2], stacks[1], stacks[0]]).map((v) => Math.round(v * 10) / 10).join("/") + "bb";
+  /* Your own raise first in, as the engine makes it (build_spin_guide.own_raise): by your stack against the
+     biggest one behind you. */
+  function spinOwnRaise(nb, stacks, n) {
+    let most = 0;
+    for (let j = 0; j < nb; j++) most = Math.max(most, stacks[j]);
+    const eff = Math.min(stacks[nb], most);
+    if (n === 2) return eff < 25 ? 2.0 : 2.2;
+    if (nb === 1) return eff < 25 ? 2.5 : 3.0;
+    return eff < 25 ? 2.0 : eff < 40 ? 2.2 : 2.5;
+  }
+  /* The raise sizes there are tables for: under the raiser's stack (and a caller's). */
+  function spinRaiseChoices(st) {
+    const c = spinCfg(st), n = st.players, raiser = n === 2 ? 1 : st.from;
+    const room = n === 3 && raiser === 2 && st.callers ? Math.min(c.stacks[1], c.stacks[2]) : c.stacks[raiser];
+    return SD.sizes.raise.map((bb, i) => [i, bb]).filter(([, bb]) => bb < room - 1e-9);
+  }
+  function spinRaiseIndex(st) {
+    const have = spinRaiseChoices(st).map(([i]) => i);
+    if (st.size != null && have.includes(st.size)) return st.size;
+    const c = spinCfg(st), raiser = st.players === 2 ? 1 : st.from;
+    const usual = nearestOf(SD.sizes.raise, spinOwnRaise(raiser, c.stacks, st.players));
+    const i = SD.sizes.raise.indexOf(usual);
+    return have.includes(i) ? i : have.length ? have[0] : i;
+  }
+  /* Your raise, and the re-raises of it there are tables for (in big blinds, as the engine was asked). */
+  const spinMyRaise = (st) => { const c = spinCfg(st); return spinOwnRaise(st.seat, c.stacks, st.players); };
+  function spinReraiseSizes(st) {
+    const c = spinCfg(st), mine = spinMyRaise(st), by = st.players === 2 ? 0 : st.by3;
+    return SD.sizes.reraise.map((t) => Math.round(t * mine * 10) / 10).filter((to) => to < Math.min(c.stacks[st.seat], c.stacks[by]) - 1e-9);
+  }
+  const spinReraiseIndex = (st) => {
+    const most = spinReraiseSizes(st).length - 1;
+    return st.resize != null && st.resize <= most ? st.resize : Math.min(1, Math.max(0, most));      // 1: three times your raise
+  };
+  /* The tables of the spin game a line is read from: family, the base family the words go by. */
+  const SPIN_BASE = {s_open: "open", s_limp: "limp", s_raise: "vsraise", s_allin: "allin", s_two: "two_allin",
+                     s_raise_allin: "raise_allin", s_raise3: "raise3", s_re3: "re3", s_re_allin: "re_allin",
+                     s_re3_allin: "re3_allin", s_sq_allin: "sq_allin", s_hu_open: "hu_open", s_hu_limp: "hu_limp",
+                     s_hu_raise: "hu_vsraise", s_hu_allin: "hu_allin", s_hu_re3: "hu_re3", s_hu_re_allin: "hu_re_allin",
+                     s_hu_sq_allin: "sq_allin"};
+  function spinTableOf(fam, key, st) {
+    const f = SD.index[fam];
+    if (!f) return null;
+    const s = f[st.style] || f[SD.styles[0]];
+    const o = s && (s[st.opp] || s[SD.opponents[0]]);
+    const id = o ? o[key.join(",")] : null;
+    return id == null ? null : SD.tables[id];
+  }
+  const SMALL_ALLIN = "Their all-in is no bigger than your raise: it is only a call, and the hand goes on to the flop.";
+  function spinLookup(st) {
+    if (!SD) return {notes: [spinFailed ? "The spin tables did not load. Reload the page." : "Loading the spin tables\u2026"]};
+    const n = st.players, h = st.seat, c = spinCfg(st), notes = [];
+    let fam = null, pre = [], why = "There is no table for this spot.";
+    const deep = `With these stacks a re-raise puts the stack in: read \u201cAll-in\u201d instead.`;
+    if (n === 2) {
+      fam = {open: "s_hu_open", limp: "s_hu_limp", raise: "s_hu_raise", allin: "s_hu_allin", re3: "s_hu_re3", re_allin: "s_hu_re_allin", sq_allin: "s_hu_sq_allin"}[st.line];
+      if (st.line === "raise") { pre = [spinRaiseIndex(st)]; if (!spinRaiseChoices(st).length) why = "A raise this short is an all-in: read \u201cAll-in\u201d."; }
+      if (st.line === "re3") { pre = [spinReraiseIndex(st)]; why = deep; }
+      if (st.line === "re_allin" || st.line === "sq_allin") why = "With these stacks your raise is all your chips.";
+      /* (heads-up the table is read at the smaller stack: the real stacks say whether the all-in was only a call) */
+      if (st.line === "re_allin" && st.sstacks[0] <= spinOwnRaise(1, st.sstacks, 2) + 1e-9 && st.sstacks[1] > spinOwnRaise(1, st.sstacks, 2) + 1e-9) why = SMALL_ALLIN;
+    } else {
+      switch (st.line) {
+        case "open": fam = "s_open"; pre = [h]; break;
+        case "limp": fam = "s_limp"; pre = [h, h === 1 ? 1 : st.limpers]; break;
+        case "raise":
+          fam = "s_raise"; pre = [st.from, h, st.callers, spinRaiseIndex(st)];
+          if (!spinRaiseChoices(st).length) why = "A raise this short is an all-in: read \u201cAll-in\u201d.";
+          break;
+        case "allin": fam = "s_allin"; pre = [st.from, h]; break;
+        case "two_allin": fam = "s_two"; break;
+        case "raise_allin": fam = "s_raise_allin"; why = "A raise this short is an all-in: read \u201c2 all-ins\u201d."; break;
+        case "raise3": fam = "s_raise3"; why = "With these stacks the re-raise puts the stack in: read \u201cRaise + all-in\u201d."; break;
+        case "re3": fam = "s_re3"; pre = [h, st.by3, spinReraiseIndex(st)]; why = deep; break;
+        case "re_allin": {
+          fam = "s_re_allin"; pre = [h, st.byAll];
+          const mine = spinOwnRaise(h, c.stacks, n);
+          why = c.stacks[h] > mine + 1e-9 && c.stacks[st.byAll] <= mine + 1e-9 ? SMALL_ALLIN : "With these stacks your raise is all your chips.";
+          break;
+        }
+        case "re3_allin": fam = "s_re3_allin"; why = "With these stacks a re-raise puts the stack in."; break;
+        case "sq_allin": fam = "s_sq_allin"; pre = [st.from, h]; why = "With these stacks your re-raise is all your chips."; break;
+      }
+    }
+    if (!fam) return {notes: ["There is no table for this spot."]};
+    const key = pre.concat([c.tok]), table = spinTableOf(fam, key, st);
+    if (!table) return {notes: [why]};
+    if (!c.exact) notes.push(`Read with stacks of ${spinStacksText(c.stacks, n)}, the nearest the tables were made for.`);
+    let most = 0;
+    for (let nb = 0; nb < n; nb++) if (nb !== h) most = Math.max(most, c.stacks[nb]);
+    const raiser = st.line === "raise" ? (n === 2 ? 1 : st.from) : null;
+    return {fam: SPIN_BASE[fam], from: fam, key, table, stack: Math.min(c.stacks[h], most), notes, cfg: c,
+            eff: raiser != null ? Math.min(c.stacks[h], c.stacks[raiser]) : null};
+  }
+
+  /* The engine's share (preflop.bb_realised): how much of its equity a hand turns into chips when the big
+     blind calls a raise with it.  Kept here to show the number the table's call was tested against. */
+  function realised(h, stack, last) {
+    const row = Math.floor(h / 13), col = h % 13;
+    const hi = 14 - Math.min(row, col), lo = 14 - Math.max(row, col);
+    let share;
+    if (row === col) share = 0.76 + 0.02 * (hi - 2);
+    else {
+      const suited = row < col, gap = hi - lo - 1;
+      const connected = ({0: 1.0, 1: 0.75, 2: 0.45, 3: 0.2}[gap] || 0) * (0.5 + 0.5 * Math.min(1, (lo - 2) / 5));
+      share = 0.46 + 0.20 * (hi - 2) / 12 + 0.14 * (lo - 2) / 12 + 0.16 * connected + (suited ? 0.20 : 0);
+      if (hi === 14 && lo <= 5) share += suited ? 0.05 : 0.03;
+      if (!suited && stack > 25) share -= 0.02 * Math.log2(stack / 25);
+    }
+    if (last) share += 0.22;
+    return Math.min(last ? 1.10 : 1.05, share);
+  }
+
+  /* ---------- the blinds clock ---------- */
+
+  /* What folding costs.  From a seat with ``seat`` players behind, the big blind reaches you in ``hands``
+     hands; a blind is paid at the level of the hand it is paid in, and a stack is counted in the big blinds of
+     the hand it is counted at.  Where in a level you are is not asked: the big blind of a later hand is its
+     average over that (latereg.fold_clock is the same sum, and the tests hold the two together).
+     -> {hands, atBlind: the stack when the big blind reaches you, orbit: the stack after one whole round of
+         folding, back in this seat, gone: true when the blinds take all of it before then} */
+  function clock(stack, players, seat, speed) {
+    const spin = SPIN_SPEED[speed] != null, sp = spin ? SPIN_SPEED[speed] : SPEED[speed] || SPEED.regular, n = players;
+    const blinds = spin ? SPIN_ORBIT : ORBIT;
+    const level = (j) => { const q = Math.floor(j / sp.hands); return Math.pow(sp.growth, q) * (1 + (sp.growth - 1) * (j / sp.hands - q)); };
+    const cost = (nb) => (nb === 0 ? blinds.bb : nb === 1 ? blinds.sb : 0);
+    const hands = (n - seat) % n;
+    let chips = stack, atBlind = stack;
+    for (let j = 0; j < n; j++) {
+      if (j === hands) atBlind = chips / level(j);
+      chips -= cost((seat + j) % n) * level(j);
+    }
+    const orbit = chips / level(n);
+    return {hands, atBlind: Math.max(0, atBlind), orbit: Math.max(0, orbit), gone: chips <= 0};
+  }
+
+  /* Make every choice fit the table: called after each change. */
+  function normalize(st) {
+    if (!GAME[st.game]) st.game = "tour";
+    const spin = isSpin(st);
+    st.players = Math.max(2, Math.min(spin ? 3 : 9, st.players | 0));
+    st.seat = Math.max(0, Math.min(st.players - 1, st.seat | 0));
+    if (!Array.isArray(st.sstacks) || st.sstacks.length !== 3) st.sstacks = [15, 15, 15];
+    st.sstacks = st.sstacks.map((v) => Math.max(1, Math.min(300, Math.round(+v * 10) / 10 || 1)));
+    if (!SPIN_SPEED[st.sspeed]) st.sspeed = "x2";
+    if (st.edit != null && !(st.edit >= 0 && st.edit < st.players)) st.edit = null;
+    if (spin) { st.stage = "chips"; st.stack = spinEff(st); }
+    st.stack = Math.max(1, Math.min(300, Math.round(+st.stack * 10) / 10 || 1));
+    if (!D.opponents.includes(st.opp)) st.opp = D.opponents[0];
+    if (st.style === "tag" && D.styles.includes("tight")) st.style = "tight";      // the name page 2 saved for Tight
+    if (!D.styles.includes(st.style)) st.style = D.styles[0];
+    if (!STAGE[st.stage]) st.stage = "chips";
+    if (!SPEED[st.speed]) st.speed = "regular";
+    st.sheet = !!st.sheet;
+    if (!can(st.line, st)) st.line = defaultLine(st);
+    if (!can(st.line, st)) st.line = LINES.map((l) => l.id).find((id) => can(id, st)) || "open";
+    const seats = fromSeats(st.line, st);
+    if (seats.length && !seats.includes(st.from)) {
+      const want = Math.max(st.seat + (st.line === "raise" || st.line === "allin" || st.line === "sq_allin" ? 1 : 2), 2);
+      st.from = seats.includes(want) ? want : seats[seats.length - 1];
+    }
+    if (st.line === "raise") st.callers = Math.max(0, Math.min(st.callers | 0, 2, st.from - st.seat - 1));
+    const lim = limperChoices(st);
+    if (lim.length && !lim.includes(st.limpers)) st.limpers = lim.includes(1) ? 1 : lim[0];
+    const b3 = by3Choices(st);
+    if (b3.length && !b3.includes(st.by3)) st.by3 = b3[b3.length - 1];
+    const ba = byAllChoices(st);
+    if (ba.length && !ba.includes(st.byAll)) st.byAll = 0;
+    if (st.r1 != null && st.r1 === st.r2) st.suited = false;
+    return st;
+  }
+
+  /* ---------- LOOKUP: state -> table ---------- */
+
+  const rep = (o) => (o >= 6 ? 8 : o >= 4 ? 5 : o === 3 ? 3 : 2);      // the seats the three-way tables were made for
+  const REP_NAME = {8: "an early seat", 5: "a middle seat", 3: "the cutoff", 2: "the button"};
+
+  function tableOf(fam, key, st) {
+    const f = D.index[fam];
+    if (!f) return null;
+    const s = f[st.style] || f[D.styles[0]];
+    const o = s && (s[st.opp] || s[D.opponents[0]]);
+    const id = o ? o[key.join(",")] : null;
+    return id == null ? null : D.tables[id];
+  }
+
+  /* Two all-ins with a stack the exact solution covers: there is a table for your own seat. */
+  const twoShort = (st) => !!(D.short && D.index.two_short && gridStack(st.stack) <= D.short.top && tableOf("two_short", [st.from, st.seat, gridStack(st.stack)], st));
+
+  /* -> {fam, key, table, stack (the one the table was made for), notes} or {notes} when there is no table */
+  function lookup(st, over) {
+    st = over ? Object.assign({}, st, over) : st;
+    if (isSpin(st)) return spinLookup(st);
+    const n = st.players, h = st.seat, notes = [];
+    let fam = null, pre = [];
+    if (n === 2) {
+      fam = {open: "hu_open", re3: "hu_re3", re_allin: "hu_re_allin", limp: "hu_limp", raise: "hu_vsraise", allin: "hu_allin"}[st.line];
+      if (st.line === "raise") {
+        if (raiseChoices(st).length) pre = [raiseIndex(st)];
+        else { fam = "hu_allin"; notes.push("A raise this short is an all-in: read from that table."); }
+      }
+      if (st.line === "re3") pre = [reraiseIndex(st)];
+      if (st.line === "sq_allin") { fam = "sq_allin"; pre = [1, 0]; notes.push("Read from the table for three or more players."); }
+    } else {
+      switch (st.line) {
+        case "open": fam = "open"; pre = [h]; break;
+        case "limp":
+          if (h === 0 && st.limpers === 0) fam = "limp_sb";
+          else { fam = "limp"; pre = [h, st.limpers]; }
+          break;
+        case "raise":
+          if (raiseChoices(st).length) { fam = "vsraise"; pre = [st.from, h, st.callers, raiseIndex(st)]; }
+          else if (st.callers > 0 && twoShort(st)) {
+            fam = "two_short"; pre = [st.from, h];
+            notes.push("This short, a raise and a call are two all-ins: read from that table." + (st.callers > 1 ? " With a third player in, fold the close ones." : ""));
+          } else if (st.callers > 0) {
+            fam = "two_allin"; pre = [rep(st.from)];
+            notes.push("This short, a raise and a call are two all-ins: read from that table (made for the big blind).");
+          } else { fam = "allin"; pre = [st.from, h]; notes.push("A raise this short is an all-in: read from that table."); }
+          break;
+        case "raise3":
+          fam = "raise3"; pre = [st.from];
+          if (h !== 0) notes.push("Made for the big blind with the re-raise from the next seat; your own seat changes little.");
+          break;
+        case "allin": fam = "allin"; pre = [st.from, h]; break;
+        case "raise_allin": case "two_allin":
+          /* stacks solved exactly have a table for every seat of yours; a raise this short commits the raiser */
+          if (twoShort(st) && (st.line === "two_allin" || D.usual.open[String(gridStack(st.stack))][0] >= D.sizes.commit * gridStack(st.stack))) {
+            fam = "two_short"; pre = [st.from, h];
+            if (st.line === "raise_allin") notes.push("A raise this short commits the raiser: read as two all-ins.");
+            break;
+          }
+          fam = st.line; pre = [rep(st.from)];
+          if (h !== 0 || rep(st.from) !== st.from) notes.push(`Made for the big blind, with the first player in ${REP_NAME[rep(st.from)]} and the second in the next seat.`);
+          break;
+        case "re3": fam = "re3"; pre = [h, st.by3, reraiseIndex(st)]; break;
+        case "re_allin": fam = "re_allin"; pre = [h, st.byAll]; break;
+        case "re3_allin":
+          fam = "re3_allin"; pre = [rep(h)];
+          notes.push(`Made for a raise from ${REP_NAME[rep(h)]}, a re-raise by the small blind and an all-in by the big blind.`);
+          break;
+        case "sq_allin": fam = "sq_allin"; pre = [st.from, h]; break;
+      }
+    }
+    if (!fam || !D.index[fam]) return {notes: ["There is no table for this spot."]};
+    const order = D.stacks.slice().sort((a, b) => Math.abs(a - st.stack) - Math.abs(b - st.stack) || a - b);
+    /* a table of three to six players has tables of its own where the answer is read from the exact solution */
+    const own = D.short && (D.short.tables || []).includes(n) && D.index[fam + "@" + n] ? fam + "@" + n : null;
+    for (const s of order) {
+      const mine = own ? tableOf(own, pre.concat([s]), st) : null;
+      const table = mine || tableOf(fam, pre.concat([s]), st);
+      if (!table) continue;
+      if (s !== st.stack) {
+        if (st.stack < s && (fam === "re3" || fam === "hu_re3" || fam === "sq_allin")) notes.push(`With ${bbText(st.stack)} a re-raise is an all-in. The nearest table is the one for ${s}bb.`);
+        else if (st.stack > s && CALL_FAMILIES.concat(["two_allin"]).includes(fam) && s >= 40) notes.push(`An all-in bigger than ${s}bb is read at ${s}bb.`);
+        else notes.push(`Read at ${s}bb, the nearest stack with a table.`);
+      }
+      /* the engine prices a raise of two fifths of a stack as an all-in: the answers change there, so say it */
+      if ((fam === "vsraise" || fam === "hu_vsraise") && D.sizes.raise[raiseIndex(st)] >= D.sizes.commit * s) {
+        notes.push("A raise of two fifths of their stack or more is priced as an all-in: they are taken not to fold.");
+      }
+      if ((fam === "re3" || fam === "hu_re3") && reraiseSizes(st)[reraiseIndex(st)] >= D.sizes.commit * s) {
+        notes.push("A re-raise of two fifths of the stack or more is priced as their all-in. A small re-raise where an all-in was open is often a stronger hand than that: fold the close ones.");
+      }
+      return {fam, key: pre.concat([s]), table, stack: s, notes, from: mine ? own : fam};      // from: the tables it was read from
+    }
+    return {notes: ["There is no table for this spot."]};
+  }
+
+  /* A yes-or-no answer for each hand, as the builder packs it (mask): base64 of 22 bytes, hand h is bit h % 8 of byte h >> 3. */
+  /* The ranges a table's facts point into: the spin tables keep their own list. */
+  const rangesOf = (res) => (res.cfg != null && SD ? SD.ranges : D.ranges);
+
+  const masks = new Map();
+  function marked(text, h) {
+    let bytes = masks.get(text);
+    if (!bytes) { bytes = Uint8Array.from(atob(text), (c) => c.charCodeAt(0)); masks.set(text, bytes); }
+    return ((bytes[h >> 3] >> (h & 7)) & 1) === 1;
+  }
+
+  /* The answers of a table as the page shows them: 169 x {k, close, name, bubble}.  On the bubble the close
+     plays are folded (checked when the check is free) and a call of an all-in needs more than its price. */
+  function answers(res, st) {
+    const text = letters(res.table), out = [];
+    const free = /[xX]/.test(text);
+    const f = res.table.f || {};
+    const marks = f.v != null ? rangesOf(res)[f.v] : null;
+    for (let h = 0; h < 169; h++) {
+      const a = decode(text[h]);
+      a.name = D.actions[a.k];
+      if (st.stage === "bubble" && a.name !== "FOLD" && a.name !== "CHECK") {
+        let why = null;
+        if (a.close) why = "close";
+        else if (f.bk != null && CALL_FAMILIES.includes(res.fam)) {
+          /* a table of the exact solution: it says hand by hand which calls have the points to spare */
+          if (!marked(f.bk, h)) why = "price";
+        } else if (marks && f.need != null && CALL_FAMILIES.includes(res.fam)) {
+          const eq = equity(h, marks);
+          if (eq != null && eq < f.need + BUBBLE_POINTS) why = "price";
+        }
+        if (why) { a.was = a.name; a.name = free ? "CHECK" : "FOLD"; a.k = D.actions.indexOf(a.name); a.bubble = why; a.close = false; }
+      }
+      out.push(a);
+    }
+    return out;
+  }
+
+  const KIND = {FOLD: "f", CHECK: "k", CALL: "c", LIMP: "c", RAISE: "r", RAISE_CALL: "rc", RERAISE: "r", RERAISE_BLUFF: "b", ALLIN: "j", ISOLATE: "r", ISOLATE_ALLIN: "j"};
+  const ATTACK = ["RAISE", "RAISE_CALL", "RERAISE", "RERAISE_BLUFF", "ALLIN", "ISOLATE", "ISOLATE_ALLIN"];
+
+  function sizeOf(name, table) {
+    const z = table.z || {};
+    const pick = (...keys) => { for (const k of keys) if (z[k] != null) return z[k]; return null; };
+    if (name === "RAISE" || name === "RAISE_CALL") return pick("RAISE");
+    if (name === "RERAISE" || name === "RERAISE_BLUFF") return pick("3-BET", "4-BET");
+    if (name === "ISOLATE") return pick("RE-RAISE");
+    return null;
+  }
+  /* -> [verb, size text] */
+  function verbOf(name, table) {
+    const size = sizeOf(name, table);
+    const to = size != null ? "to " + bbText(size) : "";
+    switch (name) {
+      case "FOLD": return ["Fold", ""];
+      case "CHECK": return ["Check", ""];
+      case "CALL": return ["Call", ""];
+      case "LIMP": return ["Call", "limp along"];
+      case "RAISE": return ["Raise", to];
+      case "RAISE_CALL": return ["Raise", to];
+      case "RERAISE": case "RERAISE_BLUFF": case "ISOLATE": return ["Re-raise", to];
+      case "ALLIN": case "ISOLATE_ALLIN": return ["All-in", ""];
+    }
+    return [name, ""];
+  }
+  const LEGEND = {FOLD: "Fold", CHECK: "Check", CALL: "Call", LIMP: "Call", RAISE: "Raise", RAISE_CALL: "Raise, call an all-in",
+                  RERAISE: "Re-raise", RERAISE_BLUFF: "Re-raise as a bluff", ALLIN: "All-in", ISOLATE: "Re-raise", ISOLATE_ALLIN: "All-in"};
+
+  /* Share of all hands that take each kind of action. */
+  function shares(ans) {
+    const by = {}; let all = 0;
+    for (let h = 0; h < 169; h++) {
+      const c = combos(h), key = LEGEND[ans[h].name];
+      by[key] = by[key] || {n: 0, kind: KIND[ans[h].name]};
+      by[key].n += c; all += c;
+    }
+    for (const k in by) by[k].share = by[k].n / all;
+    return by;
+  }
+
+  /* ---------- words ---------- */
+
+  function who3(st) { return st.by3 === 2 ? "a player behind you" : "the " + seatName(st.by3, st.players); }
+
+  function spotTitle(st) {
+    const n = st.players, me = seatName(st.seat, n), from = seatName(st.from, n);
+    switch (st.line) {
+      case "open": return `${me}, first in`;
+      case "limp":
+        if (n === 2 || (st.seat === 0 && st.limpers === 0)) return "BB, the small blind only called";
+        if (isSpin(st)) return st.seat === 1 ? "SB, the button only called" : st.limpers === 2 ? "BB, the button and the small blind only called" : "BB, the button only called";
+        return `${me} behind ${st.limpers} ${st.limpers > 1 ? "limpers" : "limper"}`;
+      case "raise": {
+        const to = isSpin(st) ? (SD ? ` to ${SD.sizes.raise[spinRaiseIndex(st)]}bb` : "") : D.sizes ? ` to ${D.sizes.raise[raiseIndex(st)]}bb` : "";
+        return n === 2 ? `BB against a raise${to}` : `${me} against a ${from} raise${to}` + (st.callers ? ` and ${st.callers} ${st.callers > 1 ? "callers" : "caller"}` : "");
+      }
+      case "raise3": return `${me} against a ${from} raise and a re-raise`;
+      case "allin": return n === 2 ? "BB against an all-in" : `${me} against a ${from} all-in`;
+      case "raise_allin": return `${me} against a ${from} raise and an all-in`;
+      case "two_allin": return `${me} against two all-ins, the first from ${from}`;
+      case "re3": {
+        const sizes = isSpin(st) ? (SD ? spinReraiseSizes(st) : []) : D.sizes ? reraiseSizes(st) : [];
+        const at = isSpin(st) ? spinReraiseIndex(st) : reraiseIndex(st);
+        const to = sizes[at] != null ? ` to ${bbText(sizes[at])}` : "";
+        return n === 2 ? `You raised, the BB re-raised${to}` : `You raised from ${me}, ${who3(st)} re-raised${to}`;
+      }
+      case "re_allin": return n === 2 ? "You raised, the BB moved all-in" : `You raised from ${me}, the ${seatName(st.byAll, n)} moved all-in`;
+      case "re3_allin": return `You raised from ${me}, a re-raise and an all-in`;
+      case "sq_allin": return n === 2 ? "You re-raised the SB, who moved all-in" : `You re-raised the ${from}, who moved all-in`;
+    }
+    return me;
+  }
+
+  /* The big blind against a raise: what this hand needed to call, as the table's test has it.
+     -> {price, share, need, eq} or null when the table is not such a spot. */
+  function bbCall(st, res, h) {
+    const f = res.table.f || {};
+    if (h == null || f.p == null || f.m == null || f.v == null) return null;
+    if (res.fam !== "vsraise" && res.fam !== "hu_vsraise") return null;
+    const callers = res.fam === "vsraise" ? res.key[2] : 0;
+    const over = f.m * 2 / (2 + callers);          // the margin shrinks with the fair share of the pot
+    const spin = res.cfg != null;                  // a spin: no ante, and the stack is yours against the raiser's
+    const share = realised(h, spin ? res.eff : res.stack - 1, f.ip === 1);          // the big blind has posted the ante: one less behind
+    const size = (spin ? SD : D).sizes.raise[res.key[res.fam === "vsraise" ? 3 : 0]];
+    /* with callers the price counts their chips, so the equity counts their hands: each by his odds against the hand */
+    const rg = rangesOf(res);
+    const alone = [equity(h, rg[f.v])].concat((f.cv || []).map((v) => equity(h, rg[v])));
+    const eq = alone.some((e) => e == null) ? null : beatsAll(alone);
+    /* short: the call costs more than an eighth of what is behind, so the flop is played for the stack */
+    return {price: f.p, share, need: (f.p + over) / share, eq, last: f.ip === 1, players: alone.length,
+            short: size - 1 > 0.12 * (spin ? res.eff : res.stack - 1)};
+  }
+  /* The chance to win a pot against several players, from the equity against each alone (pushfold.beats_all). */
+  function beatsAll(equities) {
+    let against = 0;
+    for (const e of equities) { if (e <= 0) return 0; against += (1 - e) / e; }
+    return 1 / (1 + against);
+  }
+
+  const together = (bb) => (bb.players > 2 ? "against the raiser and the callers together" : bb.players === 2 ? "against the raiser and the caller together" : "against their range");
+
+  /* One sentence under the answer: why, in the table's own terms. */
+  function reason(st, res, a, h, sh) {
+    const n = st.players, me = seatName(st.seat, n), hand = handName(h), s = bbText(res.stack);
+    const share = (label) => (sh[label] ? pct(sh[label].share) : "0%");
+    const playing = pct(1 - (sh.Fold ? sh.Fold.share : 0) - (sh.Check ? sh.Check.share : 0));
+    if (a.bubble === "close") return `On the bubble the close ones are let go: with chips only this is ${verbOf(a.was, res.table)[0].toLowerCase()}, by a small margin.`;
+    if (a.bubble === "price") return `On the bubble a call needs ${Math.round(100 * BUBBLE_POINTS)} points more than its price: with chips only this is a call.`;
+    const fast = isSpin(st) ? "spin" : st.speed !== "regular" ? SPEED[st.speed].label.toLowerCase() : null;     // a spin is fast at every level
+    const edge = a.close ? (a.name === "FOLD" || a.name === "CHECK" ? " Close: just outside the range. Playing it is fine against weak players."
+                            : fast ? ` Close: the edge of the range. In a ${fast} take it: the blinds leave no better spot to wait for.`
+                                   : " Close: the edge of the range. The quieter play is fine too.") : "";
+    const fam = res.fam;
+    const exact = (res.table.f || {}).x === 1;        // a stack of a few big blinds: the table is the exact solution
+    const solvedAt = res.cfg != null ? "Solved exactly with these stacks." : "Solved exactly at this stack.";
+    if (fam === "open" || fam === "hu_open") {
+      if (a.name === "RAISE") return `${hand} is in the ${me} opening range at ${s}: ${playing} of hands play here.` + edge;
+      if (a.name === "RAISE_CALL") return `Raise small and call any all-in: at ${s} this hand wants the chips in, and a small raise lets worse hands move in.` + edge;
+      /* the words go by how often the all-in gets through: when it is called two times in three or more, the hand
+         is played for a showdown */
+      const fe = (res.table.f || {}).fe, called = fe != null ? fe < 0.34 : res.stack < LOW;
+      if (exact && a.name === "ALLIN") return (called ? `All-in: at ${s} an all-in from ${me} is called most of the time, often by two players, so the hand has to win at a showdown.` : `All-in: at ${s} every hand moves all-in or folds, and ${hand} earns chips by moving in.`) + ` ${share("All-in")} of hands are good enough from ${me}. ${solvedAt}` + edge;
+      if (exact) return (called ? `Fold: at ${s} an all-in from ${me} is called most of the time, often by two players, and ${hand} does not win often enough.` : `Fold: at ${s} every hand moves all-in or folds, and ${hand} loses chips by moving in: the hands that call it are too far ahead.`) + ` ${playing} of hands play here. ${solvedAt}` + edge;
+      if (a.name === "ALLIN") return `At ${s} this hand moves all-in from ${me}: a small raise would have to fold to an all-in or call it off anyway. ${share("All-in")} of hands move in here.` + edge;
+      return `Outside the ${me} range at ${s}: ${playing} of hands play here.` + edge;
+    }
+    if (fam === "limp" || fam === "limp_sb" || fam === "hu_limp") {
+      if (exact && a.name === "ALLIN") return `All-in: a player who only calls with a stack this short is not folding, so this is answered as his all-in. ${hand} has enough against him and the players behind you. ${solvedAt}` + edge;
+      if (exact && a.name === "FOLD") return `Fold: a player who only calls with a stack this short is not folding, so this is answered as his all-in. ${hand} does not have enough against him and the players behind you. ${solvedAt}` + edge;
+      if (exact && a.name === "CHECK") return `Check: the caller is not folding at this stack, and a free flop is worth more to ${hand} than moving in against him.` + edge;
+      if (a.name === "RAISE") return `Raise over the ${fam === "limp" && st.limpers > 1 ? "callers" : "caller"}: ${hand} is ahead of the hands that only call.` + edge;
+      if (a.name === "ALLIN") return `All-in over the ${fam === "limp" && st.limpers > 1 ? "callers" : "caller"}: there is dead money in the pot and a player who only called rarely has a hand that calls an all-in.` + edge;
+      if (a.name === "LIMP") return (isSpin(st) && st.seat === 1
+        ? "Complete: half a big blind for a pot of three, and this hand keeps enough of it after the flop. Go on with a pair or a real draw."
+        : "Call along: a hand for a cheap pot with several players. Go on after the flop only with a big hit.") + edge;
+      if (a.name === "CHECK") return "Check and see the flop for free: not strong enough to raise." + edge;
+      return "Not strong enough to raise, and not a hand for calling along." + edge;
+    }
+    if (fam === "vsraise" || fam === "hu_vsraise") {
+      if (a.name === "RERAISE") return `Re-raise for value: ${hand} is ahead of the raiser's range and can play for the whole stack.` + edge;
+      if (a.name === "RERAISE_BLUFF") return "Re-raise as a bluff, with cards that make their best hands less likely. Fold if they move all-in." + edge;
+      if (a.name === "ALLIN") return `All-in over the raise: at ${s} it takes the pot down often enough, and ${hand} has real equity when called.` + edge;
+      const bb = bbCall(st, res, h);
+      if (bb && a.name === "CALL") {
+        return `Call: the price is ${pct(bb.price)}. ${hand} keeps about ${pct(bb.share)} of its equity after the flop${bb.last ? ", where you act last" : ""}, so it needs ${pct(bb.need)} ${together(bb)} and has about ${pct(bb.eq)}.` +
+               (bb.short ? " This short the flop decides it: all-in with any pair or any draw, otherwise give up." : "") +
+               (a.close ? ` Close: folding is fine too${bb.last ? "" : ", and better if you would rather not play this hand out of position"}.` : "");
+      }
+      if (bb && a.name === "FOLD") {
+        return `Fold: the price is ${pct(bb.price)}, but ${hand} keeps only about ${pct(bb.share)} of its equity after the flop. It needs ${pct(bb.need)} ${together(bb)} and has about ${pct(bb.eq)}.` +
+               (a.close ? " Close: a call is no mistake against a player who gives up easily." : "");
+      }
+      if (a.name === "CALL") return (st.seat === 0 ? "Call: the big blind gets a good price and closes the action." : st.seat === 1 ? "Call from the small blind." : "Call in position: too good to fold, not strong enough to re-raise.") + edge;
+      return `Fold: ${playing} of hands play against this raise, and ${hand} is not one of them.` + edge;
+    }
+    if (fam === "raise3") {
+      if (a.name === "FOLD") return `Fold: a raise and a re-raise are two strong ranges. Only ${playing} of hands go on.` + edge;
+      return `${hand} is one of the ${playing} of hands that go on against a raise and a re-raise.` + edge;
+    }
+    if (fam === "re3" || fam === "hu_re3") {
+      if (a.name === "ALLIN") return `All-in over the re-raise: ${hand} is at the top of your raising range from ${me}.` + edge;
+      if (a.name === "RERAISE") return "Re-raise again: this hand is never folded, and you call an all-in." + edge;
+      if (a.name === "CALL") return "Call the re-raise. After the flop the stack goes in with an overpair, top pair or better." + edge;
+      return `Fold to the re-raise: ${playing} of hands go on from ${me}.` + edge;
+    }
+    /* a call or a fold against chips that are in */
+    if (a.name === "CALL" || a.name === "ALLIN" || a.name === "ISOLATE_ALLIN" || a.name === "ISOLATE") {
+      const lead = a.name === "CALL" ? "Call" : a.name === "ISOLATE" ? "Re-raise to play against the all-in alone" : "All-in";
+      if (exact) return `${lead}: ${hand} has enough, with every player who can still call behind you counted. ${solvedAt}` + edge;
+      return `${lead}: ${hand} has enough against the hands that do this.` + edge;
+    }
+    if (exact) return (res.stack < LOW ? `Fold: the price alone may look right, but with stacks this short the players behind you call often and ${hand} has to beat them too.`
+                                       : `Fold: ${hand} does not have enough against the hands that do this, with the players who can still call behind you counted.`) + " " + solvedAt + edge;
+    return `Fold: ${hand} does not have enough against the hands that do this.` + edge;
+  }
+
+  /* ---------- drawing ---------- */
+
+  function chipRow(items, on, key, small) {
+    return items.map(([value, label]) =>
+      `<button class="chip${small ? " small" : ""}${value === on ? " on" : ""}" aria-pressed="${value === on}"${set({[key]: value})}>${esc(label)}</button>`).join("");
+  }
+
+  /* ---------- the table map ---------- */
+
+  /* What each seat is doing in the spot, by its players behind: you / raised / reraised (your own seat),
+     raise, reraise, allin, call, limp, fold, wait (still to act behind you).  The seats are the ones the
+     tables were made for: a second player to raise or move in sits in the seat after the first. */
+  function roles(st) {
+    const n = st.players, h = st.seat, hu = n === 2, out = [];
+    for (let nb = 0; nb < n; nb++) out[nb] = nb > h ? "fold" : nb < h ? "wait" : "you";
+    const mark = (nb, what) => { if (nb !== h && nb >= 0 && nb < n) out[nb] = what; };
+    const mine = (what) => { for (let nb = 0; nb < h; nb++) out[nb] = "fold"; out[h] = what; };
+    switch (st.line) {
+      case "limp":
+        if (isSpin(st) && h === 0 && st.limpers === 2) { mark(2, "limp"); mark(1, "limp"); break; }
+        if (hu || (h === 0 && st.limpers === 0)) mark(1, "limp");
+        else if (h === 0) for (let k = 1; k <= st.limpers; k++) mark(1 + k, "limp");      // the small blind folded
+        else for (let k = 1; k <= st.limpers; k++) mark(h + k, "limp");
+        break;
+      case "raise":
+        mark(hu ? 1 : st.from, "raise");
+        if (!hu) for (let k = 1; k <= st.callers; k++) mark(st.from - k, "call");
+        break;
+      case "allin": mark(hu ? 1 : st.from, "allin"); break;
+      case "raise3": mark(st.from, "raise"); mark(st.from - 1, "reraise"); break;
+      case "raise_allin": mark(st.from, "raise"); mark(st.from - 1, "allin"); break;
+      case "two_allin": mark(st.from, "allin"); mark(st.from - 1, "allin"); break;
+      case "re3": mine("raised"); mark(hu ? 0 : st.by3 === 2 ? h - 1 : st.by3, "reraise"); break;
+      case "re_allin": mine("raised"); mark(hu ? 0 : st.byAll, "allin"); break;
+      case "re3_allin": mine("raised"); mark(1, "reraise"); mark(0, "allin"); break;
+      case "sq_allin": mine("reraised"); mark(hu ? 1 : st.from, "allin"); break;
+    }
+    return out;
+  }
+  const POD_TAG = {you: "You", raised: "You raised", reraised: "You re-raised", raise: "Raise", reraise: "Re-raise", allin: "All-in", call: "Call", limp: "Call"};
+
+  /* The table from above, your seat at the bottom, play going clockwise: every seat's name, the dealer
+     button, and who has done what.  A seat the spot asks about ("raise from") can be tapped. */
+  function mapHtml(st) {
+    const n = st.players, h = st.seat, who = roles(st);
+    const pick = st.line === "re_allin" ? {key: "byAll", seats: byAllChoices(st)} : {key: "from", seats: fromSeats(st.line, st)};
+    const dealer = n === 2 ? 1 : 2;
+    const at = (k, reach) => {             // the k-th seat clockwise from yours, as a place on the picture
+      const a = (90 + 360 * k / n) * Math.PI / 180;
+      return `left:${(50 + 40 * reach * Math.cos(a)).toFixed(1)}%;top:${(50 + 36 * reach * Math.sin(a)).toFixed(1)}%`;
+    };
+    let pods = "", chip = "";
+    const said = [];
+    for (let k = 0; k < n; k++) {
+      const nb = ((h - k) % n + n) % n, role = who[nb], name = seatName(nb, n), tag = POD_TAG[role];
+      const stk = isSpin(st) ? `<u>${Math.round(st.sstacks[nb] * 10) / 10}bb</u>` : "";
+      const inner = `<b>${name}</b>${stk}${tag ? `<i>${tag}</i>` : ""}`;
+      if (pick.seats.includes(nb)) {
+        pods += `<button class="pod ${role} can" data-seat="${nb}" style="${at(k, 1)}"${set({[pick.key]: nb})} aria-label="${name}${tag ? ", " + tag.toLowerCase() : ""}: choose this seat">${inner}</button>`;
+      } else pods += `<span class="pod ${role}" data-seat="${nb}" style="${at(k, 1)}">${inner}</span>`;
+      if (nb === dealer) chip = `<span class="dealer" style="${at(k, 0.52)}" title="Dealer button">D</span>`;
+      if (tag && nb !== h) said.push(`${name} ${tag.toLowerCase()}`);
+    }
+    const ask = {raise: "Tap the seat that raised.", sq_allin: "Tap the seat that raised.", raise_allin: "Tap the seat that raised.", raise3: "Tap the seat that raised first.",
+                 allin: "Tap the seat that moved all-in.", two_allin: "Tap the first seat that moved all-in.", re_allin: "Tap the seat that moved all-in."}[st.line];
+    const label = `The table: ${n} players, you are ${seatName(h, n)}` + (said.length ? "; " + said.join(", ") : "")
+      + (isSpin(st) ? "; stacks " + range(n - 1, 0).map((nb) => `${seatName(nb, n)} ${st.sstacks[nb]}bb`).join(", ") : "");
+    return `<div class="map" role="group" aria-label="${esc(label)}"><span class="felt">${MARK.replace('role="img" aria-label="Menlo Bet"', 'aria-hidden="true"')}</span>${pods}${chip}</div>
+      <p class="hint maphint">Play goes clockwise. D is the dealer button.${pick.seats.length > 1 && ask ? " " + ask : ""}</p>`;
+  }
+
+  function inputsHtml(st) {
+    const n = st.players;
+    const seats = range(n - 1, 0).map((nb) => [nb, seatName(nb, n)]);
+    const from = fromSeats(st.line, st).map((nb) => [nb, seatName(nb, n)]);
+    let sub = "";
+    if (st.line === "limp" && limperChoices(st).length > 1) {
+      const said = (k) => (k === 0 ? "SB only" : isSpin(st) ? ["", "BTN only", "BTN and SB"][k] : String(k));
+      sub = `<div class="sub"><span class="eyebrow">Who called</span><div class="chips">${chipRow(limperChoices(st).map((k) => [k, said(k)]), st.limpers, "limpers", true)}</div></div>`;
+    } else if (from.length) {
+      const label = {raise: "Raise from", allin: "All-in from", sq_allin: "Raise from", raise3: "First raise from", raise_allin: "Raise from", two_allin: "First all-in from"}[st.line];
+      sub = `<div class="sub"><span class="eyebrow">${label}</span><div class="chips">${chipRow(from, st.from, "from", true)}</div></div>`;
+      if (st.line === "raise") {
+        const most = Math.min(2, st.from - st.seat - 1);
+        if (most > 0) sub += `<div class="sub"><span class="eyebrow">Callers</span><div class="chips">${chipRow(range(most, 0).reverse().map((k) => [k, String(k)]), st.callers, "callers", true)}</div></div>`;
+      }
+    } else if (st.line === "re3" && by3Choices(st).length > 1) {
+      sub = `<div class="sub"><span class="eyebrow">Re-raised by</span><div class="chips">${chipRow(by3Choices(st).map((w) => [w, w === 2 ? "A seat behind" : seatName(w, n)]), st.by3, "by3", true)}</div></div>`;
+    } else if (st.line === "re_allin" && byAllChoices(st).length > 1) {
+      sub = `<div class="sub"><span class="eyebrow">All-in from</span><div class="chips">${chipRow(byAllChoices(st).map((nb) => [nb, seatName(nb, n)]), st.byAll, "byAll", true)}</div></div>`;
+    }
+    /* how much: the raise you face, or the re-raise of your raise */
+    if (isSpin(st) && st.line === "raise" && SD && spinRaiseChoices(st).length) {
+      const last = SD.sizes.raise.length - 1;
+      sub += `<div class="sub"><span class="eyebrow">Raised to</span><div class="chips">${chipRow(spinRaiseChoices(st).map(([i, bb]) => [i, bb + "bb" + (i === last ? "+" : "")]), spinRaiseIndex(st), "size", true)}</div></div>`;
+    } else if (isSpin(st) && st.line === "re3" && SD && spinReraiseSizes(st).length) {
+      const sizes = spinReraiseSizes(st), last = SD.sizes.reraise.length - 1;
+      sub += `<div class="sub"><span class="eyebrow">Re-raised to</span><div class="chips">${chipRow(sizes.map((bb, i) => [i, bbText(bb) + (i === last ? "+" : "")]), spinReraiseIndex(st), "resize", true)}</div></div>
+        <p class="hint subhint">Your raise is taken as ${bbText(spinMyRaise(st))}: these are ${SD.sizes.reraise.slice(0, sizes.length).join(", ")} times it.</p>`;
+    } else if (isSpin(st)) {
+      /* a spin: nothing more to choose */
+    } else if (st.line === "raise" && D.sizes && raiseChoices(st).length) {
+      const last = D.sizes.raise.length - 1, out = committing(st);
+      sub += `<div class="sub"><span class="eyebrow">Raised to</span><div class="chips">${chipRow(raiseChoices(st).map(([i, bb]) => [i, bb + "bb" + (i === last ? "+" : "")]), raiseIndex(st), "size", true)}</div></div>`;
+      if (out.length) sub += `<p class="hint subhint">A raise to ${out[0]}bb or more with ${bbText(gridStack(st.stack))} commits the raiser: with a caller, read it as "Two all-ins".</p>`;
+    } else if (st.line === "re3" && D.sizes) {
+      const last = D.sizes.reraise.length - 1;
+      sub += `<div class="sub"><span class="eyebrow">Re-raised to</span><div class="chips">${chipRow(reraiseSizes(st).map((bb, i) => [i, bbText(bb) + (i === last ? "+" : "")]), reraiseIndex(st), "resize", true)}</div></div>
+        <p class="hint subhint">Your raise is taken as ${bbText(myRaise(st))}: these are ${D.sizes.reraise.join(", ")} times it.</p>`;
+    }
+    const mine = LINES.find((l) => l.id === st.line).group;
+    const groups = GROUPS.map((title, g) => {
+      const chips = LINES.filter((l) => l.group === g && can(l.id, st));
+      if (!chips.length) return "";
+      return `<div class="group"><span class="eyebrow">${title}</span><div class="chips">${chipRow(chips.map((l) => [l.id, l.label]), st.line, "line")}</div>${g === mine ? sub : ""}</div>`;
+    }).join("");
+    const pair = st.r1 != null && st.r1 === st.r2;
+    const slot = (r, next) => `<span class="slot${r != null ? " full" : ""}${next ? " next" : ""}">${r != null ? RANKS[r] : ""}</span>`;
+    const first = st.r1 == null || st.r2 != null;         // the next rank tapped is the first card
+    const keys = RANKS.split("").map((ch, i) => `<button class="key" data-rank="${i}" aria-label="${ch}">${ch}</button>`).join("") +
+                 '<button class="key back" data-act="clear" aria-label="Clear the cards">Clear</button>';
+    const spin = isSpin(st);
+    /* the stacks: one stack in a tournament (the effective one); every seat's in a spin */
+    let stackField;
+    if (spin) {
+      const edit = st.edit != null ? st.edit : st.seat;
+      const rows = range(n - 1, 0).map((nb) => `<div class="srow${nb === edit ? " on" : ""}">
+          <button class="sname"${set({edit: nb})} aria-label="Set ${seatName(nb, n)}'s stack with the buttons below">${seatName(nb, n)}${nb === st.seat ? "<i>you</i>" : ""}</button>
+          <span class="stepper"><button data-act="sless-${nb}" aria-label="${seatName(nb, n)}: one big blind less">&minus;</button>
+          <input id="sstack-${nb}" type="number" inputmode="decimal" min="1" max="300" step="0.5" value="${st.sstacks[nb]}" aria-label="${seatName(nb, n)}'s stack in big blinds">
+          <button data-act="splus-${nb}" aria-label="${seatName(nb, n)}: one big blind more">+</button></span></div>`).join("");
+      stackField = `<div class="field">
+        <div class="head"><span class="eyebrow">Stacks in big blinds</span><span class="hint">every player's, as the table shows them</span></div>
+        <div class="sstacks">${rows}</div>
+        <div class="presets">${chipRow(SPIN_PRESETS.map((p) => [p, String(p)]).map(([p, l]) => [JSON.stringify([edit, p]), l]), JSON.stringify([edit, st.sstacks[edit]]), "sset", true)}</div>
+        <p class="hint subhint">The buttons set ${edit === st.seat ? "your stack" : seatName(edit, n) + "'s stack"}: tap a seat's name to choose another.</p>
+      </div>`;
+    } else {
+      stackField = `<div class="field">
+        <div class="head"><span class="eyebrow">Stack in big blinds</span><span class="hint">the smaller of yours and theirs</span></div>
+        <div class="stack"><span class="stepper"><button data-act="less" aria-label="One big blind less">&minus;</button>
+          <input id="stack" type="number" inputmode="decimal" min="1" max="300" step="1" value="${st.stack}" aria-label="Stack in big blinds">
+          <button data-act="plus" aria-label="One big blind more">+</button></span></div>
+        <div class="presets">${chipRow(PRESETS.map((p) => [p, String(p)]), st.stack, "stack", true)}</div>
+      </div>`;
+    }
+    const speeds = spin ? chipRow(Object.keys(SPIN_SPEED).map((s) => [s, SPIN_SPEED[s].label]), st.sspeed, "sspeed", true)
+                        : chipRow(Object.keys(SPEED).map((s) => [s, SPEED[s].label]), st.speed, "speed", true);
+    return `<div class="card">
+      <div class="field game">
+        <div class="head"><span class="eyebrow">Game</span><span class="hint">${spin ? "three players, no ante, the winner takes all" : "any table, with an ante"}</span></div>
+        <div class="chips">${chipRow(Object.keys(GAME).map((g) => [g, GAME[g]]), st.game, "game")}</div>
+      </div>
+      <div class="field">
+        <div class="head"><span class="eyebrow">Your cards</span><span class="hint">tap two ranks, or a hand in the chart</span></div>
+        <div class="cardsrow">${slot(st.r1, first)}${slot(st.r2, !first)}
+          <span class="suit" role="group" aria-label="Suited or offsuit"><button class="${st.suited && !pair ? "on" : ""}"${pair ? " disabled" : ""}${set({suited: true})}>Suited</button><button class="${!st.suited && !pair ? "on" : ""}"${pair ? " disabled" : ""}${set({suited: false})}>Offsuit</button></span>
+          <button class="clear" data-act="clear">Clear</button></div>
+        <div class="keys">${keys}</div>
+      </div>
+      <div class="field">
+        ${groups}
+      </div>
+      <div class="field">
+        <div class="head"><span class="eyebrow">Your seat</span>
+          <span class="stepper small" role="group" aria-label="Players at the table"><button data-act="fewer" aria-label="One player fewer">&minus;</button><span class="val">${n}</span><button data-act="more" aria-label="One player more">+</button><span class="hint">players</span></span></div>
+        <div class="seats">${chipRow(seats, st.seat, "seat")}</div>
+        ${mapHtml(st)}
+      </div>
+      ${stackField}
+      <div class="field">
+        <div class="sub" style="margin-top:0"><span class="eyebrow">Opponents</span><div class="chips">${chipRow(D.opponents.map((o) => [o, OPP[o] || o]), st.opp, "opp", true)}</div></div>
+        ${spin ? "" : `<div class="sub"><span class="eyebrow">Style</span><div class="chips">${chipRow(D.styles.map((s) => [s, STYLE[s] || s]), st.style, "style", true)}</div></div>`}
+        ${spin ? "" : `<div class="sub"><span class="eyebrow">Stage</span><div class="chips">${chipRow(Object.keys(STAGE).map((s) => [s, STAGE[s]]), st.stage, "stage", true)}</div></div>`}
+        <div class="sub"><span class="eyebrow">Blinds</span><div class="chips">${speeds}</div></div>
+        <button class="resetall${undo ? " undo" : ""}" id="btn-reset-all" data-act="${undo ? "undo" : "reset"}">${undo ? "Undo the reset" : "Reset everything"}</button>
+      </div>
+    </div>`;
+  }
+
+  function factsHtml(st, res, h) {
+    const f = res.table.f || {}, out = [];
+    const vs = {vsraise: "They raise", hu_vsraise: "They raise", raise3: "The re-raise range", re3: "They re-raise", hu_re3: "They re-raise"}[res.fam] || "Their all-in range";
+    if (f.vp != null) out.push(`<span class="fact">${vs}<b>${f.vp >= 10 ? Math.round(f.vp) : f.vp}%</b></span>`);
+    const bb = bbCall(st, res, h);
+    if (bb && bb.players > 1 && bb.eq != null) out.push(`<span class="fact">Against them all you have<b>${pct(bb.eq)}</b></span>`);
+    else if (h != null && f.v != null) {
+      const eq = equity(h, rangesOf(res)[f.v]);
+      if (eq != null) out.push(`<span class="fact">You have about<b>${pct(eq)}</b></span>`);
+    }
+    const need = bb ? bb.need : f.need != null ? f.need : f.odds;
+    if (bb) out.push(`<span class="fact">The price is<b>${pct(bb.price)}</b></span>`, `<span class="fact">This hand needs<b>${pct(bb.need)}</b></span>`);
+    else if (need != null) {
+      const more = st.stage === "bubble" && f.need != null && CALL_FAMILIES.includes(res.fam);
+      out.push(`<span class="fact">${more ? "On the bubble a call needs" : "A call needs"}<b>${pct(need + (more ? BUBBLE_POINTS : 0))}</b></span>`);
+    }
+    if (f.x === 1 && f.bk != null && st.stage === "bubble" && CALL_FAMILIES.includes(res.fam)) {
+      out.push(`<span class="fact">On the bubble a call needs<b>${Math.round(100 * BUBBLE_POINTS)} points to spare</b></span>`);
+    }
+    if (f.x === 1) out.push('<span class="fact">Solved<b>exactly</b></span>');
+    return out.length ? `<div class="facts">${out.join("")}</div>` : "";
+  }
+
+  function answerHtml(st, res, ans) {
+    const n = st.players, h = handIndex(st);
+    const where = isSpin(st) ? `${seatName(st.seat, n)} &middot; ${spinStacksText(st.sstacks, n)} &middot; ${n === 2 ? "heads-up" : "3 players"}`
+                             : `${seatName(st.seat, n)} &middot; ${bbText(st.stack)} &middot; ${n} players`;
+    if (!res.table) return `<div class="slab idle"><div class="spot"><span>${where}</span></div><div class="row"><span class="verb">No table</span></div><div class="why">${esc(res.notes[0])}</div></div>`;
+    const sh = shares(ans);
+    if (h == null) {
+      const parts = Object.keys(sh).filter((k) => k !== "Fold").sort((a, b) => sh[b].share - sh[a].share).map((k) => `${k.toLowerCase()} ${pct(sh[k].share)}`);
+      const wait = st.r1 != null ? `${RANKS[st.r1]} and&hellip;` : "Your cards?";
+      return `<div class="slab idle"><div class="spot"><span>${esc(spotTitle(st))}</span><span>${where}</span></div>
+        <div class="row"><span class="verb">${wait}</span></div>
+        <div class="why">${parts.length ? "This table: " + esc(parts.join(", ")) + "." : "Every hand folds here."} Tap two ranks.</div>${factsHtml(st, res, null)}</div>`;
+    }
+    const a = ans[h], [verb, size] = verbOf(a.name, res.table);
+    const cls = ATTACK.includes(a.name) ? "attack" : a.name === "FOLD" ? "fold" : "passive";
+    const tags = [];
+    if (a.name === "RAISE_CALL") tags.push("call any all-in");
+    if (a.name === "RERAISE_BLUFF") tags.push("fold to an all-in");
+    if (a.close) tags.push("close");
+    if (a.bubble) tags.push("bubble");
+    return `<div class="slab ${cls}"><div class="spot"><span><b>${esc(handName(h))}</b> &middot; ${esc(spotTitle(st))}</span><span>${where}</span></div>
+      <div class="row"><span class="verb">${verb}</span>${size ? `<span class="size">${esc(size)}</span>` : ""}${tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div>
+      <div class="why">${esc(reason(st, res, a, h, sh))}</div>${factsHtml(st, res, h)}</div>`;
+  }
+
+  function chartHtml(st, res, ans) {
+    if (!res.table) return "";
+    const me = handIndex(st), sh = shares(ans);
+    let cells = "";
+    for (let h = 0; h < 169; h++) {
+      const a = ans[h], kind = KIND[a.name];
+      const band = me == null && st.r1 != null && (Math.floor(h / 13) === st.r1 || h % 13 === st.r1);
+      cells += `<button class="cell ${kind}${a.close ? " close" : ""}${h === me ? " me" : ""}${band ? " band" : ""}" data-hand="${h}" aria-label="${handName(h)}: ${LEGEND[a.name]}${a.close ? ", close" : ""}">${handName(h).slice(0, 2)}</button>`;
+    }
+    const order = ["Raise", "Raise, call an all-in", "Re-raise", "Re-raise as a bluff", "All-in", "Call", "Check", "Fold"];
+    const legend = order.filter((k) => sh[k]).map((k) => {
+      let label = k;
+      const size = k === "Raise" ? sizeOf("RAISE", res.table) : k === "Re-raise" ? (sizeOf("RERAISE", res.table) || sizeOf("ISOLATE", res.table)) : null;
+      if (size != null) label += " to " + bbText(size);
+      return `<span><i class="${sh[k].kind}"></i>${esc(label)} ${pct(sh[k].share)}</span>`;
+    }).join("");
+    const notes = res.notes.map((t) => `<p class="hint">${esc(t)}</p>`).join("");
+    const mode = `<span class="mode" role="group" aria-label="What the chart shows"><button class="${st.sheet ? "" : "on"}" aria-pressed="${!st.sheet}"${set({sheet: false})}>${res.stack}bb</button>` +
+                 `<button class="${st.sheet ? "on" : ""}" aria-pressed="${!!st.sheet}"${set({sheet: true})}>Every stack</button></span>`;
+    if (st.sheet) {
+      return `<div class="card chart">
+        <div class="head"><span class="title">${esc(spotTitle(st))}</span>${mode}</div>
+        ${sheetHtml(st, res)}
+      </div>`;
+    }
+    return `<div class="card chart">
+      <div class="head"><span class="title">${esc(spotTitle(st))} &middot; ${res.stack}bb</span>${mode}</div>
+      <div class="legend">${legend}</div>
+      <div class="grid" role="group" aria-label="All 169 hands">${cells}</div>
+      <div class="foot"><p class="hint">Suited hands above the diagonal, offsuit below. A cut corner marks a close one.${st.stage === "bubble" ? " Bubble rule applied." : ""}</p>${notes}</div>
+    </div>`;
+  }
+
+  /* ---------- every stack: one hand's play from 2bb to 100bb, and the sheet ---------- */
+
+  /* The plays that put the whole stack in: an all-in, a call or a re-raise where an all-in is in front, and
+     any play at all in a table of the exact solution, where a hand goes in or folds (a raise that commits
+     the raiser is answered there as his all-in, and the call of it is for everything). */
+  function commits(name, fam, table) {
+    if (name === "ALLIN" || name === "ISOLATE_ALLIN" || name === "RAISE_CALL") return true;
+    if (table && (table.f || {}).x === 1) return name !== "FOLD" && name !== "CHECK";
+    return (name === "CALL" || name === "ISOLATE") && (CALL_FAMILIES.includes(fam) || fam === "two_allin");
+  }
+  /* The same spot at every stack that has a table of its own: [{stack, res, ans}], shortest first. */
+  function everyStack(st) {
+    const out = [];
+    if (isSpin(st)) {
+      if (!SD) return out;
+      /* every X of the grid, the stacks in the same proportions: one entry for each table, by your stack */
+      const c = spinCfg(st), seen = new Set();
+      for (const x of st.players === 2 ? SD.hu : SD.x) {
+        const k = x / c.x, full = Object.assign({}, st, {sstacks: c.stacks.map((v) => Math.round(v * k * 100) / 100).concat(st.sstacks.slice(c.stacks.length))});
+        normalize(full);
+        const res = lookup(full);
+        if (!res.table || seen.has(res.cfg.tok)) continue;
+        seen.add(res.cfg.tok);
+        /* your stack is the axis: a short stack can come out the same for two of them, and the first is kept */
+        const mine = Math.round(res.cfg.stacks[st.seat] * 10) / 10;
+        if (out.length && out[out.length - 1].stack >= mine) continue;
+        out.push({stack: mine, res, ans: answers(res, full), sstacks: res.cfg.stacks.concat(st.sstacks.slice(res.cfg.stacks.length))});
+      }
+      return out;
+    }
+    for (const s of D.stacks) {
+      const full = Object.assign({}, st, {stack: s});
+      const res = lookup(full);
+      if (res.table && res.stack === s) out.push({stack: s, res, ans: answers(res, full)});
+    }
+    return out;
+  }
+  /* One hand through those tables, as stretches of the same play: [{from, to, name, label, kind, size}] */
+  function stretches(all, h) {
+    const out = [];
+    for (const {stack, res, ans} of all) {
+      const a = ans[h], label = LEGEND[a.name], size = sizeOf(a.name, res.table), last = out[out.length - 1];
+      if (last && last.label === label) { last.to = stack; if (size != null) last.size = size; }
+      else out.push({from: stack, to: stack, name: a.name, label, kind: KIND[a.name], size, fam: res.fam});
+    }
+    return out;
+  }
+  const span = (a, b, last) => (a === b ? `${a}bb` : b === last ? `${a}bb and more` : `${a} to ${b}bb`);
+
+  function stripHtml(st, res) {
+    const h = handIndex(st);
+    if (h == null || !res.table) return "";
+    const all = everyStack(st);
+    if (all.length < 2) return "";
+    const runs = stretches(all, h), last = all[all.length - 1].stack;
+    const spin = isSpin(st), mine = spin ? Math.round(res.cfg.stacks[st.seat] * 10) / 10 : res.stack;
+    const rows = runs.map((r) => {
+      const on = mine >= r.from && mine <= r.to;
+      const go = on ? null : r.to === last ? r.from : r.to;
+      const patch = spin ? (on ? {} : {sstacks: all.find((x) => x.stack === go).sstacks}) : {stack: on ? st.stack : go};
+      return `<button class="run ${r.kind}${on ? " on" : ""}"${set(patch)}>` +
+             `<span class="bbs">${span(r.from, r.to, last)}</span><span class="what">${esc(r.label)}</span></button>`;
+    }).join("");
+    const title = spin ? `${esc(handName(h))} at every stack, yours, the others in the same proportion` : `${esc(handName(h))} at every stack`;
+    return `<div class="card strip"><span class="eyebrow">${title}</span><div class="runs">${rows}</div></div>`;
+  }
+
+  /* The sheet: for each hand the deepest stack at which it still goes in for everything in this spot.
+     -> 169 x {top: that stack or 0, gap: true when it folds somewhere below it,
+               more: true when a deeper stack still plays the hand another way (a raise, a call)} */
+  function sheetOf(all) {
+    const out = [];
+    for (let h = 0; h < 169; h++) {
+      let top = 0, gap = false, missed = false, more = false;
+      for (const {stack, res, ans} of all) {
+        const name = ans[h].name;
+        if (commits(name, res.fam, res.table)) { top = stack; more = false; if (missed) gap = true; }
+        else { missed = true; if (name !== "FOLD" && name !== "CHECK") more = true; }
+      }
+      out.push({top, gap, more});
+    }
+    return out;
+  }
+  const BANDS = [[5, "s1"], [8, "s2"], [12, "s3"], [16, "s4"], [25, "s5"], [1000, "s6"]];      // a colour for each depth
+  const bandOf = (top) => (top ? BANDS.find(([most]) => top <= most)[1] : "s0");
+
+  function sheetHtml(st, res) {
+    const me = handIndex(st), all = everyStack(st), sheet = sheetOf(all);
+    const deepest = all.length ? all[all.length - 1].stack : 0;
+    let cells = "";
+    for (let h = 0; h < 169; h++) {
+      const {top, gap, more} = sheet[h];
+      const text = top ? (top >= deepest ? top + "+" : String(top)) : "";
+      cells += `<button class="cell num ${bandOf(top)}${gap ? " gap" : ""}${more ? " more" : ""}${h === me ? " me" : ""}" data-hand="${h}" ` +
+               `aria-label="${handName(h)}: ${top ? "in for the stack up to " + top + " big blinds" : "never in for the stack"}${more ? ", played another way when deeper" : ""}"><i>${handName(h).slice(0, 2)}</i>${text}</button>`;
+    }
+    const call = CALL_FAMILIES.includes(res.fam) || res.fam === "two_allin";
+    const what = call ? "calls" : "moves all-in";
+    const legend = [["s1", "up to 5"], ["s2", "8"], ["s3", "12"], ["s4", "16"], ["s5", "25"], ["s6", "deeper"]]
+      .map(([cls, label]) => `<span><i class="${cls}"></i>${label}</span>`).join("") +
+      (sheet.some((x) => x.more) ? '<span><i class="more"></i>deeper: played another way</span>' : "");
+    return `<div class="grid sheet" role="group" aria-label="All 169 hands: the deepest stack that ${what}">${cells}</div>
+      <div class="legend bands">${legend}</div>
+      <div class="foot"><p class="hint">The number is the deepest stack${isSpin(st) ? " of yours (the others in the same proportion)" : ""}, in big blinds, at which the hand ${what} in this spot. Blank: never. A dot: it folds at some shorter stack too. A yellow line: with a deeper stack the hand is still played, by a raise or a call. Tap a hand for its play at every stack.${st.stage === "bubble" ? " Bubble rule applied." : ""}</p></div>`;
+  }
+
+  /* ---------- the blinds clock, drawn ---------- */
+
+  /* How often an all-in from this seat gets through, as the first-in table of a stack has it. */
+  function through(st, stack) {
+    if (st.seat < 1) return null;
+    if (isSpin(st)) {
+      /* a spin: the stacks in the same proportion, at this stack of yours */
+      const k = stack / Math.max(st.sstacks[st.seat], 0.1), full = Object.assign({}, st, {line: "open", sstacks: st.sstacks.map((v) => Math.round(v * k * 100) / 100)});
+      normalize(full);
+      const res = lookup(full);
+      return res.table && res.table.f && res.table.f.fe != null ? res.table.f.fe : null;
+    }
+    const res = lookup(st, {line: "open", stack: gridStack(stack)});       // a small table's own tables where it has them
+    return res.table && res.stack === gridStack(stack) && res.table.f && res.table.f.fe != null ? res.table.f.fe : null;
+  }
+  function clockHtml(st) {
+    const spin = isSpin(st);
+    if (!spin && st.speed === "regular") return "";
+    const speed = spin ? st.sspeed : st.speed, sp = spin ? SPIN_SPEED[speed] : SPEED[speed];
+    const n = st.players, c = clock(st.stack, n, st.seat, speed);
+    const one = (x) => (x >= 10 ? Math.round(x) : Math.round(x * 10) / 10) + "bb";
+    /* in a spin the clock counts the stack in play, which is smaller than yours when you cover the others */
+    const covers = spin && st.sstacks[st.seat] > st.stack + 0.01;
+    const steps = [`<span class="step"><b>${one(st.stack)}</b><i>${covers ? "in play now" : "now"}</i></span>`];
+    if (c.hands > 0) steps.push(`<span class="step${c.atBlind < LOW ? " low" : ""}"><b>${one(c.atBlind)}</b><i>at your big blind, ${c.hands === 1 ? "next hand" : "in " + c.hands + " hands"}</i></span>`);
+    steps.push(`<span class="step${c.orbit < LOW ? " low" : ""}"><b>${c.gone ? "0" : one(c.orbit)}</b><i>after a round of folding</i></span>`);
+    let say;
+    if (c.gone || c.orbit < 1.5) say = "The blinds take this stack within a round. Whatever the chart plays between now and the big blind, play it: there is no later.";
+    else if (c.orbit < LOW) say = `A round of folding leaves ${one(c.orbit)}: a stack that almost any hand calls. Play every hand the chart plays before the blinds reach you.`;
+    else if (c.orbit < 10) say = `A round of folding leaves ${one(c.orbit)}: still an all-in that wins the blinds, but less often. Do not pass a play the chart gives you.`;
+    else say = `A round of folding costs ${one(st.stack - c.orbit)} of what you count your stack in.`;
+    if (spin) {
+      /* the stacks shrink alike: your stack now and after the round, the others in proportion */
+      const mine = st.sstacks[st.seat], later = c.gone ? 0 : mine * c.orbit / Math.max(st.stack, 0.1);
+      const now = through(st, mine), then = c.gone || later < 1 ? null : through(st, later);
+      if (now != null && then != null && Math.abs(now - then) >= 0.01) {
+        say += ` First in from ${seatName(st.seat, n)}, an all-in gets through about ${pct(now)} of the time now and ${pct(then)} after the round.`;
+      }
+    } else {
+      const now = through(st, st.stack), then = c.gone ? null : through(st, c.orbit);
+      if (now != null && then != null && gridStack(c.orbit) < gridStack(st.stack)) {
+        say += ` First in from ${seatName(st.seat, n)}, an all-in gets through about ${pct(now)} of the time with ${gridStack(st.stack)}bb and ${pct(then)} with ${gridStack(c.orbit)}bb.`;
+      }
+    }
+    return `<div class="card clock"><span class="eyebrow">Blinds clock &middot; ${sp.label} &middot; ${sp.levels}</span>
+      <div class="steps">${steps.join('<span class="to" aria-hidden="true"></span>')}</div><p class="rule">${esc(say)}</p></div>`;
+  }
+
+  /* The answer in one line, for the bar that stays at the top of a phone once the answer has scrolled away. */
+  function miniHtml(st, res, ans) {
+    const h = handIndex(st);
+    if (!res.table || h == null) return "";
+    const a = ans[h], [verb, size] = verbOf(a.name, res.table);
+    const cls = ATTACK.includes(a.name) ? "attack" : a.name === "FOLD" ? "fold" : "passive";
+    return `<button class="minibar ${cls}" data-act="top" tabindex="-1"><b>${esc(handName(h))}</b><span class="verb">${verb}</span>` +
+           `${size ? `<span class="size">${esc(size.replace(/^to /, ""))}</span>` : ""}<span class="where">${seatName(st.seat, st.players)} &middot; ${bbText(st.stack)}</span></button>`;
+  }
+
+  /* What comes next, read from the follow-up tables for the same hand. */
+  function planHtml(st, res, ans) {
+    const h = handIndex(st);
+    if (h == null || !res.table) return "";
+    const a = ans[h], n = st.players, rows = [], rules = [];
+    const row = (text, over, patch) => {
+      const r = lookup(st, over);
+      if (!r.table) return;
+      const b = answers(r, Object.assign({}, st, over))[h], [verb, size] = verbOf(b.name, r.table);
+      const cls = ATTACK.includes(b.name) ? "attack" : b.name === "FOLD" ? "fold" : "";
+      rows.push(`<button class="planrow"${set(patch || over)}><span class="if">${esc(text)}</span><span class="then ${cls}">${verb}${size ? " " + esc(size.replace("to ", "")) : ""}<i class="go"></i></span></button>`);
+    };
+    if (st.line === "limp" && a.name === "RAISE") {
+      /* no table is made for a raise over callers that is raised again */
+      rules.push("If a player moves all-in or re-raises over this raise, it is a stronger range than over a first raise: the chart under \u201cYou raised, then: All-in\u201d is the widest you should call, and a caller who now raises usually holds a big hand.");
+    } else if (st.line === "open" && (a.name === "RAISE" || a.name === "RAISE_CALL") && st.seat >= 1) {
+      if (a.name === "RAISE_CALL") rules.push("Any all-in behind you: call.");
+      if (n === 2) {
+        if (st.stack >= 12) row("The BB re-raises", {line: "re3", resize: null});
+        row("The BB moves all-in", {line: "re_allin"});
+      } else {
+        if (st.stack >= 12) for (const w of by3Choices(st)) row(`Re-raised by ${w === 2 ? "a seat behind you" : "the " + seatName(w, n)}`, {line: "re3", by3: w, resize: null});
+        /* an all-in behind: seats with the same answer on one row */
+        const groups = [];
+        for (const v of byAllChoices(st)) {
+          const r = lookup(st, {line: "re_allin", byAll: v});
+          if (!r.table) continue;
+          const b = answers(r, Object.assign({}, st, {line: "re_allin", byAll: v}))[h];
+          const last = groups[groups.length - 1];
+          if (last && last.name === b.name) last.seats.push(v); else groups.push({name: b.name, seats: [v]});
+        }
+        for (const g of groups) row(`All-in from ${g.seats.map((v) => seatName(v, n)).join(", ")}`, {line: "re_allin", byAll: g.seats[0]});
+        if (st.seat >= 2 && st.stack >= 10) row("A re-raise and an all-in", {line: "re3_allin"});
+      }
+    } else if (st.line === "raise" && a.name === "RERAISE") {
+      row(n === 2 ? "The SB moves all-in" : `The ${seatName(st.from, n)} moves all-in`, {line: "sq_allin"});
+    } else if (st.line === "raise" && a.name === "RERAISE_BLUFF") {
+      rules.push("If they move all-in or re-raise again: fold. This re-raise was a bluff.");
+    } else if (a.name === "LIMP") {
+      rules.push("If a player raises behind you: fold. With a pair and 15 times the raise behind, call once.");
+    } else if (a.name === "CHECK") {
+      rules.push("After the flop: bet top pair or better and strong draws; otherwise check, and fold to a bet.");
+    } else if ((res.fam === "re3" || res.fam === "hu_re3") && a.name === "CALL") {
+      rules.push("After the flop the stack goes in with an overpair, top pair or better.");
+    } else if ((res.fam === "re3" || res.fam === "hu_re3") && a.name === "RERAISE") {
+      rules.push("If they move all-in: call. This hand is never folded before the flop.");
+    } else if ((res.fam === "vsraise" || res.fam === "hu_vsraise") && a.name === "CALL") {
+      /* the big blind acts last after the flop against the small blind's raise, unless heads-up (there the small blind is the button) */
+      const last = st.seat >= 2 || (st.seat === 0 && st.from === 1 && n > 2);
+      rules.push(last ? "After the flop you act last: go on with a pair or a real draw, and bet when the raiser checks twice."
+                      : "After the flop you act first: check to the raiser, go on with a pair or a real draw, fold the rest to a bet.");
+    }
+    if (!rows.length && !rules.length) return "";
+    return `<div class="card plan"><span class="eyebrow">If the hand goes on</span>
+      <div class="rows">${rows.join("")}</div>${rules.map((t) => `<p class="rule">${esc(t)}</p>`).join("")}</div>`;
+  }
+
+  /* ---------- POST: after the flop, the playbook's rules of thumb ---------- */
+
+  const POST_Q = [
+    ["hand", "Your hand", [["monster", "Two pair or better"], ["top", "Overpair, or top pair good kicker"], ["mid", "Weaker pair"],
+                            ["combo", "Big draw, 12+ outs"], ["draw", "Flush or open-ended draw"], ["weak", "Gutshot or overcards"], ["air", "Nothing"]]],
+    ["facing", "The action to you", [["none", "No bet yet"], ["small", "Bet: a third of the pot or less"], ["half", "Bet: about half"], ["big", "Bet: two thirds or more"], ["raise", "I bet and was raised"]]],
+    ["street", "Street", [["flop", "Flop"], ["turn", "Turn"], ["river", "River"]]],
+    ["role", "Before the flop", [["raiser", "I raised last"], ["caller", "I called"]]],
+    ["n", "Players", [["hu", "Two of us"], ["multi", "Three or more"]]],
+    ["pos", "Position", [["ip", "I act last"], ["oop", "I act first"]]],
+    ["board", "Board", [["dry", "Dry: K72, a pair, no draws"], ["wet", "Wet: connected or two of a suit"]]],
+    ["spr", "Chips behind", [["low", "Under 1.5 pots"], ["mid", "1.5 to 4 pots"], ["deep", "Over 4 pots"]]],
+  ];
+
+  function postAdvice(p, bubble) {
+    const hu = p.n === "hu", ip = p.pos === "ip", raiser = p.role === "raiser", wet = p.board === "wet";
+    const flop = p.street === "flop", turn = p.street === "turn", river = p.street === "river";
+    const low = p.spr === "low", deep = p.spr === "deep", short4 = !deep;
+    const out = (verb, size, why) => ({verb, size, why});
+    const made = p.hand === "monster" || p.hand === "top" || p.hand === "mid";
+    let r;
+    if (p.facing === "none") {
+      switch (p.hand) {
+        case "monster":
+          r = out("Bet", low ? "half the pot, the rest next street" : wet || !flop ? "2/3 pot" : "1/2 pot",
+                  "Bet for value on every street: you want the whole stack in. On a wet board never give a free card."); break;
+        case "top":
+          if (low) r = out("Bet", "1/2 pot or all-in", "Top pair or better with under 1.5 pots behind: the hand goes to showdown. Get the chips in and do not fold.");
+          else if (river) r = out("Check", "", "One pair is a two-street hand. If you bet the flop and the turn, check now and call a bet of up to about 60% of the pot. If a street was checked through, bet half the pot for value.");
+          else r = out("Bet", flop && !wet && hu ? "1/3 pot" : flop && !wet ? "1/2 pot" : "2/3 pot",
+                       flop ? "Bet for value: worse pairs and draws call. Bigger on a wet board, small on a dry one." : "Bet again for value, and bigger on the turn: draws must pay. Check the river unless a street was checked.");
+          break;
+        case "mid":
+          if (flop && raiser && hu && !wet) r = out("Bet", "1/3 pot", "As the raiser heads-up on a dry board, bet small with everything. On the turn check unless you improve.");
+          else r = out("Check", "", "A hand for the showdown, not for betting: check, call one small bet, and fold to a big bet or a second one.");
+          break;
+        case "combo":
+          if (river) r = out("Check", "", "The draw missed. Give up: bluff only heads-up against a player who folds, and never near the bubble.");
+          else if (raiser || ip) r = out("Bet", "2/3 pot", short4 ? "A big draw bets when you raised before the flop or act last. With 4 pots or less behind, move all-in if you are raised: they fold some of the time and you have about " + (flop ? "45%" : "26%") + " when called."
+                                                                  : "A big draw bets when you raised before the flop or act last: it wins the pot now or draws to the best hand.");
+          else r = out("Check", "", short4 ? "Out of position without the lead: check. With 4 pots or less behind, move all-in over a bet on the flop." : "Out of position without the lead: check, and call a bet at the right price.");
+          break;
+        case "draw":
+          if (river) r = out("Check", "", "The draw missed. Give up: no bluff into a player who called twice.");
+          else if (flop && raiser && hu) r = out("Bet", "1/3 pot", "Your continuation bet with outs behind it: it wins the pot often and has 8 or 9 outs when called.");
+          else r = out("Check", "", ip ? "Take the free card. Heads-up against a player who gives up often, a bet of half the pot is fine." : "Check, and call a bet at the right price: a third of the pot on any street, about half on the flop.");
+          break;
+        default:
+          if (flop && raiser && hu && !wet) r = out("Bet", "1/3 pot", "A small continuation bet on a dry board works often enough with any two cards. If called, give up on the turn unless you improve.");
+          else if (flop && raiser && hu) r = out("Check", "", "This board hits the hands that call a raise. Check and give up to a bet.");
+          else r = out("Check", "", "Nothing to bet with: only the raiser's bet on the flop is a continuation bet. Check and fold to a bet.");
+      }
+    } else if (p.facing === "raise") {
+      switch (p.hand) {
+        case "monster":
+          r = deep && !wet && ip ? out("Call", "", "Deep and in position on a dry board: call and let them keep betting. Raise the turn or the river.")
+                                 : out(deep ? "Re-raise" : "All-in", "", "A raise against a very strong hand: get the stack in now, while worse hands and draws still pay."); break;
+        case "top":
+          if (low) r = out("All-in", "", "Top pair or better with under 1.5 pots behind: you are committed. The hand goes to showdown.");
+          else if (flop) r = out("Fold", "", "A raise on the flop is rarely a bluff: fold one pair against a tight or passive player. Against an aggressive one call once, and fold to a big bet on the turn.");
+          else r = out("Fold", "", "A raise on the turn or river beats one pair almost every time, above all from a passive player.");
+          break;
+        case "combo":
+          if (flop && short4) r = out("All-in", "", "A big draw with 4 pots or less behind: move in. You have about 45% when called and they fold some of the time.");
+          else if (flop) r = out("Call", "", "Too deep to move in: call, and go on when the draw comes or the price stays right.");
+          else r = out("Fold", "", "One card to come gives about 26%: fold to a raise unless it costs a quarter of the pot or less.");
+          break;
+        default:
+          r = out("Fold", "", made ? "A weak pair does not stand a raise." : "A raise takes the price away. Fold.");
+      }
+    } else {
+      const small = p.facing === "small", half = p.facing === "half", big = p.facing === "big";
+      switch (p.hand) {
+        case "monster":
+          if (river) r = out("Raise", low ? "all-in" : "about 3 times the bet", "Raise for value: they have shown a hand and will pay. All-in with under 2 pots behind.");
+          else if (!wet && ip && deep) r = out("Call", "", "On a dry board in position: call and keep their bluffs in. Raise the turn.");
+          else r = out(short4 ? "All-in" : "Raise", short4 ? "" : "about 3 times the bet", short4 ? "With 4 pots or less behind the stack goes in now, while draws and worse pairs still pay." : "Raise for value and to charge the draws.");
+          break;
+        case "top":
+          if (low) r = out(river ? "Call" : "All-in", "", "Top pair or better with under 1.5 pots behind: you are committed. The hand goes to showdown.");
+          else if (river && big) r = out("Fold", "", "A big bet on the river beats one pair too often: fold against a passive or unknown player. Against an aggressive one, call.");
+          else r = out("Call", "", river ? "The price is right against busted draws and worse pairs." : "Call, one street at a time. Do not raise: only better hands go on. On the river fold to a big bet.");
+          break;
+        case "mid":
+          if (flop && (small || half)) r = out("Call", "", "Call once. Fold on the turn to a second big bet unless you improve.");
+          else if (flop) r = hu ? out("Call", "", "Heads-up against one bet, call once. Fold on the turn to a second big bet.") : out("Fold", "", "A weak pair against a big bet with several players in: fold.");
+          else if (small) r = out("Call", "", "A small bet gives the price for a pair. Fold to a bigger one on the next street.");
+          else r = out("Fold", "", "One weak pair is not worth a big bet on the " + (turn ? "turn" : "river") + ".");
+          break;
+        case "combo":
+          if (river) r = out("Fold", "", "The draw missed, and what is left of the hand does not beat a bet.");
+          else if (flop && short4) r = out("All-in", "", "A big draw with 4 pots or less behind: move in over the bet. You have about 45% when called and they fold some of the time.");
+          else if (flop) r = out("Call", "", "Too deep to move in: call. You have about 45% with two cards to come.");
+          else if (big && !deep) r = out("Fold", "", "One card to come gives about 26%, and a big bet needs 29% or more. Call only with more than 4 pots behind.");
+          else r = out("Call", "", "About 26% with one card to come: the price is right.");
+          break;
+        case "draw":
+          if (river) r = out("Fold", "", "The draw missed, and what is left of the hand does not beat a bet.");
+          else if (flop && (small || half)) r = out("Call", "", "The price is right for 8 or 9 outs with two cards to come and chips behind.");
+          else if (flop) r = low ? out("Call", "", "The bet is close to all-in, so you see both cards: about 35%, enough for a bet up to the size of the pot.")
+                                 : ip ? out("Call", "", "In position with chips behind, a flush or open-ended draw calls one big bet. Fold the turn to another if it misses.")
+                                      : out("Fold", "", "Out of position a big bet does not give the price: 19% for the next card against the 29% needed.");
+          else if (small) r = out("Call", "", "A third of the pot needs 20%, and you have about 19% plus what you win when it comes.");
+          else if (half && deep) r = out("Call", "", "Half the pot needs 25% and you have 19%: the chips behind make up the difference when you hit.");
+          else r = out("Fold", "", "One card to come gives about 19%. This bet needs " + (half ? "25%" : "29% or more") + ".");
+          break;
+        case "weak":
+          r = out("Fold", "", "Too few outs for the price. A gutshot with two overcards may call one small bet in position, no more."); break;
+        default:
+          r = out("Fold", "", "No pair and no draw: fold to a bet.");
+      }
+    }
+    if (bubble && (r.verb === "Call" || r.verb === "Bet") && (p.hand === "mid" || p.hand === "air" || p.hand === "weak")) r.why += " Near the bubble: no bluffs over several streets and no thin calls for a third of your stack or more.";
+    r.cls = ["Bet", "Raise", "Re-raise", "All-in"].includes(r.verb) ? "attack" : r.verb === "Fold" ? "" : "passive";
+    return r;
+  }
+
+  function postHtml(st, open) {
+    const p = st.post;
+    const q = ([key, title, options]) =>
+      `<div class="q"><span class="eyebrow">${title}</span><div class="chips">${options.map(([v, label]) =>
+        `<button class="chip${p[key] === v ? " on" : ""}" aria-pressed="${p[key] === v}"${set({post: {[key]: v}})}>${esc(label)}</button>`).join("")}</div></div>`;
+    let out = '<div class="out"><div class="why">Choose your hand to see the play.</div></div>';
+    if (p.hand) {
+      const r = postAdvice(p, st.stage === "bubble");
+      out = `<div class="out ${r.cls}"><span class="verb">${r.verb}</span>${r.size ? `<span class="size">${esc(r.size)}</span>` : ""}<div class="why">${esc(r.why)}</div></div>`;
+    }
+    return `<details class="card post" id="post-box"${open ? " open" : ""}><summary><span class="title">After the flop</span><span class="hint">rules of thumb</span></summary>
+      <div class="body">${POST_Q.slice(0, 2).map(q).join("")}${out}${POST_Q.slice(2).map(q).join("")}</div></details>`;
+  }
+
+  function spinNotesHtml(open) {
+    const n = SD ? SD.tables.length.toLocaleString("en") : "the";
+    return `<details class="card notes" id="notes-box"${open ? " open" : ""}><summary><span class="title">How to read it</span><span class="hint">Spin &amp; Go: what it is made of</span></summary>
+      <div class="body">
+        <p><b>The game</b> is a spin: three players (two once one is out), blinds of a half and one big blind, no ante, and one prize in nearly every game. With one prize, chips are money: the play that wins the most chips is the right one. Being the chip leader is no reason to play tighter: the chips you have over the second biggest stack can never change hands, so with 8bb against 6bb and 5bb you play the 6bb hand. The buy-in does not change the play either; it only tells you what kind of players you meet.</p>
+        <p><b>Why it is tighter than the tournament tables</b>: those are made with a big blind ante, 2.5bb in the pot before the cards where a spin has 1.5bb. Every all-in that gets through wins more there, so they move in and call with far more hands. At three players with 6bb the button moves in with 49% of hands there and 38% here; the big blind calls the button's all-in with 70% there and 37% here.</p>
+        <p><b>Stacks</b>: every player's, in big blinds, as the table shows them (GGPoker can show stacks in big blinds). Tap a seat's name and the number buttons set that seat. The tables use two numbers: the biggest stack is cut down to the second, so two stacks of the same size and a short one, in its seat. Stacks between two that were solved are read at the nearest, in the same proportion; the answer says so. Next hand moves every stack on with its player.</p>
+        <p><b>All-ins and calls of all-ins are solved exactly</b> for these stacks: real cards, every player who can still call, every side pot. First in with about 10bb or less every hand is an all-in or a fold, and that is the whole answer of the solved game. With 9 to 12bb a solver with every play would also raise small or limp many of the hands the page folds (heads-up with 10bb it plays nearly nine hands in ten, the page about six in ten): the all-ins are right, the folds give up a little. From 13bb the all-in is one play beside a small raise: the raise follows the opening ranges, the big blind's call of a raise goes by its price, and a small re-raise is taken to be as wide as three-handed play makes it (about one hand in eight; heads-up one in six).</p>
+        <p><b>Opponents</b>: Standard is the solved game. Loose is the best answer to players who call your all-ins with half as many hands again (the common mistake in low-stakes spins): the weak steals go. Tight is the best answer to players who move in and call with a fifth fewer hands: far more all-ins (with 10bb the button moves in with about half its hands), fewer calls. Use it only for a table you have seen fold a lot: every player there is taken to be of that kind.</p>
+        <p><b>Style</b> is always Play to win: the tournament's Tight style is built to survive until a prize, and a spin has nothing to survive for.</p>
+        <p><b>Games that pay second place</b> (GGPoker x10 and up, about one game in forty) are not what these tables are for: there, call all-ins tighter while a shorter stack can still bust first, and use the table app with the prizes typed for the exact answer.</p>
+        <p><b>Blinds</b> sets the clock: GGPoker's x2 games have levels of 1 minute, x3 and x4 of 2 minutes, x5 and PokerStars of 3 minutes, each about a quarter higher; three hands a minute are assumed. It changes no answer.</p>
+        <p><b>The answers</b> are the coach's engine asked about every hand of every spot: ${n} tables, nothing is worked out while you play. After the flop the page has the playbook's rules of thumb.</p>
+        <p>A study aid. Most sites do not allow charts or outside help while you play for real money: check the rules of yours.</p>
+      </div></details>`;
+  }
+
+  function notesHtml(open) {
+    if (isSpin(state)) return spinNotesHtml(open);
+    return `<details class="card notes" id="notes-box"${open ? " open" : ""}><summary><span class="title">How to read it</span><span class="hint">and what it is made of</span></summary>
+      <div class="body">
+        <p><b>Stack</b> is the effective one: the smaller of yours and the biggest stack that can still call you. Against an all-in it is the size of the all-in, or your stack if that is smaller.</p>
+        <p><b>The answers</b> are the coach's engine asked about every hand of every spot, counting chips only, with a big blind ante. ${D.tables.length.toLocaleString("en")} tables, nothing is worked out while you play.</p>
+        <p><b>How much they raised</b> matters most in the big blind, where the call goes by its price: a raise to 2bb asks for about 18% of the pot, a raise to 3bb for 27%. Pick the size under "Raised to": it starts from the usual one for the stack and stays as you set it for the next hands. "4bb+" is read as 4bb: against more, fold the close ones. A bigger raise also makes your own re-raise bigger and a small pair's call rarer.</p>
+        <p><b>The big blind's call</b> is tested hand by hand: its equity against the raiser's range, times the share of that equity the hand keeps when it plays the flop, must beat the price by a margin. Suited, connected and high cards keep more, and every hand keeps more against a raise from the small blind, where the big blind acts last. Against a solver's published fold rates this folds a few points more often at 2bb and at 3bb. It holds at every stack: with 8bb the big blind still calls a small raise at the right price, and then plays the flop for its stack. A call or a fold within 3 points of the line is marked close.</p>
+        <p><b>Play to win</b> opens wider than the coach's tight ranges and, from the cutoff and the button, calls and re-raises a raise with more hands. <b>Tight</b> keeps the tight ranges and asks more of a big blind call. Both take stacks as equal and know nothing about prizes.</p>
+        <p><b>Bubble</b> folds the close ones and asks 10 points of equity more before calling an all-in. It is a rule of thumb, not a prize calculation: with the real stacks and prizes, the coach's own table app is exact.</p>
+        <p><b>Opponents</b> changes the hands they are taken to raise and move in with: tight players fewer, loose players more.</p>
+        <p><b>Blinds</b> (Regular, Turbo, Hyper) does not change the play: with the same stack the right hand to play is the same at every speed. It turns on the blinds clock, which shows what folding costs: your stack when the big blind reaches you and after a whole round, counted in the big blinds of that moment (taken as levels of about 12, 6.5 and 3.5 hands that add about a fifth each). And a close play is taken in a turbo or a hyper, where waiting for a better spot costs more than it is worth.</p>
+        <p><b>Every stack</b> turns the chart into a push/fold sheet: for each hand the deepest stack at which it still goes in for everything in this spot. Under the answer, the same hand is shown at every stack; a tap sets that stack.</p>
+        <p><b>All-ins with ${D.short ? D.short.top : 10}bb or less are solved exactly</b>: moving all-in first, and calling one all-in or two. Real cards, every player who can still call, every side pot, for tables of 3, 4, 5, 6 and 9 players (7 and 8 are read from the nine); solved at 2 to 10bb and at 12, 16 and 20bb, with a straight line between. Two things count there that the usual push-or-fold chart leaves out. A short all-in is often called twice. And the players who folded hold mostly middle and low cards, so at a full table a hand like T8o is worth about three points less than its plain odds, and the big blind calls an all-in with far fewer hands than the price alone says. Those tables say "Solved exactly": the calls at every one of these stacks, and first in up to 10bb, where every hand is an all-in or a fold (deeper, the all-in is weighed by its exact number and the small raise by the opening range). They have no one number for what a call needs. Opponents moves the hands an all-in player is taken to hold, so it moves the calls; the all-ins first in are the same against every kind of opponent. With Standard, an all-in of 10bb or less is the solved range itself; deeper, where a player has other plays than the all-in, it is taken a little tighter, a tenth at 20bb, which is what the deeper tables assume. Behind a player who only called with 6bb or less, the answer is the one against his all-in, with a caller's weaker hands in its place.</p>
+        <p><b>Three players in the pot</b> (a raise and an all-in, two all-ins, a re-raise and an all-in behind your raise) are made for four seats of the first player, and the first two for the big blind; the chart says so when your spot is read from a neighbour.</p>
+        <p><b>After the flop</b> is the playbook's rules of thumb with pot-odds arithmetic, not a solver.</p>
+        <p>A study aid. Most sites do not allow charts or outside help while you play for real money: check the rules of yours.</p>
+      </div></details>`;
+  }
+
+  /* ---------- state, events ---------- */
+
+  const $ = (id) => document.getElementById(id);
+  let postOpen = false, notesOpen = false;
+
+  /* Reset puts every choice back to the start.  For a few seconds, or until something else is chosen, the
+     same button takes it back: no question is asked first, and a slip of the finger costs nothing. */
+  let undo = null, undoTimer = null;
+  const fresh = () => JSON.parse(JSON.stringify(DEFAULTS));
+  function forget() { if (undo) { undo = null; clearTimeout(undoTimer); } }
+  function drawReset() {
+    const top = $("btn-reset"), foot = $("btn-reset-all");
+    if (top) {
+      top.className = "reset" + (undo ? " undo" : "");
+      top.dataset.act = undo ? "undo" : "reset";
+      top.title = undo ? "Undo the reset" : "Reset everything";
+      top.setAttribute("aria-label", top.title);
+      top.innerHTML = undo ? "Undo" : `${RESET_ICON}<span>Reset</span>`;
+    }
+    if (foot) {
+      foot.className = "resetall" + (undo ? " undo" : "");
+      foot.dataset.act = undo ? "undo" : "reset";
+      foot.textContent = undo ? "Undo the reset" : "Reset everything";
+    }
+  }
+
+  function save() {
+    try { localStorage.setItem("menlo-guide", JSON.stringify(state)); } catch (e) { /* private window: nothing is kept */ }
+  }
+  function load() {
+    try {
+      const saved = JSON.parse(localStorage.getItem("menlo-guide") || "null");
+      if (saved && typeof saved === "object") {
+        state = Object.assign({}, state, saved, {post: Object.assign({}, state.post, saved.post || {})});
+      }
+    } catch (e) { /* nothing saved, or not readable */ }
+  }
+
+  function render(keepInputs) {
+    normalize(state);
+    const res = lookup(state), ans = res.table ? answers(res, state) : null;
+    if (!keepInputs) {
+      const at = document.activeElement && document.activeElement.getAttribute && document.activeElement.getAttribute("data-set");
+      $("inputs").innerHTML = inputsHtml(state);
+      if (at) { const again = document.querySelector(`#inputs [data-set="${at.replace(/"/g, '\\"')}"]`); if (again) again.focus({preventScroll: true}); }
+    }
+    $("answer").innerHTML = answerHtml(state, res, ans);
+    $("mini").innerHTML = miniHtml(state, res, ans);
+    $("clock").innerHTML = clockHtml(state);
+    $("plan").innerHTML = planHtml(state, res, ans);
+    $("strip").innerHTML = stripHtml(state, res);
+    $("chart").innerHTML = chartHtml(state, res, ans);
+    $("post").innerHTML = postHtml(state, postOpen);
+    const notesFor = state.game + (SD ? "+" : "");
+    if (!$("notes").innerHTML || $("notes").dataset.game !== notesFor) { $("notes").innerHTML = notesHtml(notesOpen); $("notes").dataset.game = notesFor; }
+    const sub = document.querySelector(".brand .sub");
+    if (sub) sub.textContent = isSpin(state) ? "Spin & Go" : "Quick guide";
+    const next = $("btn-next");
+    if (next) next.innerHTML = `<span class="long">Next hand</span><span class="short">Next</span> <b>&rarr; ${seatName((state.seat + 1) % state.players, state.players)}</b>`;
+    const foot = $("foot");
+    if (foot) foot.innerHTML = `Menlo.bet quick guide &middot; a study aid &middot; page ${PAGE} &middot; tables v${D.version}${D.quick || D.partial ? " (trial set)" : ""}` +
+                               (SD ? ` &middot; spin tables v${SD.version}${SD.quick ? " (trial set)" : ""}` : "");
+    drawReset();
+    save();
+  }
+
+  function apply(patch) {
+    forget();
+    if ("game" in patch && patch.game !== state.game) {
+      state.keep = state.keep || {};
+      state.keep[state.game] = {players: state.players, seat: state.seat};
+      const back = state.keep[patch.game] || (patch.game === "spin" ? {players: 3, seat: 2} : {players: 8, seat: 2});
+      state.game = patch.game; state.players = back.players; state.seat = back.seat;
+      state.size = state.resize = null; state.edit = null;
+      if (!can(state.line, normalize(state))) state.line = defaultLine(state);
+      if (isSpin(state)) loadSpin();
+      delete patch.game;
+    }
+    for (const key in patch) {
+      if (key === "post") Object.assign(state.post, patch.post);
+      else if (key === "sset") { const [nb, v] = JSON.parse(patch.sset); state.sstacks[nb] = v; }
+      else state[key] = patch[key];
+    }
+    if ("seat" in patch && !("line" in patch) && !can(state.line, state)) state.line = defaultLine(state);
+    if ("line" in patch && patch.line === "sq_allin") state.post.role = "raiser";
+    render();
+  }
+
+  function pickRank(i) {
+    forget();
+    if (state.r1 == null || state.r2 != null) { state.r1 = i; state.r2 = null; state.suited = false; }
+    else state.r2 = i;
+    render();
+  }
+  function nextHand() {
+    forget();
+    if (isSpin(state)) {
+      /* every player moves on one seat, and his stack with him (a seat is its number of players behind) */
+      const n = state.players, moved = state.sstacks.slice();
+      for (let nb = 0; nb < n; nb++) moved[(nb + 1) % n] = state.sstacks[nb];
+      state.sstacks = moved;
+      state.edit = null;
+    }
+    state.seat = (state.seat + 1) % state.players;
+    state.r1 = state.r2 = null; state.suited = false;
+    state.line = defaultLine(state);
+    state.resize = null;                   // the size of a raise stays as picked: a table tends to raise one size
+    state.post.hand = null; state.post.facing = "none"; state.post.street = "flop";
+    render();
+    window.scrollTo({top: 0});
+  }
+  function act(name) {
+    if (name === "top") return window.scrollTo({top: 0, behavior: "smooth"});
+    if (name === "reset") {
+      undo = JSON.parse(JSON.stringify(state));
+      state = fresh();
+      clearTimeout(undoTimer);
+      undoTimer = setTimeout(() => { undo = null; drawReset(); }, UNDO_MS);
+      render();
+      return window.scrollTo({top: 0});
+    }
+    if (name === "undo") {
+      if (undo) { state = undo; undo = null; clearTimeout(undoTimer); render(); }
+      return;
+    }
+    forget();
+    if (name === "clear") { state.r1 = state.r2 = null; state.suited = false; }
+    else if (name === "fewer" || name === "more") {
+      const before = state.players;
+      state.players = Math.max(2, Math.min(isSpin(state) ? 3 : 9, before + (name === "more" ? 1 : -1)));
+      if (state.players === before) return;
+      if (!can(state.line, normalize(state))) state.line = defaultLine(state);
+    } else if (isSpin(state) && (name === "less" || name === "plus")) {
+      const nb = state.edit != null ? state.edit : state.seat;
+      state.sstacks[nb] = Math.max(1, Math.min(300, Math.round(state.sstacks[nb]) + (name === "plus" ? 1 : -1)));
+    } else if (name.startsWith("sless-") || name.startsWith("splus-")) {
+      const nb = +name.slice(6);
+      state.edit = nb;
+      state.sstacks[nb] = Math.max(1, Math.min(300, Math.round(state.sstacks[nb]) + (name.startsWith("splus") ? 1 : -1)));
+    } else if (name === "less" || name === "plus") state.stack = Math.max(1, Math.min(300, Math.round(state.stack) + (name === "plus" ? 1 : -1)));
+    else if (name === "next") return nextHand();
+    render();
+  }
+
+  function onClick(event) {
+    const el = event.target.closest("[data-set],[data-rank],[data-act],[data-hand]");
+    if (!el || el.disabled) return;
+    if (el.dataset.set) apply(JSON.parse(el.dataset.set));
+    else if (el.dataset.rank != null) pickRank(+el.dataset.rank);
+    else if (el.dataset.act) act(el.dataset.act);
+    else if (el.dataset.hand != null) {
+      const h = +el.dataset.hand, i = Math.floor(h / 13), j = h % 13;
+      forget();
+      state.r1 = Math.min(i, j); state.r2 = Math.max(i, j); state.suited = i < j;
+      render();
+    }
+  }
+  function onInput(event) {
+    if (event.target.id && event.target.id.startsWith("sstack-")) {
+      const value = parseFloat(event.target.value), nb = +event.target.id.slice(7);
+      if (!(value >= 1)) return;
+      forget();
+      state.sstacks[nb] = value;
+      state.edit = nb;
+      render(true);
+      return;
+    }
+    if (event.target.id !== "stack") return;
+    const value = parseFloat(event.target.value);
+    if (!(value >= 1)) return;
+    forget();
+    state.stack = value;
+    render(true);
+    document.querySelectorAll(".presets .chip").forEach((chip) => chip.classList.toggle("on", JSON.parse(chip.dataset.set).stack === state.stack));
+  }
+  function onKey(event) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const tag = event.target.tagName;
+    if (tag === "INPUT") { if (event.key === "Enter") event.target.blur(); return; }
+    const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+    const rank = RANKS.indexOf({"1": "A", "0": "T"}[key] || key);         // 1 is the ace and 0 the ten, for a number pad
+    if (key.length === 1 && rank >= 0) { pickRank(rank); event.preventDefault(); }
+    else if (key === "S" || key === "O") { if (state.r1 !== state.r2 || state.r1 == null) apply({suited: key === "S"}); }
+    else if (key === "Backspace" || key === "Delete") act("clear");
+    else if (key === "ArrowUp") { act("plus"); event.preventDefault(); }
+    else if (key === "ArrowDown") { act("less"); event.preventDefault(); }
+    else if (key === "N") nextHand();
+  }
+  function onToggle(event) {
+    if (event.target.id === "post-box") postOpen = event.target.open;
+    if (event.target.id === "notes-box") notesOpen = event.target.open;
+  }
+
+  /* The spin tables are loaded the first time Spin is chosen: spin.js where the tournament tables came as
+     data.js (a folder of files, from the disk or a server), spin.json where they were fetched (one-file page). */
+  let fetched = false;
+  function loadSpin() {
+    if (SD || spinLoading) return spinLoading;
+    const done = (data) => {
+      if (!data || (data.version || 0) < SPIN_PAGE) throw new Error("old");
+      SD = data; spinLoading = null; spinFailed = false; render();
+    };
+    const fail = () => { spinLoading = null; spinFailed = true; render(); };
+    if (window.SPIN_DATA) { done(window.SPIN_DATA); return null; }
+    if (fetched) {
+      spinLoading = fetch("spin.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(done).catch(fail);
+    } else {
+      spinLoading = new Promise((resolve) => {
+        const tag = document.createElement("script");
+        const page = document.querySelector('script[src*="guide.js"]');
+        tag.src = "spin.js" + (page && /\?v=(\d+)/.test(page.src) ? "?v=" + SPIN_PAGE : "");
+        tag.onload = () => { try { done(window.SPIN_DATA); } catch (e) { fail(); } resolve(); };
+        tag.onerror = () => { fail(); resolve(); };
+        document.head.appendChild(tag);
+      });
+    }
+    return spinLoading;
+  }
+
+  function start(data) {
+    if (!data || (data.version || 1) < TABLES) {       // a browser's kept copy of the tables, from before this page
+      $("guide").innerHTML = '<p class="loading">This page is newer than the tables your browser kept. Reload the page.</p>';
+      return;
+    }
+    D = data;
+    const bytes = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+    EQ = bytes(D.eq); PAIRS = bytes(D.pairs);
+    load();
+    if (isSpin(state)) loadSpin();
+    const root = $("guide");
+    /* The bar at the top stays in the window while the page scrolls: Reset and Next hand are always one tap
+       away.  While the answer is out of sight the bar shows it in one line where the name was. */
+    root.innerHTML = `<header class="top" id="top"><div class="brand">${MARK}<span class="word">Menlo<b>.bet</b></span><span class="sub">Quick guide</span></div>
+        <div id="mini" aria-hidden="true"></div>
+        <div class="tools"><button class="reset" id="btn-reset" data-act="reset"></button><button class="next" id="btn-next" data-act="next"></button></div></header>
+      <div class="cols">
+        <div class="col left"><section id="inputs" aria-label="The spot"></section><section id="post"></section><section id="notes"></section></div>
+        <div class="col right"><section id="answer" aria-live="polite" aria-label="The answer"></section><section id="clock"></section><section id="plan"></section><section id="strip"></section><section id="chart"></section></div>
+      </div>
+      <p class="foot" id="foot"></p>`;
+    root.addEventListener("click", onClick);
+    root.addEventListener("input", onInput);
+    /* typing in the stack field leaves the other choices as drawn (the field keeps the cursor): when the typing
+       is done, draw them again, for a stack changes the sizes of a raise there are */
+    root.addEventListener("change", (event) => { if (event.target.id === "stack" || (event.target.id || "").startsWith("sstack-")) render(); });
+    root.addEventListener("toggle", onToggle, true);
+    document.addEventListener("keydown", onKey);
+    const bar = $("top");
+    const tall = Math.round(bar.getBoundingClientRect().height) || BAR;       // with a phone's status bar strip, when there is one
+    if ("IntersectionObserver" in window) {       // the answer in one line shows while the answer itself is out of sight
+      new IntersectionObserver((entries) => bar.classList.toggle("away", !entries[0].isIntersecting && entries[0].boundingClientRect.top < tall),
+                               {threshold: 0, rootMargin: `-${tall}px 0px 0px 0px`}).observe($("answer"));      // under the bar is out of sight
+      /* ... and not over the rules for after the flop, which are about another moment of the hand */
+      new IntersectionObserver((entries) => bar.classList.toggle("post", entries[0].isIntersecting),
+                               {rootMargin: "0px 0px -60% 0px"}).observe($("post"));
+    }
+    /* a line under the bar once something has scrolled beneath it */
+    const scrolled = () => bar.classList.toggle("scrolled", (window.scrollY || document.documentElement.scrollTop || 0) > 2);
+    window.addEventListener("scroll", scrolled, {passive: true});
+    scrolled();
+    render();
+  }
+
+  /* For the tests: the page's own reading of a spot, without the page. */
+  window.MenloGuide = {
+    start, lookup: (st) => lookup(normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st))),
+    answer(st, hand) {
+      const full = normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st));
+      const res = lookup(full);
+      if (!res.table) return null;
+      const a = answers(res, full)[D.hands.indexOf(hand)];
+      return {fam: res.fam, from: res.from, key: res.key, name: a.name, close: a.close, size: sizeOf(a.name, res.table), exact: (res.table.f || {}).x === 1};
+    },
+    equity: (hand, marks) => equity(D.hands.indexOf(hand), marks),
+    postAdvice, state: () => state, seatName, realised, ownTable, beatsAll, clock, commits, SPEED,
+    everyStack(st, hand) {              // one hand's play at every stack with a table, and the sheet's number for it
+      const full = normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st));
+      const all = everyStack(full), h = D.hands.indexOf(hand);
+      return {runs: stretches(all, h).map((r) => ({from: r.from, to: r.to, name: r.name})), sheet: sheetOf(all)[h],
+              plays: all.map(({stack, res, ans}) => ({stack, fam: res.fam, name: ans[h].name, in: commits(ans[h].name, res.fam, res.table), exact: (res.table.f || {}).x === 1}))};
+    },
+    bbCall(st, hand) {                  // the numbers under a big blind's answer against a raise, as the page shows them
+      const full = normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st));
+      const res = lookup(full);
+      return res.table ? bbCall(full, res, D.hands.indexOf(hand)) : null;
+    },
+    roles: (st) => roles(normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st))),
+    loadSpin, spinCfg: (st) => spinCfg(normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st))),
+    spinReady: () => SD != null,
+  };
+
+  function boot() {
+    if (window.GUIDE_DATA) return start(window.GUIDE_DATA);
+    fetched = true;
+    fetch("data.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(start).catch(() => {
+      $("guide").innerHTML = '<p class="loading">The tables did not load. Reload the page.</p>';
+    });
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
+})();
