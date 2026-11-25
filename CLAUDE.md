@@ -993,7 +993,7 @@ python3 -m poker_coach quick --hand A5o --pos BB --spin --stacks "BTN=9,SB=4,BB=
   previous tournament. The table app keeps its own sessions beside it, in
   `tournament/app/`; the two do not read each other.
 - After the tournament, if asked for a review, use `log` and `show --log 30`.
-- Tests: `python3 -m unittest discover -s tests` (about 760 tests, seven
+- Tests: `python3 -m unittest discover -s tests` (about 790 tests, eight
   minutes; the live reader's tests need
   `pip install -r requirements-live.txt`; without it they are skipped). Rebuild data only if ranges
   or the solver change: `tools/gen_preflop_equity.c` (equity table),
