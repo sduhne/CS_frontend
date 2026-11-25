@@ -95,18 +95,20 @@ choices in their own browser. Nothing is stored on the server.
 name and password of its own (since 20 November 2026, set up from the Menlo
 Gaming session on the owner's PC). The folder on the server is
 `/opt/menlo-guide`; it is a copy, not a checkout. The copy there is commit
-6676241 (page 6: the Blinds choice for turbos and hyper-turbos, all-ins of
-20bb or less solved exactly, tables v3; since 23 November 2026, 21:48 UTC);
-the one before it (page 5, commit 6faa24e) is kept beside it as
-`/opt/menlo-guide.old_20261123_214854` for a swap back, and page 3 (commit
-158b83c) as `/opt/menlo-guide.old_20261123_161351`. The foot of the page names the page's number and the
-tables' version, which tells the copies apart. Two logins open it; a login
+f1500e3 (page 7: the Spin & Go game beside the tournament, tables v3 and
+spin tables v1; since 25 November 2026, 13:03 UTC); the one before it
+(page 6, commit 6676241) is kept beside it as
+`/opt/menlo-guide.old_20261125_130314` for a swap back. Earlier copies were
+kept the same way: page 5 (commit 6faa24e) as
+`/opt/menlo-guide.old_20261123_214854` and page 3 (commit 158b83c) as
+`/opt/menlo-guide.old_20261123_161351`. The foot of the page names the
+page's number and the tables' versions, which tells the copies apart. Two logins open it; a login
 is one more line in the `basic_auth` block.
 
 To set it up again, or somewhere else:
 
 1. Copy `guide/` (`index.html`, `guide.css`, `guide.js`, `fonts.css`,
-   `fonts/`, `data.js`, and from page 7 `spin.js`, the Spin & Go tables)
+   `fonts/`, `data.js`, and `spin.js`, the Spin & Go tables: 15 files)
    to a folder the web server can read.
 2. Put the second block of `deploy/Caddyfile.snippet` inside the site's
    block, with the hash from `caddy hash-password`, then
@@ -122,9 +124,11 @@ To set it up again, or somewhere else:
 
 To update: copy the folder again over `/opt/menlo-guide` (all of it: the
 tables and the script belong together, and `index.html` names them with
-their numbers, `data.js?v=3` and `guide.js?v=6` in page 6, so a browser
-fetches the new ones). The tables are one file of 7.3 MB; with `encode` the
-web server sends it compressed, about 0.9 MB. The live site answers with
+their numbers, `data.js?v=3` and `guide.js?v=7` in page 7, and the script
+asks for `spin.js?v=1`, so a browser fetches the new ones). The tables are
+two files: `data.js`, 7.3 MB, and `spin.js`, 3.2 MB, fetched only when
+Spin & Go is chosen; with `encode` the web server sends them compressed,
+about 0.9 MB and 0.5 MB. The live site answers with
 `Cache-Control: private, no-cache`: the browser keeps its copy and asks
 each time whether it is still the current one, so an update shows at once.
 
@@ -133,13 +137,17 @@ login (every file 200, `data.js` identical after compression, 401 without
 the login); on the live site from outside, the first three lines above.
 Page 2 was opened from a local server in Chromium on the owner's Windows PC
 before the swap (the foot, both reset buttons, the map of eight seats, no
-errors in the console). Pages 3, 5 and 6 were fetched from the live site
-with a login, from outside, each after its swap: all 14 files are byte for
-byte those of the commit (158b83c, then 6faa24e, then 6676241), a wrong
-password and no login are refused (the page, `guide.js` and `data.js`), and
-`/poker` redirects; `data.js` comes compressed, with `Cache-Control:
-private, no-cache`. Before the swap to page 6 the same files were opened
-from a local preview at desktop and phone width (the foot says "page 6 ·
-tables v3", the Blinds row is there, no errors in the console). The page
-behind the real login was not opened in a browser by either session, and
-not on a phone: that check is the owner's.
+errors in the console). Pages 3, 5, 6 and 7 were fetched from the live site
+with a login, from outside, each after its swap: all files (14, and 15 from
+page 7) are byte for byte those of the commit (158b83c, then 6faa24e, then
+6676241, then f1500e3), a wrong password and no login are refused (the
+page, `guide.js`, `data.js` and `spin.js`), and `/poker` redirects;
+`data.js` and `spin.js` come compressed, with `Cache-Control: private,
+no-cache`. Before the swap to page 6 the same files were opened from a
+local preview at desktop and phone width (the foot says "page 6 · tables
+v3", the Blinds row is there, no errors in the console). Page 7 was opened
+behind the real login, from outside, in headless Chromium on Linux: the
+foot says "page 7 · tables v3 · spin tables v1", choosing Spin & Go loads
+`spin.js`, a tournament answer and a spin answer are the engine's, and the
+console shows no errors. It was not opened on a phone or on Windows: that
+check is the owner's.
