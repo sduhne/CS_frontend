@@ -514,8 +514,34 @@ def cmd_advise(a) -> int:
     return 0
 
 
+def _seat_stacks(text: str, players: int) -> list[float]:
+    """``"BTN=12,SB=8,BB=5"`` as stacks in big blinds, in the order players act before the flop."""
+    out: list[float | None] = [None] * players
+    for part in text.split(","):
+        name, _, value = part.partition("=")
+        idx = pos_to_index(name.strip(), players)
+        if idx is None or not value.strip():
+            raise ValueError(f"--stacks: {part.strip()!r} is not SEAT=big blinds (seats of {players} players)")
+        out[idx] = float(value)
+    if any(v is None for v in out):
+        raise ValueError(f"--stacks: give every seat of the {players} players a stack")
+    return [float(v) for v in out]
+
+
 def cmd_quick(a) -> int:
     try:
+        if getattr(a, "spin", False):
+            # a spin: three players (two after a bust), no ante, one prize, so chips are money; the quick
+            # guide's Spin plays to win
+            a.no_ante, a.goal = True, "chips"
+            if a.players not in (2, 3):
+                a.players = 3
+            a.style = a.style or "win"
+        stacks = _seat_stacks(a.stacks, a.players) if getattr(a, "stacks", None) else None
+        if stacks is not None:
+            a.stack = stacks[pos_to_index(a.pos, a.players)]
+        if a.stack is None:
+            raise ValueError("give your stack with --stack, or every seat's with --stacks")
         set_style(getattr(a, "style", None) or "tag")
         hand, cards = parse_hand(a.hand)
         prizes = Prizes()
@@ -552,7 +578,7 @@ def cmd_quick(a) -> int:
                 _out(f"  rng: {v.label}: {range_pct(v.weights):.0f}% preflop [{format_range(v.weights)}]")
             return 0
         spot = quick_spot(hand, cards, a.stack, a.players, a.pos, a.facing or "",
-                          a.villain_stack_bb, prizes, not a.no_ante, stage)
+                          a.villain_stack_bb, prizes, not a.no_ante, stage, stacks)
         if not prizes.chip_ev:
             spot.field_prizes = _field_prizes(prizes)
         if a.villain_type:
@@ -1352,7 +1378,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("quick", help="one-off decision without a tracked table (amounts in bb)")
     p.add_argument("--hand", required=True)
-    p.add_argument("--stack", type=float, required=True, help="your stack in big blinds")
+    p.add_argument("--stack", type=float, help="your stack in big blinds (or every seat's with --stacks)")
     p.add_argument("--pos", required=True, help="UTG, UTG+1, MP, LJ, HJ, CO, BTN, SB, BB")
     p.add_argument("--players", type=int, default=9)
     p.add_argument("--facing")
@@ -1364,10 +1390,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--entrants", type=int)
     p.add_argument("--avg-bb", dest="avg_bb", type=float)
     p.add_argument("--goal", choices=S.GOALS, default="itm")
-    p.add_argument("--style", choices=("tag", "win", "tight"), default="tag",
-                   help="tag: the coach's ranges (default); win and tight: the quick guide's two styles "
+    p.add_argument("--style", choices=("tag", "win", "tight"),
+                   help="tag: the coach's ranges (default; with --spin, win); win and tight: the quick guide's two styles "
                         "(win has the wider rows; both test the big blind's call by what the hand realises)")
     p.add_argument("--opponents", choices=sorted(PLAYER_TYPES), help="every opponent is of this type (the quick guide's Opponents)")
+    p.add_argument("--stacks", help='every seat\'s stack in bb, e.g. "BTN=12,SB=8,BB=5" (overrides --stack)')
+    p.add_argument("--spin", action="store_true",
+                   help="a spin: three players (or --players 2), no ante, chips are money (the quick guide's Spin)")
     _add_postflop_args(p)
     p.set_defaults(fn=cmd_quick)
 

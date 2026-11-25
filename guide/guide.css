@@ -179,6 +179,22 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
 .stack input:focus{border-color:var(--yellow)}
 .presets{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px}
 .presets .chip{min-width:0;padding:0;font:800 16px/1 var(--display)}
+/* A spin: every seat's stack, one row each; the buttons under them set the row that is marked. */
+.sstacks{display:grid;gap:6px}
+.srow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 4px 4px 0;border-radius:var(--r-in);border:1px solid transparent}
+.srow.on{border-color:var(--yellow-deep);background:var(--yellow-wash)}
+.sname{flex:1;min-height:40px;padding:0 10px;text-align:left;font:800 18px/1 var(--display);letter-spacing:.01em;color:var(--white);
+  display:flex;align-items:center;gap:8px}
+.sname i{font:700 10px/1 var(--body);font-style:normal;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);background:var(--yellow);
+  padding:3px 6px;border-radius:5px}
+.srow input{width:76px;height:40px;border-radius:var(--r-in);border:1px solid var(--line-strong);background:var(--ink);
+  text-align:center;font:800 22px/1 var(--display);color:var(--white);-moz-appearance:textfield;appearance:textfield}
+.srow input::-webkit-outer-spin-button,.srow input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.srow input:focus{border-color:var(--yellow)}
+.field.game .chips .chip{flex:1}
+.pod u{text-decoration:none;font:700 10.5px/1 var(--body);color:var(--soft)}
+.pod.you u,.pod.raised u,.pod.reraised u{color:var(--ink)}
+.map .pod:has(u){height:44px}
 
 .cardsrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .slot{width:40px;height:52px;border-radius:8px;border:1px solid var(--line-strong);background:var(--ink);display:grid;place-items:center;
@@ -334,6 +350,7 @@ button.pod.can.fold{opacity:.8}                /* a seat that can be chosen is l
   .key{height:44px;font-size:22px}
   .key.back{display:none}
   .presets{grid-template-columns:repeat(12,1fr)}
+  .sstacks + .presets{grid-template-columns:repeat(11,1fr)}
   .cell{font-size:12px}
   .cell.num{font-size:12px}
   .cell.num i{font-size:8px}

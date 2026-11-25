@@ -107,6 +107,8 @@ class Solution:
     unit: float = 1.0          # value of one big blind, to express ev in bb
     eq_called: list[float] = field(default_factory=lambda: [0.5] * 169)  # equity when called
     exact: bool = False        # read from the exact solution of the shortest stacks (short.py), not solved here
+    game: str = ""              # which exact solution: "short" (a big blind ante, equal stacks) or "spin" (no ante)
+    profile: str = "solid"      # spin: the opponents the answer is the best reply to (spin_exact.PROFILES)
 
     def ev_bb(self, hand: int) -> float:
         return self.ev[hand] / self.unit if self.unit else 0.0

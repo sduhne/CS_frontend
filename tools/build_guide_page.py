@@ -6,7 +6,8 @@ The page itself is guide/ (index.html, guide.css, guide.js, data.js, fonts): tha
 serves, and it opens from the disk as it is.  An Artifact is one HTML file without <html>, <head> or <body>,
 which takes its type from Google Fonts and may bring other files along.  This writes that file
 (menlo-guide.html: the styles and the script inside it) and copies the tables beside it (data.json), which
-the script fetches when the page has no ``window.GUIDE_DATA``.
+the script fetches when the page has no ``window.GUIDE_DATA``, and the Spin & Go tables (spin.json), which it
+fetches the first time that game is chosen.
 """
 from __future__ import annotations
 
@@ -46,8 +47,12 @@ def main() -> int:
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "menlo-guide.html"), "w") as fh:
         fh.write(page())
-    shutil.copyfile(os.path.join(GUIDE, "data.json"), os.path.join(out, "data.json"))
-    for name in ("menlo-guide.html", "data.json"):
+    names = ["menlo-guide.html"]
+    for name in ("data.json", "spin.json"):
+        if os.path.exists(os.path.join(GUIDE, name)):
+            shutil.copyfile(os.path.join(GUIDE, name), os.path.join(out, name))
+            names.append(name)
+    for name in names:
         print(f"{os.path.getsize(os.path.join(out, name)) / 1e6:6.2f} MB  {os.path.join(out, name)}")
     return 0
 

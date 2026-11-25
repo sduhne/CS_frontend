@@ -16,7 +16,7 @@ from .cards import HANDS, format_range, parse_range, range_combos, range_pct, to
 from .equity import all_vs_range, allin_order, eq_vs_range, hand_equity, preflop_equity
 from .icm import Prizes
 from . import pushfold as _solver
-from . import short
+from . import short, spin_exact
 from .pushfold import HandSetup, _call_req, beats_all, solve_shove, _unit
 from .ranges import (PLAYER_TYPES, norm_type, open_size_bb, opener_category, position_name,
                      rfi_range, scale_range, threebet_range, villain_limp_range,
@@ -115,24 +115,45 @@ def _exact_game(prizes: Prizes, caller_prizes=None, types=None, away=None) -> bo
     return all(norm_type(t) in _EXACT_TYPES for t in (types or ()))
 
 
+def _exact_evs(setup: HandSetup, actor: int, all_in=(), types=None) -> tuple[list[float] | None, str, str]:
+    """(what going in earns, 169 numbers in big blinds; the game; the profile) from an exact solution, or
+    (None, "", "solid") when neither covers the spot.
+
+    ``short``: a big blind ante and equal stacks (tournaments).  ``spin_exact``: no ante, two or three players,
+    the stacks as they are (spins); its answers are the best reply to the opponents' kind (``profile_of``)."""
+    evs = short.answer(setup, actor, all_in)
+    if evs is not None:
+        return evs, "short", "solid"
+    profile = spin_exact.profile_of(types, actor)
+    evs = spin_exact.answer(setup, actor, all_in, profile)
+    if evs is not None:
+        return evs, "spin", profile
+    return None, "", "solid"
+
+
 def _exact_open(setup: HandSetup, shover: int, prizes: Prizes, caller_prizes=None, types=None, away=None):
     """The first-in all-in of a stack the exact game covers, as the solver's own kind of answer; else None.
 
-    The exact game is played by players who call correctly, and a tag of tight or loose on the players
-    behind does not move this answer.  (What they change was tried from the solver, its answer with them
-    less its answer without: at these stacks it said to move in with far more hands against players who
-    call too much, 63% for 38% from the cutoff with 4bb, which is the solver's one-caller shortcut
-    again and not a reading of loose players.  Their own exact solution would say; it has not been made.)"""
+    The tournament game (``short``) is played by players who call correctly, and a tag of tight or loose on
+    the players behind does not move this answer.  (What they change was tried from the solver, its answer
+    with them less its answer without: at these stacks it said to move in with far more hands against players
+    who call too much, 63% for 38% from the cutoff with 4bb, which is the solver's one-caller shortcut
+    again and not a reading of loose players.)  The spin game (``spin_exact``) has those answers solved: the
+    best reply to players who call too much, or too little, when every player around is tagged so."""
     if not _exact_game(prizes, caller_prizes, types, away):
         return None
-    evs = short.answer(setup, shover)
+    evs, game, profile = _exact_evs(setup, shover, (), types)
     if evs is None:
         return None
     v_fold, v_steal, callers = _solver.build_shove_spot(setup, shover, prizes, use_types=False)
     stay, eq_num = [1.0] * 169, [0.0] * 169
     for c in callers:
-        called = short.answer(setup, c.idx, [shover])
-        c.call_range = [1.0 if e > 0 else 0.0 for e in called] if called else [0.0] * 169
+        if game == "spin":
+            called = spin_exact.answer(setup, c.idx, [shover], "solid")
+            c.call_range = spin_exact.plays(called, spin_exact.SHOVE_CALL[profile][1]) if called else [0.0] * 169
+        else:
+            called = short.answer(setup, c.idx, [shover])
+            c.call_range = [1.0 if e > 0 else 0.0 for e in called] if called else [0.0] * 169
         eqs, probs = all_vs_range(c.call_range)
         for h in range(169):
             p = min(1.0, probs[h])
@@ -141,7 +162,7 @@ def _exact_open(setup: HandSetup, shover: int, prizes: Prizes, caller_prizes=Non
     eq_called = [eq_num[h] / (1.0 - stay[h]) if stay[h] < 1.0 - 1e-12 else 0.5 for h in range(169)]
     return _solver.Solution(ev=[e * setup.bb for e in evs], shove_range=[1.0 if e > 0 else 0.0 for e in evs],
                             callers=callers, fold_equity=stay, v_fold=v_fold, v_steal=v_steal, unit=setup.bb,
-                            eq_called=eq_called, exact=True)
+                            eq_called=eq_called, exact=True, game=game, profile=profile)
 
 
 def solve_open_shove(setup: HandSetup, shover: int, prizes: Prizes, *, caller_prizes=None, types=None, away=None,
@@ -556,7 +577,12 @@ def first_in(spot: Spot) -> Advice:
         adv.numbers.append(
             f"shove EV {ev:+.2f}bb vs folding ({_value_note(spot) if not spot.desperate else 'chip EV'}); "
             f"equilibrium shoves {pct:.0f}% of hands here")
-        if sol.exact:
+        if sol.exact and sol.game == "spin":
+            adv.numbers.append(f"everyone folds {_pct(fe)}; the all-in is solved exactly with these stacks (no ante, "
+                               "every player who can still call)"
+                               + {"loose": ", as the best reply to players who call too much",
+                                  "tight": ", as the best reply to players who call too little"}.get(sol.profile, ""))
+        elif sol.exact:
             adv.numbers.append(f"everyone folds {_pct(fe)}; the all-in is solved exactly at this stack, with two and "
                                "three callers and the cards that were folded counted")
         else:
@@ -705,7 +731,7 @@ def _limp_credit(spot: Spot, limpers: list[int]) -> float:
     setup, hero, hand = spot.setup, spot.hero, spot.hand
     as_all_in, as_callers, seen = [], [], []
     for j in limpers:
-        evs = short.answer(setup, j, seen)
+        evs = _exact_evs(setup, j, seen)[0]
         if evs is None:
             return 0.0
         as_all_in.append(eq_vs_range(hand, [1.0 if e > 0 else 0.0 for e in evs])[0])
@@ -740,12 +766,13 @@ def vs_limp(spot: Spot, limpers: list[int]) -> Advice:
     # for.  The big blind's other choice is not a fold but a free flop, which is worth a part of the pot as
     # it stands (_FREE_FLOP of it, for a hand that would rather not move in): he moves all-in when that earns
     # more than the flop is worth, and checks the rest.
-    exact = _exact_call(spot, limpers[:short.MOST_ALL_IN]) if spot.bbs(setup.start[limpers[0]]) <= _LIMP_COMMITS else None
+    exact, game, profile = _exact_call_of(spot, limpers[:short.MOST_ALL_IN]) \
+        if spot.bbs(setup.start[limpers[0]]) <= _LIMP_COMMITS else (None, "", "solid")
     if exact is not None:
         exact += _limp_credit(spot, limpers[:short.MOST_ALL_IN])
         flop = _FREE_FLOP * (sum(setup.antes) + sum(setup.invested({j: spot.bb for j in limpers}))) / spot.bb if is_bb else 0.0
         adv.action = "ALL-IN" if exact > flop else free
-        adv.confidence = _exact_conf(exact - flop, spot.bbs(setup.start[limpers[0]]), min(2, len(limpers)))
+        adv.confidence = _exact_conf(exact - flop, spot.bbs(setup.start[limpers[0]]), min(2, len(limpers)), game, profile)
         adv.numbers.append(f"a player who only calls with a stack this short does not fold to an all-in: answered as "
                            f"his all-in from the exact solution, with the hands of a caller in place of the hands of an "
                            f"all-in. Moving in earns {exact:+.2f}bb against giving the pot up"
@@ -798,11 +825,40 @@ def vs_limp(spot: Spot, limpers: list[int]) -> Advice:
     elif overlimp[hand] >= 0.5 and eff >= 25 and (spot.nb(hero) <= 3):
         adv.action = "CHECK" if is_bb else "CALL (limp behind)"
         adv.why.append("a speculative hand with implied odds: see a cheap flop, continue only with a big hit")
+    elif _sb_completes(spot, limpers, eff, adv):
+        adv.action = "CALL (limp behind)"
+        adv.why.append("three-handed the small blind completes behind a limp: half a big blind for a pot of three, "
+                       "and this hand keeps enough of it after the flop")
     else:
         adv.action = free
         adv.why.append("not strong enough to raise, not suited to limping along")
     adv.why += notes
     return adv
+
+
+_SB_COMPLETE_MARGIN = 0.04      # over the price: the big blind raises two limpers about a fifth of the time, and
+                                # the small blind gives its half big blind up then
+
+
+def _sb_completes(spot: Spot, limpers: list[int], eff: float, adv: Advice | None = None) -> bool:
+    """Three-handed, the small blind behind the button's limp: complete when the hand's equity against the
+    limper and the big blind, times the share of it a hand keeps out of position (``bb_realised``), beats the
+    price by ``_SB_COMPLETE_MARGIN``.  (Spin solvers complete most of the hands they do not raise there; the
+    full-table rule, limping behind only with small pairs and suited cards from 25bb, folded three hands in
+    four.)"""
+    setup, hero, hand = spot.setup, spot.hero, spot.hand
+    if setup.n != 3 or spot.nb(hero) != 1 or len(limpers) != 1 or spot.nb(limpers[0]) != 2:
+        return False
+    inv = setup.invested({limpers[0]: spot.bb})
+    to_call = spot.bb - inv[hero]
+    price = to_call / (sum(setup.antes) + sum(inv) + to_call)
+    limp = villain_limp_range(spot.nb(limpers[0]), spot.types[limpers[0]])
+    eq = beats_all([eq_vs_range(hand, limp)[0], eq_vs_range(hand, [1.0] * 169)[0]])
+    share = bb_realised(hand, eff, False)
+    if adv is not None:
+        adv.numbers.append(f"completing: {_pct(eq)} of the pot against the limper and the big blind, of which this "
+                           f"hand keeps {_pct(share)}; the price {_pct(price)} plus {100 * _SB_COMPLETE_MARGIN:.0f} pts")
+    return eq * share >= price + _SB_COMPLETE_MARGIN
 
 
 def _pairs() -> set[int]:
@@ -819,8 +875,10 @@ def _suited(hand: int) -> bool:
 # --------------------------------------------------------------------------
 
 def _opened(spot: Spot, raiser: int) -> list[float]:
-    """The range a player raised first in with: his seat's, at the stack he has."""
-    return villain_open_range(spot.nb(raiser), spot.types[raiser], spot.bbs(spot.setup.live[raiser]))
+    """The range a player raised first in with: his seat's, at the stack he has (heads-up, the range a small
+    blind opens heads-up, as ``first_in`` does)."""
+    return villain_open_range(spot.nb(raiser), spot.types[raiser], spot.bbs(spot.setup.live[raiser]),
+                              heads_up=spot.setup.n == 2)
 
 
 def _shover_solution(spot: Spot, shover: int, opener: int | None, raise_to: float,
@@ -841,8 +899,9 @@ def _shover_solution(spot: Spot, shover: int, opener: int | None, raise_to: floa
 
 
 _SEVERAL_CALL = ("a stack this short is called by two players as often as by one, and the solver counts one caller at "
-                 "a time: it reads weak hands too well here. The exact tables cover this depth only with a big blind "
-                 "ante, chips, and nobody shorter behind")
+                 "a time: it reads weak hands too well here. The exact tables cover this depth with a big blind ante, "
+                 "chips and nobody shorter behind (tournaments), or with no ante and two or three players up to 30bb "
+                 "(spins)")
 
 
 def _several_will_call(setup: HandSetup, actor: int, size: float) -> bool:
@@ -857,28 +916,33 @@ def _several_will_call(setup: HandSetup, actor: int, size: float) -> bool:
     return pot > 0 and (matched - inv[n - 1]) / pot <= _PRICED_IN
 
 
-def _exact_call(spot: Spot, in_for_stack: list[int]) -> float | None:
-    """What calling earns over folding, in big blinds, where the exact game of the shortest stacks has the
-    answer (``short``): one or two players in for the same stack before hero, nothing of hero's own in the
-    pot, chips.  The players still to act behind hero are part of that answer; None anywhere else."""
+def _exact_call_of(spot: Spot, in_for_stack: list[int]) -> tuple[float | None, str, str]:
+    """(what calling earns over folding in big blinds, the game, the profile) where an exact game has the answer
+    (``_exact_evs``): one or two players in for their stacks before hero, nothing of hero's own in the pot,
+    chips.  The players still to act behind hero are part of that answer; (None, "", "solid") anywhere else."""
     prizes = Prizes() if spot.desperate else spot.prizes
     if not _exact_game(prizes, spot.field_prizes, spot.types, spot.away):
-        return None
-    evs = short.answer(spot.setup, spot.hero, sorted(in_for_stack))
+        return None, "", "solid"
+    evs, game, profile = _exact_evs(spot.setup, spot.hero, sorted(in_for_stack), spot.types)
     if evs is None:
-        return None
+        return None, "", "solid"
     # the numbers are kept to a hundredth of a big blind: a hand worth exactly nothing is a fold, as it is first in
-    return evs[spot.hand] if evs[spot.hand] != 0.0 else -1e-9
+    return (evs[spot.hand] if evs[spot.hand] != 0.0 else -1e-9), game, profile
+
+
+def _exact_call(spot: Spot, in_for_stack: list[int]) -> float | None:
+    """``_exact_call_of`` without the game."""
+    return _exact_call_of(spot, in_for_stack)[0]
 
 
 _EXACT_OWN = 10.0       # big blinds: up to here every hand is an all-in or a fold, and an all-in is the exact game's own range
 _EXACT_USUAL = 20.0     # from here a player with no read is taken a tenth tighter than a solver, as the deeper tables take him
 
 
-def _exact_conf(ev: float, size_bb: float, all_in: int) -> str:
+def _exact_conf(ev: float, size_bb: float, all_in: int, game: str = "short", profile: str = "solid") -> str:
     """How sure an answer read from the exact game is: close within about twice the noise of its number
-    (``short.close``), clear from a quarter of a big blind and at least twice that band."""
-    near = short.close(size_bb, all_in)
+    (``short.close``, ``spin_exact.close``), clear from a quarter of a big blind and at least twice that band."""
+    near = spin_exact.close(size_bb, all_in, profile) if game == "spin" else short.close(size_bb, all_in)
     return _conf(ev, max(0.25, 2.0 * near), near)
 
 
@@ -902,6 +966,13 @@ def _exact_width(ptype: str, size_bb: float = 0.0) -> float:
 def _scaled_range(sol, ptype: str, size_bb: float = 0.0) -> tuple[list[float], float]:
     """The range of a player who moved all-in for ``size_bb``: the solver's, as wide as his type makes it."""
     base = range_pct(sol.shove_range)
+    if sol.exact and sol.game == "spin":
+        # the spin game's opponents: a tight player moves in with two thirds of the solved hands, every other
+        # one with the solved hands (a loose player's mistake is calling too much, not moving in too much)
+        if norm_type(ptype) != "tight":
+            return list(sol.shove_range), base
+        rng = spin_exact.plays(sol.ev, spin_exact.SHOVE_CALL["tight"][0])
+        return rng, range_pct(rng)
     if sol.exact:
         width = _exact_width(ptype, size_bb)
         if width == 1.0:            # the exact game's own range: the call is priced against that, as it is
@@ -1146,9 +1217,10 @@ def vs_shove(spot: Spot, shover: int, *, raiser: int | None = None, raise_to: fl
     # Stacks of a few big blinds: the exact game has the answer, players behind and second callers
     # included.  It is said in this function's terms: what those players cost is the margin over the price.
     exact = exact_edge = None
+    game, profile = "", "solid"
     if not hero_open and reraised is None and not live_callers and \
             (raiser is None or raise_to >= 0.4 * live[raiser]):
-        exact = _exact_call(spot, [shover] + ([raiser] if raiser is not None else []) + callers)
+        exact, game, profile = _exact_call_of(spot, [shover] + ([raiser] if raiser is not None else []) + callers)
     if exact is not None:
         won = setup.showdown(hero, shover, hero, bets)[hero] - setup.showdown(hero, shover, shover, bets)[hero]
         exact_edge = None
@@ -1157,7 +1229,7 @@ def vs_shove(spot: Spot, shover: int, *, raiser: int | None = None, raise_to: fl
             # of it) are two all-ins: the number of that spot, with its reading of what the first one holds
             two = multi_allin(spot, sorted([shover] + ([raiser] if raiser is not None else []) + callers))
             exact, exact_edge = two.data["exact_ev"], two.data["exact_edge"]
-        elif sol is not None and sol.exact:
+        elif sol is not None and sol.exact and game == "short":
             # the exact answer is against the hands of the exact game; where the player is taken to hold a
             # narrower or a wider range (a tight or a loose player; anybody above ten big blinds, a little),
             # the hand's equity against that range moves it by that much of the pot.  Nothing when the range
@@ -1183,7 +1255,7 @@ def vs_shove(spot: Spot, shover: int, *, raiser: int | None = None, raise_to: fl
     adv = Advice("CALL" if edge >= 0 else "FOLD", _conf(edge, 0.05, 0.02), sit)
     if exact is not None:
         # with two players in for the stack (a raise that commits and an all-in) the numbers are the first pass's
-        adv.confidence = _exact_conf(exact, shove_bb, 2 if raiser is not None or callers else 1)
+        adv.confidence = _exact_conf(exact, shove_bb, 2 if raiser is not None or callers else 1, game, profile)
         adv.data.update(exact=True, exact_ev=exact, exact_edge=exact_edge)
     adv.numbers.append(f"their range ~{pct:.0f}% [{format_range(rng)}]")
     added = "players still in or to act add" if live_callers else "players still to act add"
@@ -1312,10 +1384,11 @@ def multi_allin(spot: Spot, allins: list[int], raiser: int | None = None, raise_
         c = sol.caller(j)
         rj = c.call_range if c and range_combos(c.call_range) > 0 else parse_range("TT+, AQs+, AKo")
         ranges.append(rj)
-    exact = _exact_call(spot, allins) if raiser is None else None      # the shortest stacks: the exact game answers
+    exact, game, profile = _exact_call_of(spot, allins) if raiser is None else (None, "", "solid")   # the exact game answers
     if exact is not None:               # ... and the equity is only shown: the quick estimate will do (12,000 deals a hand will not)
         eq = beats_all([eq_vs_range(hand, r)[0] for r in ranges])
-        moved = eq - beats_all([eq_vs_range(hand, r)[0] for r in [list(sol.shove_range)] + ranges[1:]]) if sol.exact else 0.0
+        moved = eq - beats_all([eq_vs_range(hand, r)[0] for r in [list(sol.shove_range)] + ranges[1:]]) \
+            if sol.exact and game == "short" else 0.0      # the spin game's answers are already the reply to the opponents' kind
     else:
         eq = preflop_equity(hand, spot.cards, ranges, iters=12000)
     call_amt = min(live[hero], max(live[j] for j in allins)) - setup.invested()[hero]
@@ -1334,7 +1407,7 @@ def multi_allin(spot: Spot, allins: list[int], raiser: int | None = None, raise_
     adv = Advice("CALL" if edge >= 0 else "FOLD", _conf(edge, 0.06, 0.025),
                  _situation(spot, f"{names} are all-in"))
     if exact is not None:
-        adv.confidence = _exact_conf(exact, spot.bbs(live[first]), 2)
+        adv.confidence = _exact_conf(exact, spot.bbs(live[first]), 2, game, profile)
         adv.data.update(exact=True, exact_ev=exact, exact_edge=edge)        # edge: the answer in points of equity to spare
         adv.numbers.append(f"equity vs both ranges about {_pct(eq)}; pot odds {_pct(need_chip)}")
         adv.numbers.append(f"an all-in of this size is solved exactly, with every player who can still call: "
@@ -1417,7 +1490,7 @@ def vs_open(spot: Spot, opener: int, raise_to: float, flats: list[int]) -> Advic
     hero_bb = live[hero] / bb
     o_nb, h_nb = spot.nb(opener), spot.nb(hero)
     o_type = spot.types[opener]
-    open_rng = villain_open_range(o_nb, o_type, eff)
+    open_rng = villain_open_range(o_nb, o_type, eff, heads_up=n == 2)
     eq_open = eq_vs_range(hand, open_rng)[0]
     inv = setup.invested({opener: raise_to, **{j: raise_to for j in flats}})
     pot = sum(setup.antes) + sum(inv)
@@ -1712,7 +1785,7 @@ def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
                                 "their range is modelled as a re-shove and may be tighter")
         return adv
     v_type = spot.types[villain]
-    rng = threebet_range(max(1, spot.nb(hero)), v_type)
+    rng = threebet_range(max(1, spot.nb(hero)), v_type, setup.n)
     eq = eq_vs_range(hand, rng)[0]
     inv = setup.invested({hero: hero_open, villain: three_to})
     pot = sum(setup.antes) + sum(inv)
@@ -1743,9 +1816,13 @@ def vs_3bet(spot: Spot, villain: int, three_to: float, hero_open: float,
 
     edge_kept = _bar(_NEVER_FOLD_EDGE, 0.05)
 
+    short_handed = setup.n <= 3
+
     def clears(h: int, e: float) -> bool:
-        """45bb or less: the all-in earns what the engine wants of it."""
-        return sol.ev_bb(h) > _bar(0.5, 0.25) and (e >= _bar(0.45, 0.42) or bool(_PREMIUM[h]))
+        """45bb or less: the all-in earns what the engine wants of it.  At a full table it must also hold its own
+        against the whole re-raising range (a re-raise there is mostly strong hands); with three players or two
+        the re-raises are wide and bluff often (``threebet_range``), and what the all-in earns decides."""
+        return sol.ev_bb(h) > _bar(0.5, 0.25) and (short_handed or e >= _bar(0.45, 0.42) or bool(_PREMIUM[h]))
 
     def kept(h: int, e: float) -> bool:
         """Never folded to one re-raise (``_NEVER_FOLD``)."""
@@ -1911,7 +1988,7 @@ def cold_vs_3bet(spot: Spot, opener: int, raise_to: float, threebettor: int, thr
     live = setup.live
     bb = spot.bb
     eff = min(live[hero], max(live[opener], live[threebettor])) / bb
-    rng = threebet_range(spot.nb(opener), spot.types[threebettor])
+    rng = threebet_range(spot.nb(opener), spot.types[threebettor], setup.n)
     open_rng = _opened(spot, opener)
     over_allin = raise_to >= live[opener] - 1e-9
     if over_allin:
@@ -2202,15 +2279,22 @@ def parse_actions(text: str, setup: HandSetup, hero: int, resolve, chips: bool) 
 
 def quick_spot(hand: int, cards, stack_bb: float, players: int, pos: str, facing: str = "",
                villain_bb: float | None = None, prizes: Prizes | None = None,
-               ante: bool = True, stage: dict | None = None) -> Spot:
-    """A spot without table state: everyone has ``villain_bb`` (default hero's stack)."""
+               ante: bool = True, stage: dict | None = None, stacks: list[float] | None = None) -> Spot:
+    """A spot without table state: everyone has ``villain_bb`` (default hero's stack), or each player the
+    stack of ``stacks`` (big blinds, in the order players act before the flop: at three players the button,
+    the small blind, the big blind)."""
     n = max(2, players)
     hero = pos_to_index(pos, n)
     if hero is None:
         raise ValueError(f"unknown position {pos!r}")
-    other = villain_bb if villain_bb else stack_bb
-    stacks = [other] * n
-    stacks[hero] = stack_bb
+    if stacks is not None:
+        if len(stacks) != n or any(s <= 0 for s in stacks):
+            raise ValueError(f"stacks: one positive stack for each of the {n} players")
+        stacks = [float(s) for s in stacks]
+    else:
+        other = villain_bb if villain_bb else stack_bb
+        stacks = [other] * n
+        stacks[hero] = stack_bb
     setup = HandSetup(stacks, 0.5, 1.0, 0.0, 1.0 if ante else 0.0)
     spot = Spot(setup=setup, hero=hero, hand=hand, cards=cards, prizes=prizes or Prizes(),
                 field_prizes=prizes or Prizes(), stage=stage or {})

@@ -181,6 +181,12 @@ typedef struct {
     int mode;            /* 0 = train, 1 = evaluate the average strategy, 2 = value only */
 } Deal;
 
+/* A decision that the equilibrium never reaches (with 2bb the button never folds, so "the button folded"
+   never comes) still gets trained: its regrets are counted as if it were reached with at least this
+   probability, with whatever hands the earlier players hold.  Its answer is then the one for an opponent
+   who made the mistake.  Anywhere it is reached in earnest the floor is far below the real weight. */
+#define REACH_FLOOR 1e-6
+
 static void walk(const Deal *d, int i, int mask, double cfr, double *out) {
     if (i == N || (i == N - 1 && mask == 0)) {
         memcpy(out, d->pay[mask], sizeof(double) * N);
@@ -201,8 +207,9 @@ static void walk(const Deal *d, int i, int mask, double cfr, double *out) {
     for (int k = 0; k < N; k++) out[k] = p * us[k] + (1.0 - p) * uf[k];
     if (d->mode == 0) {
         double *R = regret[i][mask][c];
-        R[1] += cfr * (us[i] - out[i]);
-        R[0] += cfr * (uf[i] - out[i]);
+        double w = cfr > REACH_FLOOR ? cfr : REACH_FLOOR;
+        R[1] += w * (us[i] - out[i]);
+        R[0] += w * (uf[i] - out[i]);
         ssum[i][mask][c] += d->weight * p;
         wsum[i][mask][c] += d->weight;
     } else if (cfr > 0) {
@@ -280,16 +287,45 @@ static void run(long iters, int mode) {
  */
 static double ev_ref[MAXN][MAXMASK][169];
 static long n_ref[MAXN][MAXMASK][169];
+static int trembled[MAXN][MAXMASK];     /* the decision was sampled with trembling hands (the equilibrium never reaches it) */
 /* br mode: when a list of hands is given, only those are sampled (the hands near zero, with many more
    samples than the first pass could afford for every hand) */
 static int only_set = 0;
 static unsigned char only[MAXN][MAXMASK][169];
+
+/* The chance that the earlier players do what mask m says, over random hands (each history once, from a
+   fixed stream): a decision the equilibrium all but never reaches is sampled with trembling hands. */
+static double reach_of(int i, int m) {
+    uint64_t seed = 0x2545F4914F6CDD1DULL ^ ((uint64_t)(i + 1 + 17 * m) * 0x9E3779B97F4A7C15ULL);
+    int deck[52];
+    for (int c = 0; c < 52; c++) deck[c] = c;
+    double sum = 0.0;
+    const int trials = 200000;
+    for (int t = 0; t < trials; t++) {
+        for (int k = 0; k < 2 * i; k++) {
+            int j = k + (int)(rng_next(&seed) % (uint64_t)(52 - k));
+            int tmp = deck[k]; deck[k] = deck[j]; deck[j] = tmp;
+        }
+        double a = 1.0;
+        for (int k = 0; k < i; k++) {
+            double pk = avg[k][m & ((1 << k) - 1)][class_of(deck[2 * k], deck[2 * k + 1])];
+            a *= ((m >> k) & 1) ? pk : (1.0 - pk);
+        }
+        sum += a;
+    }
+    return sum / trials;
+}
+
+#define TREMBLE 0.02          /* trembling hands: every earlier action at least this likely */
+#define RARE_REACH 1e-4       /* ... where the decision is reached less often than this */
 
 static void refine(long samples) {
     for (int i = 0; i < N; i++) {
         for (int m = 0; m < (1 << i); m++) {
             if (i == N - 1 && m == 0) continue;
             if (__builtin_popcount(m) > refine_bits) continue;
+            double tremble = (i > 0 && reach_of(i, m) < RARE_REACH) ? TREMBLE : 0.0;
+            trembled[i][m] = tremble > 0.0;
             #pragma omp parallel for schedule(dynamic, 4)
             for (int c = 0; c < 169; c++) {
                 if (only_set && !only[i][m][c]) continue;
@@ -331,6 +367,7 @@ static void refine(long samples) {
                         for (int k = 0; k < i; k++) {
                             hole[k][0] = deck[2 * k]; hole[k][1] = deck[2 * k + 1];
                             double pk = avg[k][m & ((1 << k) - 1)][class_of(hole[k][0], hole[k][1])];
+                            pk = tremble + (1.0 - 2.0 * tremble) * pk;
                             a *= ((m >> k) & 1) ? pk : (1.0 - pk);
                         }
                         if (a <= 0.0) continue;
@@ -487,7 +524,7 @@ int main(int argc, char **argv) {
                     if (least < 0 || n_ref[i][m][c] < least) least = n_ref[i][m][c];
                     printf("%s%d", c ? "," : "", (int)lround(100.0 * ev_ref[i][m][c]));
                 }
-                printf("], \"samples\": %ld}", least);
+                printf("], \"samples\": %ld, \"trembled\": %d}", least, trembled[i][m]);
             }
         printf("\n]}\n");
         return 0;
@@ -549,7 +586,7 @@ int main(int argc, char **argv) {
                 }
                 printf("%s%d", c ? "," : "", (int)lround(100.0 * e));
             }
-            printf("], \"samples\": %ld}", least);
+            printf("], \"samples\": %ld, \"trembled\": %d}", least, trembled[i][m]);
         }
     }
     printf("\n]}\n");

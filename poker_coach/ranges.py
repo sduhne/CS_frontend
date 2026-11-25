@@ -272,15 +272,19 @@ def norm_type(ptype: str | None) -> str:
     return t if t in PLAYER_TYPES else "unknown"
 
 
-def villain_open_range(n_behind: int, ptype: str = "unknown", eff_bb: float = 100.0) -> list[float]:
+def villain_open_range(n_behind: int, ptype: str = "unknown", eff_bb: float = 100.0, heads_up: bool = False) -> list[float]:
     """Estimated open-raise range of an opponent from a given seat.
 
-    It is the seat's full row at every stack, with one exception.  In the looser style ("win") the
-    opponents open hero's rows, and the full rows of the cutoff and the button (36% and 50%) are deep-stack
-    rows: with 25bb or less a raise from those two seats is read as the row hero opens there (32% and 41%,
-    a solver's 31% and 41.5% with 20bb).  The seats before them keep their full rows, which are no wider
-    than a solver's at that depth (13% from the first seat against 15.6%)."""
+    It is the seat's full row at every stack, with two exceptions.  Heads-up the small blind is the button
+    and raises far more than a small blind at a full table: the widest rung (80% of hands, what ``first_in``
+    opens heads-up), a rung tighter for a tight player.  And in the looser style ("win") the opponents open
+    hero's rows, and the full rows of the cutoff and the button (36% and 50%) are deep-stack rows: with
+    25bb or less a raise from those two seats is read as the row hero opens there (32% and 41%, a solver's
+    31% and 41.5% with 20bb).  The seats before them keep their full rows, which are no wider than a
+    solver's at that depth (13% from the first seat against 15.6%)."""
     shift = PLAYER_TYPES[norm_type(ptype)]["open_shift"]
+    if heads_up:
+        return list(_ladder(_LADDER_MIN + max(0, shift)))
     if _style == "win" and eff_bb <= SHORT_ROWS and n_behind in (2, 3):
         return rfi_range(n_behind, eff_bb, shift)
     return list(_row(max(1, n_behind), shift))
@@ -409,8 +413,29 @@ def vs_open_chart(opener_n_behind: int, hero_n_behind: int) -> dict:
     return _vs_open_chart(_style, opener_n_behind, hero_n_behind)
 
 
-def threebet_range(opener_n_behind: int, ptype: str = "unknown") -> list[float]:
-    """Estimated (non all-in) 3-betting range against an open from that seat."""
+# Three players or two: the re-raises of a raise are far wider than at a full table (a spin guide puts the big
+# blind's against the button at 10 to 15%; the guide's own re-raises there are 13 to 25%).  A ladder of ranges,
+# by player type: three-handed an unknown player re-raises 12.5% of hands, heads-up 16%.
+_SHORT_3BET = (
+    "JJ+, AKs, AKo",                                                                    # 3%
+    "TT+, AJs+, AQo+, KQs, 99:0.5, A5s-A2s:0.75, KJs:0.5, K9s:0.25, 87s:0.25",          # 6.7%
+    "88+, A8s+, A5s-A2s, KTs+, QTs+, JTs, AJo+, KJo+",                                  # 12.5%
+    "66+, A7s+, A5s-A2s, K9s+, Q9s+, J9s+, T9s, ATo+, KJo+",                            # 16%
+    "44+, A2s+, K8s+, Q9s+, J9s+, T9s, 98s, A8o+, KTo+, QJo",                           # 21%
+    "22+, A2s+, K5s+, Q8s+, J8s+, T8s+, 98s, A2o+, K9o+, QTo+, JTo",                    # 32%
+)
+_SHORT_3BET_STEP = {"nit": 0, "tight": 1, "unknown": 2, "tag": 2, "loose": 2, "station": 2, "lag": 3, "maniac": 4}
+
+
+def threebet_range(opener_n_behind: int, ptype: str = "unknown", players: int = 9) -> list[float]:
+    """Estimated (non all-in) 3-betting range against an open from that seat.
+
+    With three players or two (``players``) the ranges of the short-handed ladder: an unknown player
+    re-raises 12.5% of hands three-handed and 16% heads-up, a tight one a step less, a loose-aggressive one
+    a step more."""
+    if players <= 3:
+        step = _SHORT_3BET_STEP.get(norm_type(ptype), 2) + (1 if players <= 2 else 0)
+        return parse_range(_SHORT_3BET[min(step, len(_SHORT_3BET) - 1)])
     ocat = opener_category(opener_n_behind)
     base = {
         "EP": "QQ+, AKs, AKo, JJ:0.5, AQs:0.5, A5s:0.25",

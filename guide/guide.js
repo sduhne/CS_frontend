@@ -23,12 +23,22 @@
                  turbo: {label: "Turbo", hands: 6.5, growth: 1.20, levels: "5 or 6 minute levels"},
                  hyper: {label: "Hyper", hands: 3.5, growth: 1.22, levels: "3 minute levels"}};
   const ORBIT = {bb: 2, sb: 0.5};       // what the two blinds cost: the big blind posts the ante with it
+  /* Spins (tools/build_spin_guide.py, spin.js): three players or two, no ante, one prize.  How fast the blinds
+     go up there: GGPoker's Spin & Gold x2 has 1-minute levels, x3 and x4 2-minute ones, x5 3-minute ones (about
+     three hands a minute), and its levels add about a quarter each (10/20, 15/30, 20/40, 30/60, 40/80, ...). */
+  const SPIN_SPEED = {x2: {label: "1 min", hands: 3, growth: 1.26, levels: "1-minute levels (x2)"},
+                      x3: {label: "2 min", hands: 6, growth: 1.26, levels: "2-minute levels (x3, x4)"},
+                      x5: {label: "3 min", hands: 9, growth: 1.26, levels: "3-minute levels (x5, PokerStars)"}};
+  const SPIN_ORBIT = {bb: 1, sb: 0.5};  // no ante
+  const GAME = {tour: "Tournament", spin: "Spin & Go"};
+  const SPIN_PRESETS = [2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25];
+  const SPIN_PAGE = 1;                  // the oldest spin tables this page can read
   const LOW = 6;                        // under this many big blinds an all-in is called far more often than not
   const BUBBLE_POINTS = 0.10;           // on the bubble a call of an all-in needs this much equity over the price
   const MARK = '<svg class="mark" viewBox="0 0 40 40" role="img" aria-label="Menlo Bet"><rect width="40" height="40" rx="9" fill="#FFD60A"/>' +
                '<path d="M8 30V11l12 11 12-11v19h-5V22l-7 6.5L13 22v8z" fill="#0A0A0B"/></svg>';
   const RESET_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
-  const PAGE = 6;                       // the page's own number, shown at the foot: which copy of the page is open
+  const PAGE = 7;                       // the page's own number, shown at the foot: which copy of the page is open
   const TABLES = 3;                     // the oldest tables this page can read (3: the shortest stacks are the exact solution)
   const UNDO_MS = 8000;                 // how long Reset can be taken back
   const BAR = 52;                       // the height of the bar at the top on a phone, in pixels (.top in guide.css), before it is measured
@@ -52,6 +62,7 @@
   const CALL_FAMILIES = ["allin", "re_allin", "sq_allin", "raise_allin", "two_short", "re3_allin", "hu_allin", "hu_re_allin"];
 
   let D = null, EQ = null, PAIRS = null;
+  let SD = null, spinLoading = null, spinFailed = false;     // the spin tables: loaded the first time Spin is chosen
   const unpacked = new Map();
 
   const DEFAULTS = {
@@ -59,6 +70,10 @@
     line: "open", from: 3, callers: 0, limpers: 1, by3: 0, byAll: 0,
     size: null, resize: null,           // the raise and the re-raise you face, as places in D.sizes: null is the usual size
     opp: "unknown", style: "win", stage: "chips", speed: "regular", sheet: false,
+    game: "tour",                       // tour: the tournament tables; spin: three players, no ante, one prize
+    sstacks: [15, 15, 15], edit: null,   // spin: the stacks by players behind (0 the big blind, 1 the small blind, 2 the button)
+    sspeed: "x2",                       // spin: how fast the blinds go up
+    keep: {tour: {players: 8, seat: 2}, spin: {players: 3, seat: 2}},   // each game's table size and seat, kept apart
     post: {role: "raiser", n: "hu", pos: "ip", street: "flop", hand: null, board: "dry", facing: "none", spr: "mid"},
   };
   let state = JSON.parse(JSON.stringify(DEFAULTS));
@@ -138,6 +153,7 @@
   function limperChoices(st) {
     const n = st.players, h = st.seat;
     if (n === 2) return [];
+    if (isSpin(st)) return h === 0 ? [0, 1, 2] : [1];      // big blind: the small blind only, the button only, both
     const most = h === 0 ? Math.min(3, n - 2) : Math.min(3, n - 1 - h);
     const out = [];
     if (h === 0) out.push(0);                 // 0: the small blind only
@@ -189,6 +205,128 @@
   /* The re-raises of it there are tables for, in big blinds, as the engine was asked. */
   const reraiseSizes = (st) => D.usual.reraise_to[String(gridStack(st.stack))][heroKind(st)];
 
+  /* ---------- spins: the stacks, the solved table they are read at, the sizes ---------- */
+
+  const isSpin = (st) => st.game === "spin";
+  /* Your effective stack in a spin: the smaller of yours and the biggest of the others. */
+  function spinEff(st) {
+    let most = 0;
+    for (let nb = 0; nb < st.players; nb++) if (nb !== st.seat) most = Math.max(most, st.sstacks[nb]);
+    return Math.min(st.sstacks[st.seat], most);
+  }
+  const nearestOf = (list, v) => list.reduce((best, x) => (Math.abs(x - v) < Math.abs(best - v) - 1e-9 ? x : best), list[0]);
+  /* The solved configuration a spin's stacks are read at (spin_exact.reduce).  The chips the biggest stack has
+     over the second never change hands, so it is cut down to the second: two stacks of X and a short one of Y
+     in its seat.  Then the nearest X of the grid, and the Y of the same proportion.
+     -> {tok (the key), x, y, short (its players behind; -1 equal), stacks (by players behind, as read), exact} */
+  function spinCfg(st) {
+    const n = st.players, s = st.sstacks.slice(0, n);
+    if (n === 2) {
+      const e = Math.min(s[0], s[1]), g = nearestOf(SD.hu, e);
+      return {tok: "h" + g, x: g, y: g, short: -1, stacks: [g, g], exact: Math.abs(g - e) < 1e-9, e};
+    }
+    const second = s.slice().sort((a, b) => a - b)[1];
+    const capped = s.map((v) => Math.min(v, second)), low = Math.min(...capped);
+    const xg = nearestOf(SD.x, second);
+    let short = low >= second - 1e-9 ? -1 : capped.indexOf(low), yg = xg;
+    if (short >= 0) {
+      yg = nearestOf(SD.y.filter((v) => v < xg - 1e-9).concat([xg]), low * xg / second);
+      if (yg >= xg - 1e-9) { short = -1; yg = xg; }
+    }
+    const stacks = [xg, xg, xg];
+    if (short >= 0) stacks[short] = yg;
+    return {tok: short < 0 ? String(xg) : `${xg}_${yg}_${short}`, x: xg, y: yg, short, stacks,
+            exact: capped.every((v, i) => Math.abs(v - stacks[i]) < 1e-9)};
+  }
+  /* A stack as read, for the words: "12/8/5bb" in seat order (button, small blind, big blind). */
+  const spinStacksText = (stacks, n) => (n === 2 ? [stacks[1], stacks[0]] : [stacks[2], stacks[1], stacks[0]]).map((v) => Math.round(v * 10) / 10).join("/") + "bb";
+  /* Your own raise first in, as the engine makes it (build_spin_guide.own_raise): by your stack against the
+     biggest one behind you. */
+  function spinOwnRaise(nb, stacks, n) {
+    let most = 0;
+    for (let j = 0; j < nb; j++) most = Math.max(most, stacks[j]);
+    const eff = Math.min(stacks[nb], most);
+    if (n === 2) return eff < 25 ? 2.0 : 2.2;
+    if (nb === 1) return eff < 25 ? 2.5 : 3.0;
+    return eff < 25 ? 2.0 : eff < 40 ? 2.2 : 2.5;
+  }
+  /* The raise sizes there are tables for: under the raiser's stack (and a caller's). */
+  function spinRaiseChoices(st) {
+    const c = spinCfg(st), n = st.players, raiser = n === 2 ? 1 : st.from;
+    const room = n === 3 && raiser === 2 && st.callers ? Math.min(c.stacks[1], c.stacks[2]) : c.stacks[raiser];
+    return SD.sizes.raise.map((bb, i) => [i, bb]).filter(([, bb]) => bb < room - 1e-9);
+  }
+  function spinRaiseIndex(st) {
+    const have = spinRaiseChoices(st).map(([i]) => i);
+    if (st.size != null && have.includes(st.size)) return st.size;
+    const c = spinCfg(st), raiser = st.players === 2 ? 1 : st.from;
+    const usual = nearestOf(SD.sizes.raise, spinOwnRaise(raiser, c.stacks, st.players));
+    const i = SD.sizes.raise.indexOf(usual);
+    return have.includes(i) ? i : have.length ? have[0] : i;
+  }
+  /* Your raise, and the re-raises of it there are tables for (in big blinds, as the engine was asked). */
+  const spinMyRaise = (st) => { const c = spinCfg(st); return spinOwnRaise(st.seat, c.stacks, st.players); };
+  function spinReraiseSizes(st) {
+    const c = spinCfg(st), mine = spinMyRaise(st), by = st.players === 2 ? 0 : st.by3;
+    return SD.sizes.reraise.map((t) => Math.round(t * mine * 10) / 10).filter((to) => to < Math.min(c.stacks[st.seat], c.stacks[by]) - 1e-9);
+  }
+  const spinReraiseIndex = (st) => {
+    const most = spinReraiseSizes(st).length - 1;
+    return st.resize != null && st.resize <= most ? st.resize : Math.min(1, Math.max(0, most));      // 1: three times your raise
+  };
+  /* The tables of the spin game a line is read from: family, the base family the words go by. */
+  const SPIN_BASE = {s_open: "open", s_limp: "limp", s_raise: "vsraise", s_allin: "allin", s_two: "two_allin",
+                     s_raise_allin: "raise_allin", s_raise3: "raise3", s_re3: "re3", s_re_allin: "re_allin",
+                     s_re3_allin: "re3_allin", s_sq_allin: "sq_allin", s_hu_open: "hu_open", s_hu_limp: "hu_limp",
+                     s_hu_raise: "hu_vsraise", s_hu_allin: "hu_allin", s_hu_re3: "hu_re3", s_hu_re_allin: "hu_re_allin",
+                     s_hu_sq_allin: "sq_allin"};
+  function spinTableOf(fam, key, st) {
+    const f = SD.index[fam];
+    if (!f) return null;
+    const s = f[st.style] || f[SD.styles[0]];
+    const o = s && (s[st.opp] || s[SD.opponents[0]]);
+    const id = o ? o[key.join(",")] : null;
+    return id == null ? null : SD.tables[id];
+  }
+  function spinLookup(st) {
+    if (!SD) return {notes: [spinFailed ? "The spin tables did not load. Reload the page." : "Loading the spin tables\u2026"]};
+    const n = st.players, h = st.seat, c = spinCfg(st), notes = [];
+    let fam = null, pre = [], why = "There is no table for this spot.";
+    const deep = `With these stacks a re-raise puts the stack in: read \u201cAll-in\u201d instead.`;
+    if (n === 2) {
+      fam = {open: "s_hu_open", limp: "s_hu_limp", raise: "s_hu_raise", allin: "s_hu_allin", re3: "s_hu_re3", re_allin: "s_hu_re_allin", sq_allin: "s_hu_sq_allin"}[st.line];
+      if (st.line === "raise") { pre = [spinRaiseIndex(st)]; if (!spinRaiseChoices(st).length) why = "A raise this short is an all-in: read \u201cAll-in\u201d."; }
+      if (st.line === "re3") { pre = [spinReraiseIndex(st)]; why = deep; }
+      if (st.line === "re_allin" || st.line === "sq_allin") why = "With these stacks your raise is all your chips.";
+    } else {
+      switch (st.line) {
+        case "open": fam = "s_open"; pre = [h]; break;
+        case "limp": fam = "s_limp"; pre = [h, h === 1 ? 1 : st.limpers]; break;
+        case "raise":
+          fam = "s_raise"; pre = [st.from, h, st.callers, spinRaiseIndex(st)];
+          if (!spinRaiseChoices(st).length) why = "A raise this short is an all-in: read \u201cAll-in\u201d.";
+          break;
+        case "allin": fam = "s_allin"; pre = [st.from, h]; break;
+        case "two_allin": fam = "s_two"; break;
+        case "raise_allin": fam = "s_raise_allin"; why = "A raise this short is an all-in: read \u201c2 all-ins\u201d."; break;
+        case "raise3": fam = "s_raise3"; why = "With these stacks the re-raise puts the stack in: read \u201cRaise + all-in\u201d."; break;
+        case "re3": fam = "s_re3"; pre = [h, st.by3, spinReraiseIndex(st)]; why = deep; break;
+        case "re_allin": fam = "s_re_allin"; pre = [h, st.byAll]; why = "With these stacks your raise is all your chips."; break;
+        case "re3_allin": fam = "s_re3_allin"; why = "With these stacks a re-raise puts the stack in."; break;
+        case "sq_allin": fam = "s_sq_allin"; pre = [st.from, h]; why = "With these stacks your re-raise is all your chips."; break;
+      }
+    }
+    if (!fam) return {notes: ["There is no table for this spot."]};
+    const key = pre.concat([c.tok]), table = spinTableOf(fam, key, st);
+    if (!table) return {notes: [why]};
+    if (!c.exact) notes.push(`Read with stacks of ${spinStacksText(c.stacks, n)}, the nearest the tables were made for.`);
+    let most = 0;
+    for (let nb = 0; nb < n; nb++) if (nb !== h) most = Math.max(most, c.stacks[nb]);
+    const raiser = st.line === "raise" ? (n === 2 ? 1 : st.from) : null;
+    return {fam: SPIN_BASE[fam], from: fam, key, table, stack: Math.min(c.stacks[h], most), notes, cfg: c,
+            eff: raiser != null ? Math.min(c.stacks[h], c.stacks[raiser]) : null};
+  }
+
   /* The engine's share (preflop.bb_realised): how much of its equity a hand turns into chips when the big
      blind calls a raise with it.  Kept here to show the number the table's call was tested against. */
   function realised(h, stack, last) {
@@ -216,9 +354,10 @@
      -> {hands, atBlind: the stack when the big blind reaches you, orbit: the stack after one whole round of
          folding, back in this seat, gone: true when the blinds take all of it before then} */
   function clock(stack, players, seat, speed) {
-    const sp = SPEED[speed] || SPEED.regular, n = players;
+    const spin = SPIN_SPEED[speed] != null, sp = spin ? SPIN_SPEED[speed] : SPEED[speed] || SPEED.regular, n = players;
+    const blinds = spin ? SPIN_ORBIT : ORBIT;
     const level = (j) => { const q = Math.floor(j / sp.hands); return Math.pow(sp.growth, q) * (1 + (sp.growth - 1) * (j / sp.hands - q)); };
-    const cost = (nb) => (nb === 0 ? ORBIT.bb : nb === 1 ? ORBIT.sb : 0);
+    const cost = (nb) => (nb === 0 ? blinds.bb : nb === 1 ? blinds.sb : 0);
     const hands = (n - seat) % n;
     let chips = stack, atBlind = stack;
     for (let j = 0; j < n; j++) {
@@ -231,8 +370,15 @@
 
   /* Make every choice fit the table: called after each change. */
   function normalize(st) {
-    st.players = Math.max(2, Math.min(9, st.players | 0));
+    if (!GAME[st.game]) st.game = "tour";
+    const spin = isSpin(st);
+    st.players = Math.max(2, Math.min(spin ? 3 : 9, st.players | 0));
     st.seat = Math.max(0, Math.min(st.players - 1, st.seat | 0));
+    if (!Array.isArray(st.sstacks) || st.sstacks.length !== 3) st.sstacks = [15, 15, 15];
+    st.sstacks = st.sstacks.map((v) => Math.max(1, Math.min(300, Math.round(+v * 10) / 10 || 1)));
+    if (!SPIN_SPEED[st.sspeed]) st.sspeed = "x2";
+    if (st.edit != null && !(st.edit >= 0 && st.edit < st.players)) st.edit = null;
+    if (spin) { st.stage = "chips"; st.stack = spinEff(st); }
     st.stack = Math.max(1, Math.min(300, Math.round(+st.stack * 10) / 10 || 1));
     if (!D.opponents.includes(st.opp)) st.opp = D.opponents[0];
     if (st.style === "tag" && D.styles.includes("tight")) st.style = "tight";      // the name page 2 saved for Tight
@@ -278,6 +424,7 @@
   /* -> {fam, key, table, stack (the one the table was made for), notes} or {notes} when there is no table */
   function lookup(st, over) {
     st = over ? Object.assign({}, st, over) : st;
+    if (isSpin(st)) return spinLookup(st);
     const n = st.players, h = st.seat, notes = [];
     let fam = null, pre = [];
     if (n === 2) {
@@ -355,6 +502,9 @@
   }
 
   /* A yes-or-no answer for each hand, as the builder packs it (mask): base64 of 22 bytes, hand h is bit h % 8 of byte h >> 3. */
+  /* The ranges a table's facts point into: the spin tables keep their own list. */
+  const rangesOf = (res) => (res.cfg != null && SD ? SD.ranges : D.ranges);
+
   const masks = new Map();
   function marked(text, h) {
     let bytes = masks.get(text);
@@ -368,7 +518,7 @@
     const text = letters(res.table), out = [];
     const free = /[xX]/.test(text);
     const f = res.table.f || {};
-    const marks = f.v != null ? D.ranges[f.v] : null;
+    const marks = f.v != null ? rangesOf(res)[f.v] : null;
     for (let h = 0; h < 169; h++) {
       const a = decode(text[h]);
       a.name = D.actions[a.k];
@@ -441,9 +591,10 @@
       case "open": return `${me}, first in`;
       case "limp":
         if (n === 2 || (st.seat === 0 && st.limpers === 0)) return "BB, the small blind only called";
+        if (isSpin(st)) return st.seat === 1 ? "SB, the button only called" : st.limpers === 2 ? "BB, the button and the small blind only called" : "BB, the button only called";
         return `${me} behind ${st.limpers} ${st.limpers > 1 ? "limpers" : "limper"}`;
       case "raise": {
-        const to = D.sizes ? ` to ${D.sizes.raise[raiseIndex(st)]}bb` : "";
+        const to = isSpin(st) ? (SD ? ` to ${SD.sizes.raise[spinRaiseIndex(st)]}bb` : "") : D.sizes ? ` to ${D.sizes.raise[raiseIndex(st)]}bb` : "";
         return n === 2 ? `BB against a raise${to}` : `${me} against a ${from} raise${to}` + (st.callers ? ` and ${st.callers} ${st.callers > 1 ? "callers" : "caller"}` : "");
       }
       case "raise3": return `${me} against a ${from} raise and a re-raise`;
@@ -451,7 +602,9 @@
       case "raise_allin": return `${me} against a ${from} raise and an all-in`;
       case "two_allin": return `${me} against two all-ins, the first from ${from}`;
       case "re3": {
-        const to = D.sizes ? ` to ${bbText(reraiseSizes(st)[reraiseIndex(st)])}` : "";
+        const sizes = isSpin(st) ? (SD ? spinReraiseSizes(st) : []) : D.sizes ? reraiseSizes(st) : [];
+        const at = isSpin(st) ? spinReraiseIndex(st) : reraiseIndex(st);
+        const to = sizes[at] != null ? ` to ${bbText(sizes[at])}` : "";
         return n === 2 ? `You raised, the BB re-raised${to}` : `You raised from ${me}, ${who3(st)} re-raised${to}`;
       }
       case "re_allin": return n === 2 ? "You raised, the BB moved all-in" : `You raised from ${me}, the ${seatName(st.byAll, n)} moved all-in`;
@@ -469,14 +622,16 @@
     if (res.fam !== "vsraise" && res.fam !== "hu_vsraise") return null;
     const callers = res.fam === "vsraise" ? res.key[2] : 0;
     const over = f.m * 2 / (2 + callers);          // the margin shrinks with the fair share of the pot
-    const share = realised(h, res.stack - 1, f.ip === 1);          // the big blind has posted the ante: one less behind
-    const size = D.sizes.raise[res.key[res.fam === "vsraise" ? 3 : 0]];
+    const spin = res.cfg != null;                  // a spin: no ante, and the stack is yours against the raiser's
+    const share = realised(h, spin ? res.eff : res.stack - 1, f.ip === 1);          // the big blind has posted the ante: one less behind
+    const size = (spin ? SD : D).sizes.raise[res.key[res.fam === "vsraise" ? 3 : 0]];
     /* with callers the price counts their chips, so the equity counts their hands: each by his odds against the hand */
-    const alone = [equity(h, D.ranges[f.v])].concat((f.cv || []).map((v) => equity(h, D.ranges[v])));
+    const rg = rangesOf(res);
+    const alone = [equity(h, rg[f.v])].concat((f.cv || []).map((v) => equity(h, rg[v])));
     const eq = alone.some((e) => e == null) ? null : beatsAll(alone);
     /* short: the call costs more than an eighth of what is behind, so the flop is played for the stack */
     return {price: f.p, share, need: (f.p + over) / share, eq, last: f.ip === 1, players: alone.length,
-            short: size - 1 > 0.12 * (res.stack - 1)};
+            short: size - 1 > 0.12 * (spin ? res.eff : res.stack - 1)};
   }
   /* The chance to win a pot against several players, from the equity against each alone (pushfold.beats_all). */
   function beatsAll(equities) {
@@ -500,24 +655,27 @@
                                    : " Close: the edge of the range. The quieter play is fine too.") : "";
     const fam = res.fam;
     const exact = (res.table.f || {}).x === 1;        // a stack of a few big blinds: the table is the exact solution
+    const solvedAt = res.cfg != null ? "Solved exactly with these stacks." : "Solved exactly at this stack.";
     if (fam === "open" || fam === "hu_open") {
       if (a.name === "RAISE") return `${hand} is in the ${me} opening range at ${s}: ${playing} of hands play here.` + edge;
       if (a.name === "RAISE_CALL") return `Raise small and call any all-in: at ${s} this hand wants the chips in, and a small raise lets worse hands move in.` + edge;
       /* the words go by how often the all-in gets through: when it is called two times in three or more, the hand
          is played for a showdown */
       const fe = (res.table.f || {}).fe, called = fe != null ? fe < 0.34 : res.stack < LOW;
-      if (exact && a.name === "ALLIN") return (called ? `All-in: at ${s} an all-in from ${me} is called most of the time, often by two players, so the hand has to win at a showdown.` : `All-in: at ${s} every hand moves all-in or folds, and ${hand} earns chips by moving in.`) + ` ${share("All-in")} of hands are good enough from ${me}. Solved exactly at this stack.` + edge;
-      if (exact) return (called ? `Fold: at ${s} an all-in from ${me} is called most of the time, often by two players, and ${hand} does not win often enough.` : `Fold: at ${s} every hand moves all-in or folds, and ${hand} loses chips by moving in: the hands that call it are too far ahead.`) + ` ${playing} of hands play here. Solved exactly at this stack.` + edge;
+      if (exact && a.name === "ALLIN") return (called ? `All-in: at ${s} an all-in from ${me} is called most of the time, often by two players, so the hand has to win at a showdown.` : `All-in: at ${s} every hand moves all-in or folds, and ${hand} earns chips by moving in.`) + ` ${share("All-in")} of hands are good enough from ${me}. ${solvedAt}` + edge;
+      if (exact) return (called ? `Fold: at ${s} an all-in from ${me} is called most of the time, often by two players, and ${hand} does not win often enough.` : `Fold: at ${s} every hand moves all-in or folds, and ${hand} loses chips by moving in: the hands that call it are too far ahead.`) + ` ${playing} of hands play here. ${solvedAt}` + edge;
       if (a.name === "ALLIN") return `At ${s} this hand moves all-in from ${me}: a small raise would have to fold to an all-in or call it off anyway. ${share("All-in")} of hands move in here.` + edge;
       return `Outside the ${me} range at ${s}: ${playing} of hands play here.` + edge;
     }
     if (fam === "limp" || fam === "limp_sb" || fam === "hu_limp") {
-      if (exact && a.name === "ALLIN") return `All-in: a player who only calls with a stack this short is not folding, so this is answered as his all-in. ${hand} has enough against him and the players behind you. Solved exactly at this stack.` + edge;
-      if (exact && a.name === "FOLD") return `Fold: a player who only calls with a stack this short is not folding, so this is answered as his all-in. ${hand} does not have enough against him and the players behind you. Solved exactly at this stack.` + edge;
+      if (exact && a.name === "ALLIN") return `All-in: a player who only calls with a stack this short is not folding, so this is answered as his all-in. ${hand} has enough against him and the players behind you. ${solvedAt}` + edge;
+      if (exact && a.name === "FOLD") return `Fold: a player who only calls with a stack this short is not folding, so this is answered as his all-in. ${hand} does not have enough against him and the players behind you. ${solvedAt}` + edge;
       if (exact && a.name === "CHECK") return `Check: the caller is not folding at this stack, and a free flop is worth more to ${hand} than moving in against him.` + edge;
       if (a.name === "RAISE") return `Raise over the ${fam === "limp" && st.limpers > 1 ? "callers" : "caller"}: ${hand} is ahead of the hands that only call.` + edge;
       if (a.name === "ALLIN") return `All-in over the ${fam === "limp" && st.limpers > 1 ? "callers" : "caller"}: there is dead money in the pot and a player who only called rarely has a hand that calls an all-in.` + edge;
-      if (a.name === "LIMP") return "Call along: a hand for a cheap pot with several players. Go on after the flop only with a big hit." + edge;
+      if (a.name === "LIMP") return (isSpin(st) && st.seat === 1
+        ? "Complete: half a big blind for a pot of three, and this hand keeps enough of it after the flop. Go on with a pair or a real draw."
+        : "Call along: a hand for a cheap pot with several players. Go on after the flop only with a big hit.") + edge;
       if (a.name === "CHECK") return "Check and see the flop for free: not strong enough to raise." + edge;
       return "Not strong enough to raise, and not a hand for calling along." + edge;
     }
@@ -551,11 +709,11 @@
     /* a call or a fold against chips that are in */
     if (a.name === "CALL" || a.name === "ALLIN" || a.name === "ISOLATE_ALLIN" || a.name === "ISOLATE") {
       const lead = a.name === "CALL" ? "Call" : a.name === "ISOLATE" ? "Re-raise to play against the all-in alone" : "All-in";
-      if (exact) return `${lead}: ${hand} has enough, with every player who can still call behind you counted. Solved exactly at this stack.` + edge;
+      if (exact) return `${lead}: ${hand} has enough, with every player who can still call behind you counted. ${solvedAt}` + edge;
       return `${lead}: ${hand} has enough against the hands that do this.` + edge;
     }
     if (exact) return (res.stack < LOW ? `Fold: the price alone may look right, but with stacks this short the players behind you call often and ${hand} has to beat them too.`
-                                       : `Fold: ${hand} does not have enough against the hands that do this, with the players who can still call behind you counted.`) + " Solved exactly at this stack." + edge;
+                                       : `Fold: ${hand} does not have enough against the hands that do this, with the players who can still call behind you counted.`) + " " + solvedAt + edge;
     return `Fold: ${hand} does not have enough against the hands that do this.` + edge;
   }
 
@@ -578,6 +736,7 @@
     const mine = (what) => { for (let nb = 0; nb < h; nb++) out[nb] = "fold"; out[h] = what; };
     switch (st.line) {
       case "limp":
+        if (isSpin(st) && h === 0 && st.limpers === 2) { mark(2, "limp"); mark(1, "limp"); break; }
         if (hu || (h === 0 && st.limpers === 0)) mark(1, "limp");
         else if (h === 0) for (let k = 1; k <= st.limpers; k++) mark(1 + k, "limp");      // the small blind folded
         else for (let k = 1; k <= st.limpers; k++) mark(h + k, "limp");
@@ -613,7 +772,8 @@
     const said = [];
     for (let k = 0; k < n; k++) {
       const nb = ((h - k) % n + n) % n, role = who[nb], name = seatName(nb, n), tag = POD_TAG[role];
-      const inner = `<b>${name}</b>${tag ? `<i>${tag}</i>` : ""}`;
+      const stk = isSpin(st) ? `<u>${Math.round(st.sstacks[nb] * 10) / 10}bb</u>` : "";
+      const inner = `<b>${name}</b>${stk}${tag ? `<i>${tag}</i>` : ""}`;
       if (pick.seats.includes(nb)) {
         pods += `<button class="pod ${role} can" data-seat="${nb}" style="${at(k, 1)}"${set({[pick.key]: nb})} aria-label="${name}${tag ? ", " + tag.toLowerCase() : ""}: choose this seat">${inner}</button>`;
       } else pods += `<span class="pod ${role}" data-seat="${nb}" style="${at(k, 1)}">${inner}</span>`;
@@ -622,7 +782,8 @@
     }
     const ask = {raise: "Tap the seat that raised.", sq_allin: "Tap the seat that raised.", raise_allin: "Tap the seat that raised.", raise3: "Tap the seat that raised first.",
                  allin: "Tap the seat that moved all-in.", two_allin: "Tap the first seat that moved all-in.", re_allin: "Tap the seat that moved all-in."}[st.line];
-    const label = `The table: ${n} players, you are ${seatName(h, n)}` + (said.length ? "; " + said.join(", ") : "");
+    const label = `The table: ${n} players, you are ${seatName(h, n)}` + (said.length ? "; " + said.join(", ") : "")
+      + (isSpin(st) ? "; stacks " + range(n - 1, 0).map((nb) => `${seatName(nb, n)} ${st.sstacks[nb]}bb`).join(", ") : "");
     return `<div class="map" role="group" aria-label="${esc(label)}"><span class="felt">${MARK.replace('role="img" aria-label="Menlo Bet"', 'aria-hidden="true"')}</span>${pods}${chip}</div>
       <p class="hint maphint">Play goes clockwise. D is the dealer button.${pick.seats.length > 1 && ask ? " " + ask : ""}</p>`;
   }
@@ -633,7 +794,8 @@
     const from = fromSeats(st.line, st).map((nb) => [nb, seatName(nb, n)]);
     let sub = "";
     if (st.line === "limp" && limperChoices(st).length > 1) {
-      sub = `<div class="sub"><span class="eyebrow">Who called</span><div class="chips">${chipRow(limperChoices(st).map((k) => [k, k === 0 ? "SB only" : String(k)]), st.limpers, "limpers", true)}</div></div>`;
+      const said = (k) => (k === 0 ? "SB only" : isSpin(st) ? ["", "BTN only", "BTN and SB"][k] : String(k));
+      sub = `<div class="sub"><span class="eyebrow">Who called</span><div class="chips">${chipRow(limperChoices(st).map((k) => [k, said(k)]), st.limpers, "limpers", true)}</div></div>`;
     } else if (from.length) {
       const label = {raise: "Raise from", allin: "All-in from", sq_allin: "Raise from", raise3: "First raise from", raise_allin: "Raise from", two_allin: "First all-in from"}[st.line];
       sub = `<div class="sub"><span class="eyebrow">${label}</span><div class="chips">${chipRow(from, st.from, "from", true)}</div></div>`;
@@ -647,7 +809,16 @@
       sub = `<div class="sub"><span class="eyebrow">All-in from</span><div class="chips">${chipRow(byAllChoices(st).map((nb) => [nb, seatName(nb, n)]), st.byAll, "byAll", true)}</div></div>`;
     }
     /* how much: the raise you face, or the re-raise of your raise */
-    if (st.line === "raise" && D.sizes && raiseChoices(st).length) {
+    if (isSpin(st) && st.line === "raise" && SD && spinRaiseChoices(st).length) {
+      const last = SD.sizes.raise.length - 1;
+      sub += `<div class="sub"><span class="eyebrow">Raised to</span><div class="chips">${chipRow(spinRaiseChoices(st).map(([i, bb]) => [i, bb + "bb" + (i === last ? "+" : "")]), spinRaiseIndex(st), "size", true)}</div></div>`;
+    } else if (isSpin(st) && st.line === "re3" && SD && spinReraiseSizes(st).length) {
+      const sizes = spinReraiseSizes(st), last = SD.sizes.reraise.length - 1;
+      sub += `<div class="sub"><span class="eyebrow">Re-raised to</span><div class="chips">${chipRow(sizes.map((bb, i) => [i, bbText(bb) + (i === last ? "+" : "")]), spinReraiseIndex(st), "resize", true)}</div></div>
+        <p class="hint subhint">Your raise is taken as ${bbText(spinMyRaise(st))}: these are ${SD.sizes.reraise.slice(0, sizes.length).join(", ")} times it.</p>`;
+    } else if (isSpin(st)) {
+      /* a spin: nothing more to choose */
+    } else if (st.line === "raise" && D.sizes && raiseChoices(st).length) {
       const last = D.sizes.raise.length - 1, out = committing(st);
       sub += `<div class="sub"><span class="eyebrow">Raised to</span><div class="chips">${chipRow(raiseChoices(st).map(([i, bb]) => [i, bb + "bb" + (i === last ? "+" : "")]), raiseIndex(st), "size", true)}</div></div>`;
       if (out.length) sub += `<p class="hint subhint">A raise to ${out[0]}bb or more with ${bbText(gridStack(st.stack))} commits the raiser: with a caller, read it as "Two all-ins".</p>`;
@@ -667,7 +838,38 @@
     const first = st.r1 == null || st.r2 != null;         // the next rank tapped is the first card
     const keys = RANKS.split("").map((ch, i) => `<button class="key" data-rank="${i}" aria-label="${ch}">${ch}</button>`).join("") +
                  '<button class="key back" data-act="clear" aria-label="Clear the cards">Clear</button>';
+    const spin = isSpin(st);
+    /* the stacks: one stack in a tournament (the effective one); every seat's in a spin */
+    let stackField;
+    if (spin) {
+      const edit = st.edit != null ? st.edit : st.seat;
+      const rows = range(n - 1, 0).map((nb) => `<div class="srow${nb === edit ? " on" : ""}">
+          <button class="sname"${set({edit: nb})} aria-label="Set ${seatName(nb, n)}'s stack with the buttons below">${seatName(nb, n)}${nb === st.seat ? "<i>you</i>" : ""}</button>
+          <span class="stepper"><button data-act="sless-${nb}" aria-label="${seatName(nb, n)}: one big blind less">&minus;</button>
+          <input id="sstack-${nb}" type="number" inputmode="decimal" min="1" max="300" step="0.5" value="${st.sstacks[nb]}" aria-label="${seatName(nb, n)}'s stack in big blinds">
+          <button data-act="splus-${nb}" aria-label="${seatName(nb, n)}: one big blind more">+</button></span></div>`).join("");
+      stackField = `<div class="field">
+        <div class="head"><span class="eyebrow">Stacks in big blinds</span><span class="hint">every player's, as the table shows them</span></div>
+        <div class="sstacks">${rows}</div>
+        <div class="presets">${chipRow(SPIN_PRESETS.map((p) => [p, String(p)]).map(([p, l]) => [JSON.stringify([edit, p]), l]), JSON.stringify([edit, st.sstacks[edit]]), "sset", true)}</div>
+        <p class="hint subhint">The buttons set ${edit === st.seat ? "your stack" : seatName(edit, n) + "'s stack"}: tap a seat's name to choose another.</p>
+      </div>`;
+    } else {
+      stackField = `<div class="field">
+        <div class="head"><span class="eyebrow">Stack in big blinds</span><span class="hint">the smaller of yours and theirs</span></div>
+        <div class="stack"><span class="stepper"><button data-act="less" aria-label="One big blind less">&minus;</button>
+          <input id="stack" type="number" inputmode="decimal" min="1" max="300" step="1" value="${st.stack}" aria-label="Stack in big blinds">
+          <button data-act="plus" aria-label="One big blind more">+</button></span></div>
+        <div class="presets">${chipRow(PRESETS.map((p) => [p, String(p)]), st.stack, "stack", true)}</div>
+      </div>`;
+    }
+    const speeds = spin ? chipRow(Object.keys(SPIN_SPEED).map((s) => [s, SPIN_SPEED[s].label]), st.sspeed, "sspeed", true)
+                        : chipRow(Object.keys(SPEED).map((s) => [s, SPEED[s].label]), st.speed, "speed", true);
     return `<div class="card">
+      <div class="field game">
+        <div class="head"><span class="eyebrow">Game</span><span class="hint">${spin ? "three players, no ante, the winner takes all" : "any table, with an ante"}</span></div>
+        <div class="chips">${chipRow(Object.keys(GAME).map((g) => [g, GAME[g]]), st.game, "game")}</div>
+      </div>
       <div class="field">
         <div class="head"><span class="eyebrow">Your cards</span><span class="hint">tap two ranks, or a hand in the chart</span></div>
         <div class="cardsrow">${slot(st.r1, first)}${slot(st.r2, !first)}
@@ -684,18 +886,12 @@
         <div class="seats">${chipRow(seats, st.seat, "seat")}</div>
         ${mapHtml(st)}
       </div>
-      <div class="field">
-        <div class="head"><span class="eyebrow">Stack in big blinds</span><span class="hint">the smaller of yours and theirs</span></div>
-        <div class="stack"><span class="stepper"><button data-act="less" aria-label="One big blind less">&minus;</button>
-          <input id="stack" type="number" inputmode="decimal" min="1" max="300" step="1" value="${st.stack}" aria-label="Stack in big blinds">
-          <button data-act="plus" aria-label="One big blind more">+</button></span></div>
-        <div class="presets">${chipRow(PRESETS.map((p) => [p, String(p)]), st.stack, "stack", true)}</div>
-      </div>
+      ${stackField}
       <div class="field">
         <div class="sub" style="margin-top:0"><span class="eyebrow">Opponents</span><div class="chips">${chipRow(D.opponents.map((o) => [o, OPP[o] || o]), st.opp, "opp", true)}</div></div>
-        <div class="sub"><span class="eyebrow">Style</span><div class="chips">${chipRow(D.styles.map((s) => [s, STYLE[s] || s]), st.style, "style", true)}</div></div>
-        <div class="sub"><span class="eyebrow">Stage</span><div class="chips">${chipRow(Object.keys(STAGE).map((s) => [s, STAGE[s]]), st.stage, "stage", true)}</div></div>
-        <div class="sub"><span class="eyebrow">Blinds</span><div class="chips">${chipRow(Object.keys(SPEED).map((s) => [s, SPEED[s].label]), st.speed, "speed", true)}</div></div>
+        ${spin ? "" : `<div class="sub"><span class="eyebrow">Style</span><div class="chips">${chipRow(D.styles.map((s) => [s, STYLE[s] || s]), st.style, "style", true)}</div></div>`}
+        ${spin ? "" : `<div class="sub"><span class="eyebrow">Stage</span><div class="chips">${chipRow(Object.keys(STAGE).map((s) => [s, STAGE[s]]), st.stage, "stage", true)}</div></div>`}
+        <div class="sub"><span class="eyebrow">Blinds</span><div class="chips">${speeds}</div></div>
         <button class="resetall${undo ? " undo" : ""}" id="btn-reset-all" data-act="${undo ? "undo" : "reset"}">${undo ? "Undo the reset" : "Reset everything"}</button>
       </div>
     </div>`;
@@ -708,7 +904,7 @@
     const bb = bbCall(st, res, h);
     if (bb && bb.players > 1 && bb.eq != null) out.push(`<span class="fact">Against them all you have<b>${pct(bb.eq)}</b></span>`);
     else if (h != null && f.v != null) {
-      const eq = equity(h, D.ranges[f.v]);
+      const eq = equity(h, rangesOf(res)[f.v]);
       if (eq != null) out.push(`<span class="fact">You have about<b>${pct(eq)}</b></span>`);
     }
     const need = bb ? bb.need : f.need != null ? f.need : f.odds;
@@ -726,7 +922,8 @@
 
   function answerHtml(st, res, ans) {
     const n = st.players, h = handIndex(st);
-    const where = `${seatName(st.seat, n)} &middot; ${bbText(st.stack)} &middot; ${n} players`;
+    const where = isSpin(st) ? `${seatName(st.seat, n)} &middot; ${spinStacksText(st.sstacks, n)} &middot; ${n === 2 ? "heads-up" : "3 players"}`
+                             : `${seatName(st.seat, n)} &middot; ${bbText(st.stack)} &middot; ${n} players`;
     if (!res.table) return `<div class="slab idle"><div class="spot"><span>${where}</span></div><div class="row"><span class="verb">No table</span></div><div class="why">${esc(res.notes[0])}</div></div>`;
     const sh = shares(ans);
     if (h == null) {
@@ -794,6 +991,23 @@
   /* The same spot at every stack that has a table of its own: [{stack, res, ans}], shortest first. */
   function everyStack(st) {
     const out = [];
+    if (isSpin(st)) {
+      if (!SD) return out;
+      /* every X of the grid, the stacks in the same proportions: one entry for each table, by your stack */
+      const c = spinCfg(st), seen = new Set();
+      for (const x of st.players === 2 ? SD.hu : SD.x) {
+        const k = x / c.x, full = Object.assign({}, st, {sstacks: c.stacks.map((v) => Math.round(v * k * 100) / 100).concat(st.sstacks.slice(c.stacks.length))});
+        normalize(full);
+        const res = lookup(full);
+        if (!res.table || seen.has(res.cfg.tok)) continue;
+        seen.add(res.cfg.tok);
+        /* your stack is the axis: a short stack can come out the same for two of them, and the first is kept */
+        const mine = Math.round(res.cfg.stacks[st.seat] * 10) / 10;
+        if (out.length && out[out.length - 1].stack >= mine) continue;
+        out.push({stack: mine, res, ans: answers(res, full), sstacks: res.cfg.stacks.concat(st.sstacks.slice(res.cfg.stacks.length))});
+      }
+      return out;
+    }
     for (const s of D.stacks) {
       const full = Object.assign({}, st, {stack: s});
       const res = lookup(full);
@@ -819,12 +1033,16 @@
     const all = everyStack(st);
     if (all.length < 2) return "";
     const runs = stretches(all, h), last = all[all.length - 1].stack;
+    const spin = isSpin(st), mine = spin ? Math.round(res.cfg.stacks[st.seat] * 10) / 10 : res.stack;
     const rows = runs.map((r) => {
-      const on = res.stack >= r.from && res.stack <= r.to;
-      return `<button class="run ${r.kind}${on ? " on" : ""}"${set({stack: on ? st.stack : r.to === last ? r.from : r.to})}>` +
+      const on = mine >= r.from && mine <= r.to;
+      const go = on ? null : r.to === last ? r.from : r.to;
+      const patch = spin ? (on ? {} : {sstacks: all.find((x) => x.stack === go).sstacks}) : {stack: on ? st.stack : go};
+      return `<button class="run ${r.kind}${on ? " on" : ""}"${set(patch)}>` +
              `<span class="bbs">${span(r.from, r.to, last)}</span><span class="what">${esc(r.label)}</span></button>`;
     }).join("");
-    return `<div class="card strip"><span class="eyebrow">${esc(handName(h))} at every stack</span><div class="runs">${rows}</div></div>`;
+    const title = spin ? `${esc(handName(h))} at every stack, yours, the others in the same proportion` : `${esc(handName(h))} at every stack`;
+    return `<div class="card strip"><span class="eyebrow">${title}</span><div class="runs">${rows}</div></div>`;
   }
 
   /* The sheet: for each hand the deepest stack at which it still goes in for everything in this spot.
@@ -863,7 +1081,7 @@
       (sheet.some((x) => x.more) ? '<span><i class="more"></i>deeper: played another way</span>' : "");
     return `<div class="grid sheet" role="group" aria-label="All 169 hands: the deepest stack that ${what}">${cells}</div>
       <div class="legend bands">${legend}</div>
-      <div class="foot"><p class="hint">The number is the deepest stack, in big blinds, at which the hand ${what} in this spot. Blank: never. A dot: it folds at some shorter stack too. A yellow line: with a deeper stack the hand is still played, by a raise or a call. Tap a hand for its play at every stack.${st.stage === "bubble" ? " Bubble rule applied." : ""}</p></div>`;
+      <div class="foot"><p class="hint">The number is the deepest stack${isSpin(st) ? " of yours (the others in the same proportion)" : ""}, in big blinds, at which the hand ${what} in this spot. Blank: never. A dot: it folds at some shorter stack too. A yellow line: with a deeper stack the hand is still played, by a raise or a call. Tap a hand for its play at every stack.${st.stage === "bubble" ? " Bubble rule applied." : ""}</p></div>`;
   }
 
   /* ---------- the blinds clock, drawn ---------- */
@@ -871,12 +1089,21 @@
   /* How often an all-in from this seat gets through, as the first-in table of a stack has it. */
   function through(st, stack) {
     if (st.seat < 1) return null;
+    if (isSpin(st)) {
+      /* a spin: the stacks in the same proportion, at this stack of yours */
+      const k = stack / Math.max(st.sstacks[st.seat], 0.1), full = Object.assign({}, st, {line: "open", sstacks: st.sstacks.map((v) => Math.round(v * k * 100) / 100)});
+      normalize(full);
+      const res = lookup(full);
+      return res.table && res.table.f && res.table.f.fe != null ? res.table.f.fe : null;
+    }
     const res = lookup(st, {line: "open", stack: gridStack(stack)});       // a small table's own tables where it has them
     return res.table && res.stack === gridStack(stack) && res.table.f && res.table.f.fe != null ? res.table.f.fe : null;
   }
   function clockHtml(st) {
-    if (st.speed === "regular") return "";
-    const sp = SPEED[st.speed], n = st.players, c = clock(st.stack, n, st.seat, st.speed);
+    const spin = isSpin(st);
+    if (!spin && st.speed === "regular") return "";
+    const speed = spin ? st.sspeed : st.speed, sp = spin ? SPIN_SPEED[speed] : SPEED[speed];
+    const n = st.players, c = clock(st.stack, n, st.seat, speed);
     const one = (x) => (x >= 10 ? Math.round(x) : Math.round(x * 10) / 10) + "bb";
     const steps = [`<span class="step"><b>${one(st.stack)}</b><i>now</i></span>`];
     if (c.hands > 0) steps.push(`<span class="step${c.atBlind < LOW ? " low" : ""}"><b>${one(c.atBlind)}</b><i>at your big blind, ${c.hands === 1 ? "next hand" : "in " + c.hands + " hands"}</i></span>`);
@@ -886,9 +1113,18 @@
     else if (c.orbit < LOW) say = `A round of folding leaves ${one(c.orbit)}: a stack that almost any hand calls. Play every hand the chart plays before the blinds reach you.`;
     else if (c.orbit < 10) say = `A round of folding leaves ${one(c.orbit)}: still an all-in that wins the blinds, but less often. Do not pass a play the chart gives you.`;
     else say = `A round of folding costs ${one(st.stack - c.orbit)} of what you count your stack in.`;
-    const now = through(st, st.stack), then = c.gone ? null : through(st, c.orbit);
-    if (now != null && then != null && gridStack(c.orbit) < gridStack(st.stack)) {
-      say += ` First in from ${seatName(st.seat, n)}, an all-in gets through about ${pct(now)} of the time with ${gridStack(st.stack)}bb and ${pct(then)} with ${gridStack(c.orbit)}bb.`;
+    if (spin) {
+      /* the stacks shrink alike: your stack now and after the round, the others in proportion */
+      const mine = st.sstacks[st.seat], later = c.gone ? 0 : mine * c.orbit / Math.max(st.stack, 0.1);
+      const now = through(st, mine), then = c.gone || later < 1 ? null : through(st, later);
+      if (now != null && then != null && Math.abs(now - then) >= 0.01) {
+        say += ` First in from ${seatName(st.seat, n)}, an all-in gets through about ${pct(now)} of the time now and ${pct(then)} after the round.`;
+      }
+    } else {
+      const now = through(st, st.stack), then = c.gone ? null : through(st, c.orbit);
+      if (now != null && then != null && gridStack(c.orbit) < gridStack(st.stack)) {
+        say += ` First in from ${seatName(st.seat, n)}, an all-in gets through about ${pct(now)} of the time with ${gridStack(st.stack)}bb and ${pct(then)} with ${gridStack(c.orbit)}bb.`;
+      }
     }
     return `<div class="card clock"><span class="eyebrow">Blinds clock &middot; ${sp.label} &middot; ${sp.levels}</span>
       <div class="steps">${steps.join('<span class="to" aria-hidden="true"></span>')}</div><p class="rule">${esc(say)}</p></div>`;
@@ -1090,7 +1326,25 @@
       <div class="body">${POST_Q.slice(0, 2).map(q).join("")}${out}${POST_Q.slice(2).map(q).join("")}</div></details>`;
   }
 
+  function spinNotesHtml(open) {
+    const n = SD ? SD.tables.length.toLocaleString("en") : "the";
+    return `<details class="card notes" id="notes-box"${open ? " open" : ""}><summary><span class="title">How to read it</span><span class="hint">Spin &amp; Go: what it is made of</span></summary>
+      <div class="body">
+        <p><b>The game</b> is a spin: three players (two once one is out), blinds of a half and one big blind, no ante, and one prize in nearly every game. With one prize, chips are money: the play that wins the most chips is the right one. Being the chip leader is no reason to play tighter: the chips you have over the second biggest stack can never change hands, so with 8bb against 6bb and 5bb you play the 6bb hand. The buy-in does not change the play either; it only tells you what kind of players you meet.</p>
+        <p><b>Why it is tighter than the tournament tables</b>: those are made with a big blind ante, 2.5bb in the pot before the cards where a spin has 1.5bb. Every all-in that gets through wins more there, so they move in and call with far more hands. At three players with 6bb the button moves in with 49% of hands there and 38% here; the big blind calls the button's all-in with 70% there and 37% here.</p>
+        <p><b>Stacks</b>: every player's, in big blinds, as the table shows them (GGPoker can show stacks in big blinds). Tap a seat's name and the number buttons set that seat. The tables use two numbers: the biggest stack is cut down to the second, so two stacks of the same size and a short one, in its seat. Stacks between two that were solved are read at the nearest, in the same proportion; the answer says so. Next hand moves every stack on with its player.</p>
+        <p><b>All-ins and calls of all-ins are solved exactly</b> for these stacks: real cards, every player who can still call, every side pot. With about 10bb or less every hand is an all-in or a fold, and that is the whole answer. Deeper, the all-in is one play beside a small raise: the raise follows the opening ranges, the big blind's call of a raise goes by its price, and a small re-raise is taken to be as wide as three-handed play makes it (about one hand in eight; heads-up one in six).</p>
+        <p><b>Opponents</b>: Standard is the solved game. Loose is the best answer to players who call your all-ins with half as many hands again (the common mistake in low-stakes spins): the weak steals go. Tight is the best answer to players who move in and call with a third fewer hands: more all-ins, fewer calls. Every player at the table is taken to be of that kind.</p>
+        <p><b>Style</b> is always Play to win: the tournament's Tight style is built to survive until a prize, and a spin has nothing to survive for.</p>
+        <p><b>Games that pay second place</b> (GGPoker x10 and up, about one game in forty) are not what these tables are for: there, call all-ins tighter while a shorter stack can still bust first, and use the table app with the prizes typed for the exact answer.</p>
+        <p><b>Blinds</b> sets the clock: GGPoker's x2 games have levels of 1 minute, x3 and x4 of 2 minutes, x5 and PokerStars of 3 minutes, each about a quarter higher; three hands a minute are assumed. It changes no answer.</p>
+        <p><b>The answers</b> are the coach's engine asked about every hand of every spot: ${n} tables, nothing is worked out while you play. After the flop the page has the playbook's rules of thumb.</p>
+        <p>A study aid. Most sites do not allow charts or outside help while you play for real money: check the rules of yours.</p>
+      </div></details>`;
+  }
+
   function notesHtml(open) {
+    if (isSpin(state)) return spinNotesHtml(open);
     return `<details class="card notes" id="notes-box"${open ? " open" : ""}><summary><span class="title">How to read it</span><span class="hint">and what it is made of</span></summary>
       <div class="body">
         <p><b>Stack</b> is the effective one: the smaller of yours and the biggest stack that can still call you. Against an all-in it is the size of the all-in, or your stack if that is smaller.</p>
@@ -1162,17 +1416,34 @@
     $("strip").innerHTML = stripHtml(state, res);
     $("chart").innerHTML = chartHtml(state, res, ans);
     $("post").innerHTML = postHtml(state, postOpen);
-    if (!$("notes").innerHTML) $("notes").innerHTML = notesHtml(notesOpen);
+    const notesFor = state.game + (SD ? "+" : "");
+    if (!$("notes").innerHTML || $("notes").dataset.game !== notesFor) { $("notes").innerHTML = notesHtml(notesOpen); $("notes").dataset.game = notesFor; }
+    const sub = document.querySelector(".brand .sub");
+    if (sub) sub.textContent = isSpin(state) ? "Spin & Go" : "Quick guide";
     const next = $("btn-next");
     if (next) next.innerHTML = `<span class="long">Next hand</span><span class="short">Next</span> <b>&rarr; ${seatName((state.seat + 1) % state.players, state.players)}</b>`;
+    const foot = $("foot");
+    if (foot) foot.innerHTML = `Menlo.bet quick guide &middot; a study aid &middot; page ${PAGE} &middot; tables v${D.version}${D.quick || D.partial ? " (trial set)" : ""}` +
+                               (SD ? ` &middot; spin tables v${SD.version}${SD.quick ? " (trial set)" : ""}` : "");
     drawReset();
     save();
   }
 
   function apply(patch) {
     forget();
+    if ("game" in patch && patch.game !== state.game) {
+      state.keep = state.keep || {};
+      state.keep[state.game] = {players: state.players, seat: state.seat};
+      const back = state.keep[patch.game] || (patch.game === "spin" ? {players: 3, seat: 2} : {players: 8, seat: 2});
+      state.game = patch.game; state.players = back.players; state.seat = back.seat;
+      state.size = state.resize = null; state.edit = null;
+      if (!can(state.line, normalize(state))) state.line = defaultLine(state);
+      if (isSpin(state)) loadSpin();
+      delete patch.game;
+    }
     for (const key in patch) {
       if (key === "post") Object.assign(state.post, patch.post);
+      else if (key === "sset") { const [nb, v] = JSON.parse(patch.sset); state.sstacks[nb] = v; }
       else state[key] = patch[key];
     }
     if ("seat" in patch && !("line" in patch) && !can(state.line, state)) state.line = defaultLine(state);
@@ -1188,6 +1459,13 @@
   }
   function nextHand() {
     forget();
+    if (isSpin(state)) {
+      /* every player moves on one seat, and his stack with him (a seat is its number of players behind) */
+      const n = state.players, moved = state.sstacks.slice();
+      for (let nb = 0; nb < n; nb++) moved[(nb + 1) % n] = state.sstacks[nb];
+      state.sstacks = moved;
+      state.edit = null;
+    }
     state.seat = (state.seat + 1) % state.players;
     state.r1 = state.r2 = null; state.suited = false;
     state.line = defaultLine(state);
@@ -1214,9 +1492,16 @@
     if (name === "clear") { state.r1 = state.r2 = null; state.suited = false; }
     else if (name === "fewer" || name === "more") {
       const before = state.players;
-      state.players = Math.max(2, Math.min(9, before + (name === "more" ? 1 : -1)));
+      state.players = Math.max(2, Math.min(isSpin(state) ? 3 : 9, before + (name === "more" ? 1 : -1)));
       if (state.players === before) return;
       if (!can(state.line, normalize(state))) state.line = defaultLine(state);
+    } else if (isSpin(state) && (name === "less" || name === "plus")) {
+      const nb = state.edit != null ? state.edit : state.seat;
+      state.sstacks[nb] = Math.max(1, Math.min(300, Math.round(state.sstacks[nb]) + (name === "plus" ? 1 : -1)));
+    } else if (name.startsWith("sless-") || name.startsWith("splus-")) {
+      const nb = +name.slice(6);
+      state.edit = nb;
+      state.sstacks[nb] = Math.max(1, Math.min(300, Math.round(state.sstacks[nb]) + (name.startsWith("splus") ? 1 : -1)));
     } else if (name === "less" || name === "plus") state.stack = Math.max(1, Math.min(300, Math.round(state.stack) + (name === "plus" ? 1 : -1)));
     else if (name === "next") return nextHand();
     render();
@@ -1236,6 +1521,15 @@
     }
   }
   function onInput(event) {
+    if (event.target.id && event.target.id.startsWith("sstack-")) {
+      const value = parseFloat(event.target.value), nb = +event.target.id.slice(7);
+      if (!(value >= 1)) return;
+      forget();
+      state.sstacks[nb] = value;
+      state.edit = nb;
+      render(true);
+      return;
+    }
     if (event.target.id !== "stack") return;
     const value = parseFloat(event.target.value);
     if (!(value >= 1)) return;
@@ -1262,6 +1556,32 @@
     if (event.target.id === "notes-box") notesOpen = event.target.open;
   }
 
+  /* The spin tables are loaded the first time Spin is chosen: spin.js where the tournament tables came as
+     data.js (a folder of files, from the disk or a server), spin.json where they were fetched (one-file page). */
+  let fetched = false;
+  function loadSpin() {
+    if (SD || spinLoading) return spinLoading;
+    const done = (data) => {
+      if (!data || (data.version || 0) < SPIN_PAGE) throw new Error("old");
+      SD = data; spinLoading = null; spinFailed = false; render();
+    };
+    const fail = () => { spinLoading = null; spinFailed = true; render(); };
+    if (window.SPIN_DATA) { done(window.SPIN_DATA); return null; }
+    if (fetched) {
+      spinLoading = fetch("spin.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(done).catch(fail);
+    } else {
+      spinLoading = new Promise((resolve) => {
+        const tag = document.createElement("script");
+        const page = document.querySelector('script[src*="guide.js"]');
+        tag.src = "spin.js" + (page && /\?v=(\d+)/.test(page.src) ? "?v=" + SPIN_PAGE : "");
+        tag.onload = () => { try { done(window.SPIN_DATA); } catch (e) { fail(); } resolve(); };
+        tag.onerror = () => { fail(); resolve(); };
+        document.head.appendChild(tag);
+      });
+    }
+    return spinLoading;
+  }
+
   function start(data) {
     if (!data || (data.version || 1) < TABLES) {       // a browser's kept copy of the tables, from before this page
       $("guide").innerHTML = '<p class="loading">This page is newer than the tables your browser kept. Reload the page.</p>';
@@ -1271,6 +1591,7 @@
     const bytes = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
     EQ = bytes(D.eq); PAIRS = bytes(D.pairs);
     load();
+    if (isSpin(state)) loadSpin();
     const root = $("guide");
     /* The bar at the top stays in the window while the page scrolls: Reset and Next hand are always one tap
        away.  While the answer is out of sight the bar shows it in one line where the name was. */
@@ -1281,12 +1602,12 @@
         <div class="col left"><section id="inputs" aria-label="The spot"></section><section id="post"></section><section id="notes"></section></div>
         <div class="col right"><section id="answer" aria-live="polite" aria-label="The answer"></section><section id="clock"></section><section id="plan"></section><section id="strip"></section><section id="chart"></section></div>
       </div>
-      <p class="foot">Menlo.bet quick guide &middot; a study aid &middot; page ${PAGE} &middot; tables v${D.version}${D.quick || D.partial ? " (trial set)" : ""}</p>`;
+      <p class="foot" id="foot"></p>`;
     root.addEventListener("click", onClick);
     root.addEventListener("input", onInput);
     /* typing in the stack field leaves the other choices as drawn (the field keeps the cursor): when the typing
        is done, draw them again, for a stack changes the sizes of a raise there are */
-    root.addEventListener("change", (event) => { if (event.target.id === "stack") render(); });
+    root.addEventListener("change", (event) => { if (event.target.id === "stack" || (event.target.id || "").startsWith("sstack-")) render(); });
     root.addEventListener("toggle", onToggle, true);
     document.addEventListener("keydown", onKey);
     const bar = $("top");
@@ -1329,10 +1650,13 @@
       return res.table ? bbCall(full, res, D.hands.indexOf(hand)) : null;
     },
     roles: (st) => roles(normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st))),
+    loadSpin, spinCfg: (st) => spinCfg(normalize(Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), st))),
+    spinReady: () => SD != null,
   };
 
   function boot() {
     if (window.GUIDE_DATA) return start(window.GUIDE_DATA);
+    fetched = true;
     fetch("data.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(start).catch(() => {
       $("guide").innerHTML = '<p class="loading">The tables did not load. Reload the page.</p>';
     });

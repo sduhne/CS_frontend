@@ -417,14 +417,18 @@ python3 tools/build_guide_page.py <folder>           # one HTML file and data.js
 python3 -m poker_coach quick --hand A7o --stack 40 --pos CO --goal chips --style win   # one of its answers, from the engine
 python3 -m poker_coach quick --hand Q5o --stack 20 --pos BB --facing "CO raise 3bb" --goal chips --style win   # against a raise of a given size
 python3 -m poker_coach clock --stack 12 --pos BTN --players 8 --speed hyper     # the blinds clock in words
-python3 -m unittest tests.test_guide tests.test_short    # the style, the builder, the tables against the engine, the exact short stacks
+python3 tools/build_spin_exact.py --work DIR         # spins solved exactly, stacks unequal -> poker_coach/data/spin_exact.json (about two and a half hours, needs gcc)
+python3 tools/build_spin_guide.py                    # the Spin & Go tables -> guide/spin.js and spin.json ({SPIN_BUILD_TIME} on four processors)
+python3 -m poker_coach quick --hand K7o --pos BTN --spin --stacks "BTN=10,SB=10,BB=3"   # one of its answers, from the engine
+python3 -m unittest tests.test_guide tests.test_short tests.test_spin_exact    # the style, the builder, the tables against the engine, the exact stacks
 ```
 
 - **To open it:** `guide/index.html` in a browser ("Open Quick Guide.bat"),
   or the folder behind a web server (`deploy/README.md`; the user's copy is
   at `https://menlo.bet/poker/`, behind a login). It needs no Python and no
   network.
-- **What the user sets**, one tap each: two ranks and suited or offsuit (or a
+- **What the user sets**, one tap each: the game (Tournament, Spin & Go),
+  two ranks and suited or offsuit (or a
   hand in the chart), what happened before them, their seat and the table
   size (2 to 9), the stack, opponents (Standard, Tight, Loose), style (Play
   to win, Tight), stage (Normal, Bubble), blinds (Regular, Turbo, Hyper).
@@ -469,6 +473,42 @@ python3 -m unittest tests.test_guide tests.test_short    # the style, the builde
   - **Every stack:** under the answer, the chosen hand at every stack; and
     the chart's "Every stack" switch, a push/fold sheet (the deepest stack
     at which each hand still goes in for everything).
+- **Spin & Go** (the Game choice, first of the choices): three players
+  (two after a bust), no ante, one prize, and a stack for every seat
+  (three rows; the number buttons set the seat whose name was tapped, the
+  user's own by default). Its tables are `guide/spin.js` (`spin.json` for
+  the one-file page), loaded only when the game is chosen: the engine's
+  answer to every hand of every spot at every configuration of
+  `poker_coach/data/spin_exact.json`. That file is the all-in or fold game
+  of a spin solved exactly with unequal stacks (`tools/build_spin_exact.py`,
+  `poker_coach/spin_exact.py`): the biggest stack is cut down to the
+  second, so two stacks of X and one of Y in its seat, X 2 to 30bb, Y from
+  1bb, heads-up 1 to 30bb, 491 games; with the best replies to loose
+  callers (1.5 times the calls) and to tight players (two thirds of the
+  all-ins and calls) for the Opponents choice. Up to about 10bb that is the
+  whole answer; deeper, the all-ins and the calls of all-ins, beside the
+  engine's raises (Play to win rows). Play to win only (no Style, no
+  Stage); Blinds sets the spin's level length (1, 2, 3 minutes) for the
+  clock. Stacks between solved ones are read at the nearest, in
+  proportion, and the answer says so. Next hand moves every stack on with
+  its player. `advise` and `quick --spin` read the same solution for any
+  spot with no ante and two or three players, drawn between solved stacks.
+  - **Why spins needed their own tables.** The tournament tables assume a
+    big blind ante: 2.5bb in the pot against a spin's 1.5bb. At three
+    players with 6bb they move all-in from the button with 49% of hands
+    where a spin's answer is 38%, and the big blind calls a button all-in
+    with 70% where it is 37%. That is the "too aggressive" the user felt
+    using the hyper tables for spins. Being the chip leader changes nothing
+    (the chips over the second stack cannot change hands), nor does the
+    buy-in. Games that pay second (x10 and up, one in forty) are not
+    covered: the table app with the prizes typed.
+  - **Deeper than 10bb** the plays are the engine's, checked against
+    published spin solver figures (@PLAYBOOK.md, "Spin & Go in the quick
+    guide"). Three-handed and heads-up a small re-raise is read as wide
+    (`ranges.threebet_range` with `players`: an unknown player 12.5%
+    three-handed, 16% heads-up), and the heads-up button's raise as 80% of
+    hands (`villain_open_range(..., heads_up=True)`); both also changed the
+    tournament guide's heads-up tables.
 - **All-ins of 20bb or less are solved exactly** (`poker_coach/short.py`,
   `data/short.json`; `tools/build_short.py` runs `tools/aof_solver.c` with a
   big blind ante for tables of 9, 6, 5, 4 and 3 players: real cards, every
@@ -873,7 +913,16 @@ python3 -m poker_coach spin --hand KJo --pos BB --stack 14 --facing "SB limp"   
 python3 -m poker_coach spin --hand T5s --pos SB --stack 10 --vs loose            # against players who call too much
 python3 -m poker_coach spin-sheet                    # every table as text (--vs loose for the loose table)
 python3 -m poker_coach spin-odds --win 37            # break-even, and what a win rate is worth
+python3 -m poker_coach quick --hand A5o --pos BB --spin --stacks "BTN=9,SB=4,BB=12" --facing "BTN allin"   # the real stacks
 ```
+
+- **Two sets of answers.** The `spin` command's tables are for equal
+  stacks (the effective one). The quick guide's Spin & Go mode, `advise`
+  and `quick --spin` read `poker_coach/spin_exact.py` instead: the same game
+  solved for unequal stacks, which the table shows anyway (with equal
+  stacks the two differ on 1 to 4% of hands, at the edges). For a question
+  with real stacks use `quick --spin --stacks`, and answer in the usual
+  two words.
 
 - **Answer in two words:** ALL-IN or FOLD (CALL or FOLD against an all-in,
   CHECK when the small blind only called), then the reason in one line.
@@ -953,4 +1002,8 @@ python3 -m poker_coach spin-odds --win 37            # break-even, and what a wi
   answers for all-ins of 2 to 20bb, about four hours; only if the solver
   or the blinds of that game change), then `python3 tools/build_guide.py` (the quick
   guide's tables, about 40 minutes; needed after any change to the engine's
-  answers before the flop).
+  answers before the flop); `python3 tools/build_spin_exact.py --work DIR`
+  (spins solved for unequal stacks, about two and a half hours; only if the
+  solver changes), then `python3 tools/build_spin_guide.py` (the Spin & Go
+  tables, {SPIN_BUILD_TIME}; after any change to the engine's answers with
+  three players or two).

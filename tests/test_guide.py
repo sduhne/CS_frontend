@@ -1070,7 +1070,8 @@ class PageFiles(unittest.TestCase):
         js = self.read("guide.js")
         for word in ("getDisplayMedia", "captureStream", "setContentProtection", "XMLHttpRequest", "WebSocket", "sendBeacon"):
             self.assertNotIn(word, js, word)
-        self.assertEqual(re.findall(r"fetch\(([^)]*)\)", js), ['"data.json"'])
+        # it fetches its own tables and nothing else: the tournament's, and the Spin & Go ones when that game is chosen
+        self.assertEqual(sorted(re.findall(r"fetch\(([^)]*)\)", js)), ['"data.json"', '"spin.json"'])
 
     def test_the_one_file_page_for_publishing(self):
         page = build_guide_page.page()
@@ -1086,3 +1087,100 @@ class PageFiles(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def spin_tables():
+    path = os.path.join(GUIDE, "spin.js")
+    if not os.path.exists(path):
+        return None
+    with open(path) as fh:
+        text = fh.read()
+    return json.loads(text[text.index("{"):text.rindex("}") + 1])
+
+
+@unittest.skipUnless(spin_tables() and not spin_tables().get("quick"), "guide/spin.js is not built")
+class SpinTables(unittest.TestCase):
+    """guide/spin.js, as it is in the repository: the Spin & Go tables (tools/build_spin_guide.py)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import build_spin_guide as G
+        cls.G = G
+        cls.d = spin_tables()
+
+    def tearDown(self):
+        R.set_style("tag")
+
+    def table(self, family, opp, key):
+        return self.d["tables"][self.d["index"][family]["win"][opp][",".join(str(k) for k in key)]]
+
+    def test_every_spot_of_every_family_is_there_for_every_opponent(self):
+        from poker_coach import spin_exact as SX
+        G, d = self.G, self.d
+        self.assertEqual((d["version"], d["kind"], d["styles"]), (G.VERSION, "spin", ["win"]))
+        self.assertEqual((d["hands"], d["codes"], d["close"]), (list(HANDS), B.CODES, B.CLOSE))
+        self.assertEqual(d["opponents"], list(B.OPPONENTS))
+        self.assertEqual((d["x"], d["y"], d["hu"]), (list(SX.x_grid()), list(SX.y_grid()), list(SX.hu_grid())))
+        for name, (_, make) in G.FAMILIES.items():
+            want = {",".join(str(k) for k in key) for key, _ in make(False)}
+            for opp in B.OPPONENTS:
+                self.assertEqual(set(d["index"][name]["win"][opp]), want, (name, opp))
+
+    def test_a_table_is_169_letters_and_its_ranges_169_marks(self):
+        letters = set(B.CODES + B.CLOSE)
+        for t in self.d["tables"]:
+            a = B.unpack(t["a"])
+            self.assertEqual(len(a), 169)
+            self.assertLessEqual(set(a), letters)
+            f = t.get("f", {})
+            for v in [f.get("v")] + list(f.get("cv", [])):
+                if v is not None:
+                    self.assertRegex(self.d["ranges"][v], r"^[01]{169}$")
+
+    def test_no_table_has_a_pair_folding_where_a_lower_pair_plays(self):
+        for t in self.d["tables"]:
+            a = B.unpack(t["a"])
+            plays = [a[14 * i] not in "fFxX" for i in range(13)]
+            self.assertEqual(plays, sorted(plays, reverse=True), a)
+
+    def test_the_tables_are_what_the_engine_answers_today(self):
+        """A sample of spots asked again.  If this fails the engine has changed: build the spin tables again."""
+        G = self.G
+        rng = random.Random(17)
+        for name, (_, make) in G.FAMILIES.items():
+            spots = list(make(False))
+            for key, question in rng.sample(spots, 2 if len(spots) > 1 else 1):
+                opp = rng.choice(B.OPPONENTS)
+                R.set_style("win")
+                made = G.table(opp=opp, **question)
+                kept = self.table(name, opp, key)
+                self.assertEqual(B.unpack(kept["a"]), made["a"], (name, key, opp))
+                self.assertEqual(kept.get("z"), made.get("z"), (name, key, opp))
+
+    def test_short_all_ins_are_the_exact_solution(self):
+        """First in with 10bb or less every hand is an all-in or a fold, and it is the solved game's; calls of
+        an all-in are the solved game's at every stack.  Close plays may fall either way."""
+        from poker_coach import spin_exact as SX
+        from poker_coach.cards import COMBO_COUNT
+        G = self.G
+        rng = random.Random(4)
+        configs = [c for c in G.configs3() if c[2] <= 30]
+        for _ in range(60):
+            tok, st, x = rng.choice(configs)
+            stacks = G.engine_stacks(st, 3)
+            kind = rng.choice(("open", "allin"))
+            if kind == "open":
+                hero = rng.choice((2, 1))
+                if x > 10:
+                    continue
+                t, evs, played = self.table("s_open", "unknown", (hero, tok)), SX.node(3, stacks, 2 - hero, 0), "aA"
+            else:
+                o, hero = rng.choice(((2, 1), (2, 0), (1, 0)))
+                if G.behind(o, st) <= 0:
+                    continue
+                t = self.table("s_allin", "unknown", (o, hero, tok))
+                evs, played = SX.node(3, stacks, 2 - hero, 1 << (2 - o)), "cCaA"
+            letters = B.unpack(t["a"])
+            wrong = [HANDS[h] for h in range(169) if (letters[h] in played) != (evs[h] > 0)
+                     and abs(evs[h]) >= SX.close(x) and letters[h] not in B.CLOSE]
+            self.assertEqual(wrong, [], (kind, tok))

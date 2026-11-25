@@ -23,8 +23,9 @@ Cards, seat, stack in big blinds, what happened before you: the play, one
 sentence of why, the numbers behind it and the whole chart, at once. Nothing
 is worked out while you play: every answer is read from tables that
 `tools/build_guide.py` made by asking the engine about each of the 169 hands
-of every spot before the flop (109,188 spots, 42,905 different tables: every seat, 28 stack
-sizes, five sizes of a raise and four of a re-raise, three kinds of opponent, two styles).
+of every spot before the flop (109,188 spots, 42,968 different tables: every seat, 28 stack
+sizes, five sizes of a raise and four of a re-raise, three kinds of opponent, two styles), and
+for spins its own tables ({SPIN_SPOTS} spots, below).
 
 **To open it:** double-click `guide/index.html` ("Open Quick Guide.bat" on
 Windows). It is a page on your own computer: no Python, no internet. On a
@@ -32,6 +33,8 @@ web server it is a folder of files (`deploy/README.md`).
 
 **To use it:**
 
+- **Game:** Tournament, or Spin & Go (three players, no ante, one prize:
+  "Spin & Go" below).
 - **Your cards:** tap two ranks, then Suited or Offsuit; or tap the hand in
   the chart. On a keyboard: `a k s` is ace-king suited, `o` offsuit,
   Backspace clears, the arrows move the stack, `n` is the next hand.
@@ -135,6 +138,28 @@ each of the three:
 `PLAYBOOK.md`, "Turbo and hyper-turbo", has the numbers and what they were
 checked against.
 
+**Spin & Go.** The Game choice at the top switches to spins: three players
+(two once one is out), no ante, one prize, so chips are money. You type
+every seat's stack, as the table shows it (tap a seat's name, then the
+numbers set that seat); "Next hand" moves the stacks on with the players.
+The tournament tables are made with a big blind ante, 2.5bb in the pot
+before the cards where a spin has 1.5bb, and are much too loose for a spin:
+with 9, 6 and 5bb the button moves in with 49% of hands there and 38% in a
+spin, and the big blind with 5bb calls that all-in with 89% there and 42% in
+a spin. Being the chip leader changes nothing (the chips over the second
+stack never change hands), nor does the buy-in. The spin tables
+(`guide/spin.js`, loaded the first time the game is chosen) are the
+engine's answers at every configuration of an exact solution of the spin's
+all-in or fold game with unequal stacks (`poker_coach/spin_exact.py`,
+`tools/build_spin_exact.py`): two stacks of X and one of Y in any seat, X 2
+to 30bb, Y from 1bb, heads-up 1 to 30bb, 491 games, with the best replies to
+loose callers and to tight players for Opponents. Up to about 10bb that is
+the whole answer; deeper, the all-ins and calls of all-ins, beside the
+engine's raises, calls and limps (checked against published spin solver
+figures). Play to win only. Games that pay second place (x10 and up) are
+not covered: the table app with the prizes typed. `PLAYBOOK.md`, "Spin & Go
+in the quick guide", has the numbers and the checks.
+
 **Limits.** Stacks are taken as equal. Spots with three players in the pot
 are made for the big blind and four first seats, and the page says so when
 yours is read from a neighbour; two all-ins with 20bb or less have a table
@@ -176,8 +201,10 @@ you play: use it to study, to review hands and where help is allowed.
 python3 tools/build_short.py                 # the exact answers for all-ins of 2 to 20bb -> poker_coach/data/short.json, about four hours (needs gcc)
 python3 tools/build_guide.py                 # all the tables again -> guide/data.js, about 40 minutes on four processors
 python3 tools/build_guide.py --only open --styles win    # some of them; finished jobs are kept in guide/.cache
-python3 tools/build_guide_page.py out/       # the page as one file, with data.json beside it
-python3 -m unittest tests.test_guide tests.test_short   # about a minute
+python3 tools/build_guide_page.py out/       # the page as one file, with data.json and spin.json beside it
+python3 tools/build_spin_exact.py --work DIR     # spins solved exactly with unequal stacks -> poker_coach/data/spin_exact.json, about two and a half hours (needs gcc)
+python3 tools/build_spin_guide.py            # the Spin & Go tables -> guide/spin.js, {SPIN_BUILD_TIME} on four processors
+python3 -m unittest tests.test_guide tests.test_short tests.test_spin_exact   # about {GUIDE_TEST_TIME}
 python3 -m poker_coach clock --stack 12 --pos BTN --players 8 --speed hyper    # the blinds clock in words
 ```
 
@@ -842,4 +869,6 @@ python3 tools/build_tag.py          # tight-aggressive sheet for 6, 7 and 8 play
 python3 tools/build_spin.py         # spin tables (3 players and heads-up), about 7 minutes
 python3 tools/spin_sim.py           # whole spin games played with those tables, about 6 minutes
 python3 tools/build_guide.py        # the quick guide's tables (guide/data.js), about 40 minutes; after any change to the engine before the flop
+python3 tools/build_spin_exact.py --work DIR   # spins solved exactly with unequal stacks, about two and a half hours
+python3 tools/build_spin_guide.py   # the quick guide's Spin & Go tables (guide/spin.js); after any change to the engine with three players or two
 ```
